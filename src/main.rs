@@ -1,7 +1,7 @@
 use gtk::prelude::*;
-use relm4::{gtk, ComponentParts, ComponentSender, RelmApp, RelmWidgetExt, SimpleComponent};
-use std::path::PathBuf;
+use relm4::{ComponentParts, ComponentSender, RelmApp, RelmWidgetExt, SimpleComponent, gtk};
 use std::fs;
+use std::path::PathBuf;
 
 struct AppModel {
     prefixes: Vec<WinePrefix>,
@@ -28,7 +28,7 @@ enum AppMsg {
 impl AppModel {
     fn scan_wine_prefixes(wine_dir: &PathBuf) -> Vec<WinePrefix> {
         let mut prefixes = Vec::new();
-        
+
         if let Ok(entries) = fs::read_dir(wine_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -36,7 +36,7 @@ impl AppModel {
                     // Check if this directory looks like a Wine prefix
                     let drive_c = path.join("drive_c");
                     let system_reg = path.join("system.reg");
-                    
+
                     if drive_c.exists() && system_reg.exists() {
                         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                             prefixes.push(WinePrefix {
@@ -48,7 +48,7 @@ impl AppModel {
                 }
             }
         }
-        
+
         prefixes.sort_by(|a, b| a.name.cmp(&b.name));
         prefixes
     }
@@ -72,7 +72,7 @@ impl SimpleComponent for AppModel {
                 set_spacing: 10,
                 set_margin_all: 10,
 
-            
+
 
                 // Header bar with title and create button
                 gtk::Box {
@@ -88,12 +88,12 @@ impl SimpleComponent for AppModel {
                     gtk::Box {
                         set_hexpand: true,
                         set_halign: gtk::Align::End,
-                        
+
                         gtk::Button {
                             set_label: "Refresh",
                             connect_clicked => AppMsg::RefreshPrefixes,
                         },
-                        
+
                         gtk::Button {
                             set_label: "Create New Prefix",
                             connect_clicked => AppMsg::CreatePrefix,
@@ -111,7 +111,7 @@ impl SimpleComponent for AppModel {
                     // Prefix list
                     gtk::ScrolledWindow {
                         set_vexpand: true,
-                        set_hexpand: true,
+                        set_hexpand: false,
                         set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
 
                         #[name = "prefix_list"]
@@ -126,39 +126,50 @@ impl SimpleComponent for AppModel {
 
                     // Actions panel
                     gtk::Box {
+                        set_hexpand: true,
                         set_orientation: gtk::Orientation::Vertical,
                         set_spacing: 10,
                         set_width_request: 250,
 
-                        gtk::Label {
-                            set_label: "Prefix Actions",
-                            add_css_class: "heading"
-                        },
+                        
 
-                        gtk::Button {
-                            set_label: "Launch",
-                            connect_clicked[sender, selected = model.selected_prefix] => move |_| {
-                                if let Some(index) = selected {
-                                    sender.input(AppMsg::LaunchPrefix(index));
-                                }
-                            },
-                            set_sensitive: model.selected_prefix.is_some()
-                        },
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Horizontal,
+                            set_spacing: 10,
 
-                        gtk::Button {
-                            set_label: "Delete",
-                            connect_clicked[sender, selected = model.selected_prefix] => move |_| {
-                                if let Some(index) = selected {
-                                    sender.input(AppMsg::DeletePrefix(index));
-                                }
+                            gtk::Label {
+                                set_label: "Prefix Actions",
+                                add_css_class: "heading",
+                                set_hexpand: true,
+                                set_halign: gtk::Align::Start
                             },
-                            set_sensitive: model.selected_prefix.is_some(),
-                            add_css_class: "destructive-action"
+
+                            gtk::Button {
+                                set_label: "Launch",
+                                connect_clicked[sender, selected = model.selected_prefix] => move |_| {
+                                    if let Some(index) = selected {
+                                        sender.input(AppMsg::LaunchPrefix(index));
+                                    }
+                                },
+                                set_sensitive: model.selected_prefix.is_some()
+                            },
+
+                            gtk::Button {
+                                set_label: "Delete",
+                                connect_clicked[sender, selected = model.selected_prefix] => move |_| {
+                                    if let Some(index) = selected {
+                                        sender.input(AppMsg::DeletePrefix(index));
+                                    }
+                                },
+                                set_sensitive: model.selected_prefix.is_some(),
+                                add_css_class: "destructive-action"
+                            },
                         },
 
                         gtk::Separator {},
-                        
+
                         gtk::Label {
+                            #[track = "model.selected_prefix.is_some()"]
                             set_label: if let Some(index) = model.selected_prefix {
                                 &model.prefixes[index].name
                             } else {
@@ -170,6 +181,7 @@ impl SimpleComponent for AppModel {
                         },
 
                         gtk::Label {
+                            #[track = "model.selected_prefix.is_some()"]
                             set_label: &if let Some(index) = model.selected_prefix {
                                 model.prefixes[index].path.display().to_string()
                             } else {
@@ -189,8 +201,8 @@ impl SimpleComponent for AppModel {
                     set_margin_top: 10,
 
                     gtk::Label {
-                        set_label: &format!("{} prefixes loaded from {}", 
-                                          model.prefixes.len(), 
+                        set_label: &format!("{} prefixes loaded from {}",
+                                          model.prefixes.len(),
                                           model.wine_dir.display()),
                         add_css_class: "caption"
                     }
@@ -207,7 +219,7 @@ impl SimpleComponent for AppModel {
         let wine_dir = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("~"))
             .join("Wine");
-            
+
         let prefixes = Self::scan_wine_prefixes(&wine_dir);
 
         let model = AppModel {
@@ -217,13 +229,13 @@ impl SimpleComponent for AppModel {
         };
 
         let widgets = view_output!();
-        
+
         #[cfg(not(target_os = "macos"))]
         {
             let header_bar = gtk::HeaderBar::new();
             widgets.root.set_titlebar(Some(&header_bar));
         }
-        
+
         // Initialize the prefix list
         Self::populate_prefix_list(&model, &widgets, &sender);
 
@@ -255,7 +267,11 @@ impl SimpleComponent for AppModel {
                 if index < self.prefixes.len() {
                     let prefix_name = self.prefixes[index].name.clone();
                     let prefix_path = self.prefixes[index].path.clone();
-                    println!("Launching prefix: {} at {}", prefix_name, prefix_path.display());
+                    println!(
+                        "Launching prefix: {} at {}",
+                        prefix_name,
+                        prefix_path.display()
+                    );
                     // TODO: Implement prefix launch
                 }
             }
@@ -268,21 +284,20 @@ impl SimpleComponent for AppModel {
             AppMsg::SelectPrefix(index) => {
                 self.selected_prefix = Some(index);
                 println!("Selected prefix: {}", self.prefixes[index].name);
+                sender.input(AppMsg::UpdateList);
             }
             AppMsg::UpdateList => {
                 // This message is just to trigger view update
             }
         }
     }
-
-
 }
 
 impl AppModel {
     fn populate_prefix_list(
         model: &AppModel,
         widgets: &<AppModel as SimpleComponent>::Widgets,
-        sender: &ComponentSender<AppModel>
+        sender: &ComponentSender<AppModel>,
     ) {
         // Clear existing items
         while let Some(row) = widgets.prefix_list.first_child() {
@@ -311,7 +326,7 @@ impl AppModel {
                 .hexpand(true)
                 .halign(gtk::Align::Start)
                 .build();
-            
+
             path_label.add_css_class("caption");
 
             let content_box = gtk::Box::builder()
@@ -323,30 +338,30 @@ impl AppModel {
             content_box.append(&path_label);
             prefix_box.append(&content_box);
 
-            let row = gtk::ListBoxRow::builder()
-                .child(&prefix_box)
-                .build();
+            let row = gtk::ListBoxRow::builder().child(&prefix_box).build();
 
             widgets.prefix_list.append(&row);
         }
 
         if model.prefixes.is_empty() {
             let no_prefixes_label = gtk::Label::builder()
-                .label("No Wine prefixes found\nMake sure you have Wine prefixes in ~/Wine directory")
+                .label(
+                    "No Wine prefixes found\nMake sure you have Wine prefixes in ~/Wine directory",
+                )
                 .halign(gtk::Align::Center)
                 .valign(gtk::Align::Center)
                 .margin_top(50)
                 .wrap(true)
                 .wrap_mode(gtk::pango::WrapMode::WordChar)
                 .build();
-            
+
             no_prefixes_label.add_css_class("dim-label");
-            
+
             let row = gtk::ListBoxRow::builder()
                 .child(&no_prefixes_label)
                 .selectable(false)
                 .build();
-            
+
             widgets.prefix_list.append(&row);
         }
 
