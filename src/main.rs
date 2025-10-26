@@ -1,56 +1,58 @@
 use gtk::prelude::*;
-use relm4::{ComponentParts, ComponentSender, RelmApp, RelmWidgetExt, SimpleComponent, gtk};
-use std::fs;
+use relm4::{ComponentController, ComponentParts, ComponentSender, Controller, RelmApp, RelmWidgetExt, SimpleComponent, Component, gtk};
 use std::path::PathBuf;
+
+// Import new modules
+mod prefix;
+mod ui;
+
+use prefix::manager::{PrefixManager, WinePrefix};
+use ui::{PrefixListModel, PrefixDetailsModel, AppManagerModel};
 
 struct AppModel {
     prefixes: Vec<WinePrefix>,
-    wine_dir: PathBuf,
+    prefix_manager: PrefixManager,
     selected_prefix: Option<usize>,
+    prefix_list: Controller<PrefixListModel>,
+    prefix_details: Controller<PrefixDetailsModel>,
+    app_manager: Controller<AppManagerModel>,
+    current_view: ViewType,
 }
 
-#[derive(Debug, Clone)]
-struct WinePrefix {
-    name: String,
-    path: PathBuf,
+#[derive(Debug, Clone, PartialEq)]
+enum ViewType {
+    List,
+    Details,
+    AppManager,
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 enum AppMsg {
     CreatePrefix,
     DeletePrefix(usize),
     LaunchPrefix(usize),
+    LaunchExecutable(usize, usize), // prefix index, executable index
     RefreshPrefixes,
     SelectPrefix(usize),
-    UpdateList,
+    ShowPrefixDetails(usize),
+    ShowAppManager(usize),
+    HideDetails,
+    ConfigUpdated(usize, prefix::config::PrefixConfig),
+    ScanForApplications(usize),
+    ShowCreatePrefixDialog,
+    CreatePrefixComplete(String, String), // name, architecture
 }
 
 impl AppModel {
-    fn scan_wine_prefixes(wine_dir: &PathBuf) -> Vec<WinePrefix> {
-        let mut prefixes = Vec::new();
-
-        if let Ok(entries) = fs::read_dir(wine_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    // Check if this directory looks like a Wine prefix
-                    let drive_c = path.join("drive_c");
-                    let system_reg = path.join("system.reg");
-
-                    if drive_c.exists() && system_reg.exists() {
-                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                            prefixes.push(WinePrefix {
-                                name: name.to_string(),
-                                path: path.clone(),
-                            });
-                        }
-                    }
-                }
+    fn scan_wine_prefixes(prefix_manager: &PrefixManager) -> Vec<WinePrefix> {
+        match prefix_manager.scan_prefixes() {
+            Ok(prefixes) => prefixes,
+            Err(e) => {
+                eprintln!("Error scanning prefixes: {}", e);
+                Vec::new()
             }
         }
-
-        prefixes.sort_by(|a, b| a.name.cmp(&b.name));
-        prefixes
     }
 }
 
@@ -61,7 +63,6 @@ impl SimpleComponent for AppModel {
     type Output = ();
 
     view! {
-        #[name = "root"]
         gtk::ApplicationWindow {
             set_title: Some("Tequila - Wine Prefix Manager"),
             set_default_width: 800,
@@ -72,9 +73,7 @@ impl SimpleComponent for AppModel {
                 set_spacing: 10,
                 set_margin_all: 10,
 
-
-
-                // Header bar with title and create button
+                // Header bar
                 gtk::Box {
                     set_orientation: gtk::Orientation::Horizontal,
                     set_spacing: 10,
@@ -96,102 +95,141 @@ impl SimpleComponent for AppModel {
 
                         gtk::Button {
                             set_label: "Create New Prefix",
-                            connect_clicked => AppMsg::CreatePrefix,
+                            connect_clicked => AppMsg::ShowCreatePrefixDialog,
                             add_css_class: "suggested-action",
                             set_margin_start: 5
                         }
                     }
                 },
 
-                // Main content area
+                // Main content area - updated layout
                 gtk::Box {
                     set_orientation: gtk::Orientation::Horizontal,
                     set_spacing: 10,
 
-                    // Prefix list
-                    gtk::ScrolledWindow {
-                        set_vexpand: true,
-                        set_hexpand: false,
-                        set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
+                    // Left panel - Enhanced prefix list
+                    #[name = "prefix_list_container"]
+                    gtk::Box {
+                        set_orientation: gtk::Orientation::Vertical,
+                        set_spacing: 10,
+                        set_width_request: 240,
 
-                        #[name = "prefix_list"]
-                        gtk::ListBox {
-                            set_css_classes: &["boxed-list"],
-                            set_margin_all: 5,
-                            // This will trigger view updates when model changes
-                            #[track = "model.prefixes.len() > 0"]
-                            set_visible: true,
+                        gtk::Label {
+                            set_label: "Prefix List",
+                            add_css_class: "heading",
+                            set_halign: gtk::Align::Start,
+                        },
+
+                        gtk::ScrolledWindow {
+                            set_vexpand: true,
+                            set_hexpand: true,
+                            set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
+
+                            #[local_ref]
+                            prefix_list_widget -> gtk::Widget {}
                         }
                     },
 
-                    // Actions panel
+                    // Right panel - Dynamic content
+                    #[name = "details_container"]
                     gtk::Box {
-                        set_hexpand: true,
                         set_orientation: gtk::Orientation::Vertical,
                         set_spacing: 10,
-                        set_width_request: 250,
+                        set_hexpand: true,
+                        set_width_request: 550,
 
-                        
+                        match model.current_view {
+                            ViewType::List => {
+                                #[name = "empty_view"]
+                                    gtk::Box {
+                                        set_orientation: gtk::Orientation::Vertical,
+                                        set_halign: gtk::Align::Center,
+                                        set_valign: gtk::Align::Center,
+                                        set_vexpand: true,
 
-                        gtk::Box {
-                            set_orientation: gtk::Orientation::Horizontal,
-                            set_spacing: 10,
+                                        gtk::Image {
+                                            set_icon_name: Some("wine-symbolic"),
+                                            set_pixel_size: 64,
+                                            add_css_class: "dim-label",
+                                        },
 
-                            gtk::Label {
-                                set_label: "Prefix Actions",
-                                add_css_class: "heading",
-                                set_hexpand: true,
-                                set_halign: gtk::Align::Start
-                            },
+                                        gtk::Label {
+                                            set_label: "No prefix selected",
+                                            add_css_class: "title-4",
+                                            add_css_class: "dim-label",
+                                            set_margin_top: 10,
+                                        },
 
-                            gtk::Button {
-                                set_label: "Launch",
-                                connect_clicked[sender, selected = model.selected_prefix] => move |_| {
-                                    if let Some(index) = selected {
-                                        sender.input(AppMsg::LaunchPrefix(index));
+                                        gtk::Label {
+                                            set_label: "Select a prefix from the list to view details",
+                                            add_css_class: "body",
+                                            add_css_class: "dim-label",
+                                        }
                                     }
-                                },
-                                set_sensitive: model.selected_prefix.is_some()
-                            },
 
-                            gtk::Button {
-                                set_label: "Delete",
-                                connect_clicked[sender, selected = model.selected_prefix] => move |_| {
-                                    if let Some(index) = selected {
-                                        sender.input(AppMsg::DeletePrefix(index));
+                            }
+                            ViewType::Details => {
+                                #[name = "details_view"]
+                                    gtk::Box {
+                                        set_orientation: gtk::Orientation::Vertical,
+                                        set_spacing: 10,
+                                        set_margin_all: 10,
+
+                                        gtk::Box {
+                                            set_orientation: gtk::Orientation::Horizontal,
+                                            set_spacing: 10,
+                                            set_halign: gtk::Align::End,
+
+                                            gtk::Button {
+                                                set_label: "Back to List",
+                                                connect_clicked => AppMsg::HideDetails,
+                                                add_css_class: "flat",
+                                            },
+
+                                            gtk::Button {
+                                                set_label: "Manage Apps",
+                                                connect_clicked => AppMsg::ShowAppManager(model.selected_prefix.unwrap_or(0)),
+                                                set_sensitive: model.selected_prefix.is_some() && model.selected_prefix.unwrap() < model.prefixes.len(),
+                                                add_css_class: "suggested-action",
+                                            },
+                                        },
+
+                                        #[local_ref]
+                                        prefix_details_widget -> gtk::Widget {},
                                     }
-                                },
-                                set_sensitive: model.selected_prefix.is_some(),
-                                add_css_class: "destructive-action"
-                            },
-                        },
+                            }
+                            ViewType::AppManager => {
+                                #[name = "app_manager_view"]
+                                    gtk::Box {
+                                        set_orientation: gtk::Orientation::Vertical,
+                                        set_spacing: 10,
+                                        set_margin_all: 10,
 
-                        gtk::Separator {},
+                                        gtk::Box {
+                                            set_orientation: gtk::Orientation::Horizontal,
+                                            set_spacing: 10,
+                                            set_halign: gtk::Align::End,
 
-                        gtk::Label {
-                            #[track = "model.selected_prefix.is_some()"]
-                            set_label: if let Some(index) = model.selected_prefix {
-                                &model.prefixes[index].name
-                            } else {
-                                "No prefix selected"
-                            },
-                            set_margin_top: 20,
-                            set_wrap: true,
-                            set_wrap_mode: gtk::pango::WrapMode::WordChar
-                        },
+                                            gtk::Button {
+                                                set_label: "Back to Details",
+                                                connect_clicked => AppMsg::ShowPrefixDetails(model.selected_prefix.unwrap_or(0)),
+                                                set_sensitive: model.selected_prefix.is_some() && model.selected_prefix.unwrap() < model.prefixes.len(),
+                                                add_css_class: "flat",
+                                            },
 
-                        gtk::Label {
-                            #[track = "model.selected_prefix.is_some()"]
-                            set_label: &if let Some(index) = model.selected_prefix {
-                                model.prefixes[index].path.display().to_string()
-                            } else {
-                                String::new()
-                            },
-                            add_css_class: "caption",
-                            set_wrap: true,
-                            set_wrap_mode: gtk::pango::WrapMode::WordChar
-                        }
-                    }
+                                            gtk::Button {
+                                                set_label: "Back to List",
+                                                connect_clicked => AppMsg::HideDetails,
+                                                add_css_class: "flat",
+                                            },
+                                        },
+
+                                        #[local_ref]
+                                        app_manager_widget -> gtk::Widget {},
+                                    }
+                            }
+                        }    
+                    }       
                 },
 
                 // Status bar
@@ -203,7 +241,7 @@ impl SimpleComponent for AppModel {
                     gtk::Label {
                         set_label: &format!("{} prefixes loaded from {}",
                                           model.prefixes.len(),
-                                          model.wine_dir.display()),
+                                          model.prefix_manager.wine_dir.display()),
                         add_css_class: "caption"
                     }
                 }
@@ -220,13 +258,49 @@ impl SimpleComponent for AppModel {
             .unwrap_or_else(|| PathBuf::from("~"))
             .join("Wine");
 
-        let prefixes = Self::scan_wine_prefixes(&wine_dir);
+        let prefix_manager = PrefixManager::new(wine_dir.clone());
+        let prefixes = Self::scan_wine_prefixes(&prefix_manager);
+
+        let prefix_list = PrefixListModel::builder()
+            .launch((prefixes.clone(), None))
+            .forward(sender.input_sender(), |msg| match msg {
+                crate::ui::prefix_list::PrefixListMsg::SelectPrefix(index) => AppMsg::SelectPrefix(index),
+                crate::ui::prefix_list::PrefixListMsg::ShowPrefixDetails(index) => AppMsg::ShowPrefixDetails(index),
+                crate::ui::prefix_list::PrefixListMsg::ShowAppManager(index) => AppMsg::ShowAppManager(index),
+            });
+
+        let prefix_details = PrefixDetailsModel::builder()
+            .launch((PathBuf::new(), prefix::config::PrefixConfig::new("".to_string(), "win64".to_string())))
+            .forward(sender.input_sender(), |msg| match msg {
+                crate::ui::prefix_details::PrefixDetailsMsg::ConfigUpdated(config) => {
+                    AppMsg::ConfigUpdated(0, config) // Use 0 as fallback index
+                }
+                _ => AppMsg::RefreshPrefixes // Handle other messages
+            });
+
+        let app_manager = AppManagerModel::builder()
+            .launch((PathBuf::new(), prefix::config::PrefixConfig::new("".to_string(), "win64".to_string())))
+            .forward(sender.input_sender(), |msg| match msg {
+                crate::ui::app_manager::AppManagerMsg::ConfigUpdated(config) => {
+                    AppMsg::ConfigUpdated(0, config) // Use 0 as fallback index
+                }
+                _ => AppMsg::RefreshPrefixes // Handle other messages
+            });
 
         let model = AppModel {
             prefixes,
-            wine_dir,
+            prefix_manager,
             selected_prefix: None,
+            prefix_list,
+            prefix_details,
+            app_manager,
+            current_view: ViewType::List,
         };
+
+        // Set up local references for child components
+        let prefix_list_widget = model.prefix_list.widget().clone().upcast::<gtk::Widget>();
+        let prefix_details_widget = model.prefix_details.widget().clone().upcast::<gtk::Widget>();
+        let app_manager_widget = model.app_manager.widget().clone().upcast::<gtk::Widget>();
 
         let widgets = view_output!();
 
@@ -236,150 +310,264 @@ impl SimpleComponent for AppModel {
             widgets.root.set_titlebar(Some(&header_bar));
         }
 
-        // Initialize the prefix list
-        Self::populate_prefix_list(&model, &widgets, &sender);
-
         ComponentParts { model, widgets }
     }
 
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
         match msg {
+            AppMsg::ShowCreatePrefixDialog => {
+                // Create a simple dialog for prefix creation
+                let dialog = gtk::Dialog::builder()
+                    .title("Create New Wine Prefix")
+                    .modal(true)
+                    .build();
+
+                #[cfg(not(target_os = "macos"))]
+                dialog.set_titlebar(&gtk::HeaderBar::new());
+
+                dialog.add_button("Cancel", gtk::ResponseType::Cancel);
+                dialog.add_button("Create", gtk::ResponseType::Ok);
+
+                let content_area = dialog.content_area();
+                let content_box = gtk::Box::builder()
+                    .orientation(gtk::Orientation::Vertical)
+                    .spacing(10)
+                    .margin_top(10)
+                    .margin_bottom(10)
+                    .margin_start(10)
+                    .margin_end(10)
+                    .build();
+
+                // Prefix name entry
+                let name_label = gtk::Label::builder()
+                    .label("Prefix Name:")
+                    .halign(gtk::Align::Start)
+                    .build();
+                let name_entry = gtk::Entry::builder()
+                    .placeholder_text("Enter prefix name")
+                    .hexpand(true)
+                    .width_chars(32)
+                    .build();
+
+                // Architecture selection
+                let arch_label = gtk::Label::builder()
+                    .label("Architecture:")
+                    .halign(gtk::Align::Start)
+                    .build();
+                let arch_combo = gtk::ComboBoxText::builder()
+                    .hexpand(true)
+                    .build();
+                arch_combo.append_text("win32");
+                arch_combo.append_text("win64");
+                arch_combo.set_active(Some(1)); // Default to win64
+
+                content_box.append(&name_label);
+                content_box.append(&name_entry);
+                content_box.append(&arch_label);
+                content_box.append(&arch_combo);
+
+                content_area.append(&content_box);
+                dialog.present();
+
+                let sender_clone = sender.clone();
+                dialog.connect_response(move |dialog, response| {
+                    if response == gtk::ResponseType::Ok {
+                        let name = name_entry.text().to_string();
+                        let architecture = if let Some(active_text) = arch_combo.active_text() {
+                            active_text.to_string()
+                        } else {
+                            "win64".to_string()
+                        };
+
+                        if !name.is_empty() {
+                            sender_clone.input(AppMsg::CreatePrefixComplete(name, architecture));
+                        } else {
+                            eprintln!("Prefix name cannot be empty");
+                            // TODO: Show error dialog
+                        }
+                    }
+                    dialog.close();
+                });
+            }
+            AppMsg::CreatePrefixComplete(prefix_name, architecture) => {
+                if !prefix_name.is_empty() {
+                    match self.prefix_manager.create_prefix(&prefix_name, &architecture) {
+                        Ok(prefix_path) => {
+                            println!("Created prefix: {} at {} with architecture {}",
+                                prefix_name, prefix_path.display(), architecture);
+                            // Refresh the prefix list
+                            sender.input(AppMsg::RefreshPrefixes);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to create prefix '{}': {}", prefix_name, e);
+                            let dialog = gtk::Dialog::builder()
+                                .title("Error")
+                                .modal(true)
+                                .build();
+
+                            #[cfg(not(target_os = "macos"))]
+                            dialog.set_titlebar(&gtk::HeaderBar::new());
+                            
+                            let content_area = dialog.content_area();
+                            content_area.append(&gtk::Label::builder()
+                                .label(&format!("Failed to create prefix '{}': {}", prefix_name, e))
+                                .build());
+
+                            dialog.add_button("OK", gtk::ResponseType::Ok);
+                        }
+                    }
+                }
+            }
             AppMsg::CreatePrefix => {
-                // TODO: Implement create prefix dialog
-                println!("Create prefix requested");
+                // Legacy handler - now redirected to dialog
+                sender.input(AppMsg::ShowCreatePrefixDialog);
             }
             AppMsg::DeletePrefix(index) => {
                 if index < self.prefixes.len() {
                     let prefix_name = self.prefixes[index].name.clone();
-                    self.prefixes.remove(index);
-                    if self.selected_prefix == Some(index) {
-                        self.selected_prefix = None;
-                    } else if let Some(selected) = self.selected_prefix {
-                        if selected > index {
-                            self.selected_prefix = Some(selected - 1);
+                    let prefix_path = self.prefixes[index].path.clone();
+                    
+                    if let Err(e) = self.prefix_manager.delete_prefix(&prefix_path) {
+                        eprintln!("Failed to delete prefix: {}", e);
+                    } else {
+                        self.prefixes.remove(index);
+                        if self.selected_prefix == Some(index) {
+                            self.selected_prefix = None;
+                        } else if let Some(selected) = self.selected_prefix {
+                            if selected > index {
+                                self.selected_prefix = Some(selected - 1);
+                            }
                         }
+                        println!("Deleted prefix: {}", prefix_name);
+                        sender.input(AppMsg::RefreshPrefixes);
                     }
-                    println!("Deleted prefix: {}", prefix_name);
-                    sender.input(AppMsg::UpdateList);
                 }
             }
             AppMsg::LaunchPrefix(index) => {
                 if index < self.prefixes.len() {
                     let prefix_name = self.prefixes[index].name.clone();
                     let prefix_path = self.prefixes[index].path.clone();
-                    println!(
-                        "Launching prefix: {} at {}",
-                        prefix_name,
-                        prefix_path.display()
-                    );
-                    // TODO: Implement prefix launch
+                    
+                    println!("Launching prefix: {} at {}", prefix_name, prefix_path.display());
+                    
+                    // Launch winecfg for the prefix
+                    match self.prefix_manager.run_winecfg(&prefix_path) {
+                        Ok(_) => {
+                            println!("Successfully launched winecfg for prefix: {}", prefix_name);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to launch winecfg for prefix {}: {}", prefix_name, e);
+                            // TODO: Show error dialog to user
+                        }
+                    }
+                }
+            }
+            AppMsg::LaunchExecutable(prefix_index, executable_index) => {
+                if prefix_index < self.prefixes.len() {
+                    let prefix_path = &self.prefixes[prefix_index].path;
+                    let config = &self.prefixes[prefix_index].config;
+                    
+                    if executable_index < config.registered_executables.len() {
+                        let executable = &config.registered_executables[executable_index];
+                        if let Err(e) = self.prefix_manager.launch_executable(prefix_path, executable) {
+                            eprintln!("Failed to launch executable: {}", e);
+                        }
+                    }
                 }
             }
             AppMsg::RefreshPrefixes => {
                 println!("Refreshing prefix list");
-                self.prefixes = Self::scan_wine_prefixes(&self.wine_dir);
+                self.prefixes = Self::scan_wine_prefixes(&self.prefix_manager);
                 self.selected_prefix = None;
-                sender.input(AppMsg::UpdateList);
+                self.current_view = ViewType::List;
+                
+                // Update the prefix list component
+                self.prefix_list.emit(crate::ui::prefix_list::PrefixListMsg::SelectPrefix(0));
             }
             AppMsg::SelectPrefix(index) => {
-                self.selected_prefix = Some(index);
-                println!("Selected prefix: {}", self.prefixes[index].name);
-                sender.input(AppMsg::UpdateList);
+                if index < self.prefixes.len() {
+                    self.selected_prefix = Some(index);
+                    println!("Selected prefix: {}", self.prefixes[index].name);
+                    // Automatically show details when a prefix is selected
+                    sender.input(AppMsg::ShowPrefixDetails(index));
+                }
             }
-            AppMsg::UpdateList => {
-                // This message is just to trigger view update
+            AppMsg::ShowPrefixDetails(index) => {
+                if index < self.prefixes.len() {
+                    self.selected_prefix = Some(index);
+                    self.current_view = ViewType::Details;
+                    
+                    // Update the details component
+                    let config = self.prefixes[index].config.clone();
+                    self.prefix_details.emit(ui::prefix_details::PrefixDetailsMsg::ConfigUpdated(config));
+
+                    println!("Showing details for prefix: {}", self.prefixes[index].name);
+                }
             }
-        }
-    }
-}
-
-impl AppModel {
-    fn populate_prefix_list(
-        model: &AppModel,
-        widgets: &<AppModel as SimpleComponent>::Widgets,
-        sender: &ComponentSender<AppModel>,
-    ) {
-        // Clear existing items
-        while let Some(row) = widgets.prefix_list.first_child() {
-            widgets.prefix_list.remove(&row);
-        }
-
-        // Add prefixes to the list
-        for (_, prefix) in model.prefixes.iter().enumerate() {
-            let prefix_box = gtk::Box::builder()
-                .orientation(gtk::Orientation::Horizontal)
-                .spacing(10)
-                .margin_top(8)
-                .margin_bottom(8)
-                .margin_start(8)
-                .margin_end(8)
-                .build();
-
-            let prefix_label = gtk::Label::builder()
-                .label(&prefix.name)
-                .hexpand(true)
-                .halign(gtk::Align::Start)
-                .build();
-
-            let path_label = gtk::Label::builder()
-                .label(&prefix.path.display().to_string())
-                .hexpand(true)
-                .halign(gtk::Align::Start)
-                .build();
-
-            path_label.add_css_class("caption");
-
-            let content_box = gtk::Box::builder()
-                .orientation(gtk::Orientation::Vertical)
-                .spacing(2)
-                .build();
-
-            content_box.append(&prefix_label);
-            content_box.append(&path_label);
-            prefix_box.append(&content_box);
-
-            let row = gtk::ListBoxRow::builder().child(&prefix_box).build();
-
-            widgets.prefix_list.append(&row);
-        }
-
-        if model.prefixes.is_empty() {
-            let no_prefixes_label = gtk::Label::builder()
-                .label(
-                    "No Wine prefixes found\nMake sure you have Wine prefixes in ~/Wine directory",
-                )
-                .halign(gtk::Align::Center)
-                .valign(gtk::Align::Center)
-                .margin_top(50)
-                .wrap(true)
-                .wrap_mode(gtk::pango::WrapMode::WordChar)
-                .build();
-
-            no_prefixes_label.add_css_class("dim-label");
-
-            let row = gtk::ListBoxRow::builder()
-                .child(&no_prefixes_label)
-                .selectable(false)
-                .build();
-
-            widgets.prefix_list.append(&row);
-        }
-
-        // Connect row selection signal
-        let sender_clone = sender.clone();
-        widgets.prefix_list.connect_row_activated(move |_, row| {
-            let index = row.index();
-            if index >= 0 {
-                sender_clone.input(AppMsg::SelectPrefix(index as usize));
+            AppMsg::ShowAppManager(index) => {
+                if index < self.prefixes.len() {
+                    self.selected_prefix = Some(index);
+                    self.current_view = ViewType::AppManager;
+                    
+                    // Update the app manager component
+                    let config = self.prefixes[index].config.clone();
+                    self.app_manager.emit(ui::app_manager::AppManagerMsg::ConfigUpdated(config));
+                }
             }
-        });
-
-        // Set initial selection if there's a selected prefix
-        if let Some(selected_index) = model.selected_prefix {
-            if let Some(row) = widgets.prefix_list.row_at_index(selected_index as i32) {
-                widgets.prefix_list.select_row(Some(&row));
+            AppMsg::HideDetails => {
+                self.current_view = ViewType::List;
+            }
+            AppMsg::ConfigUpdated(index, config) => {
+                if index < self.prefixes.len() {
+                    let prefix_path = &self.prefixes[index].path;
+                    if let Err(e) = self.prefix_manager.update_config(prefix_path, &config) {
+                        eprintln!("Failed to update config: {}", e);
+                    } else {
+                        self.prefixes[index].config = config;
+                    }
+                }
+            }
+            AppMsg::ScanForApplications(index) => {
+                if index < self.prefixes.len() {
+                    let prefix_path = self.prefixes[index].path.clone();
+                    let prefix_name = self.prefixes[index].name.clone();
+                    
+                    match self.prefix_manager.scan_for_applications(&prefix_path) {
+                        Ok(executables) => {
+                            println!("Found {} applications in prefix '{}'", executables.len(), prefix_name);
+                            
+                            // Get the current config and update it
+                            let mut config = self.prefixes[index].config.clone();
+                            let initial_count = config.registered_executables.len();
+                            
+                            for executable in executables {
+                                config.add_executable(executable);
+                            }
+                            
+                            let new_count = config.registered_executables.len();
+                            let added_count = new_count - initial_count;
+                            
+                            // Save the updated config
+                            if let Err(e) = self.prefix_manager.update_config(&prefix_path, &config) {
+                                eprintln!("Failed to save updated config for prefix '{}': {}", prefix_name, e);
+                            } else {
+                                println!("Successfully updated prefix '{}' config with {} new executables (total: {})",
+                                    prefix_name, added_count, new_count);
+                                
+                                // Update the local copy
+                                self.prefixes[index].config = config;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to scan for applications in prefix '{}': {}", prefix_name, e);
+                            // TODO: Show error dialog to user
+                        }
+                    }
+                }
             }
         }
+        
+        // Update the view based on current state will be handled by Relm4 automatically
     }
 }
 
@@ -387,3 +575,4 @@ fn main() {
     let app = RelmApp::new("com.github.tequila");
     app.run::<AppModel>(());
 }
+
