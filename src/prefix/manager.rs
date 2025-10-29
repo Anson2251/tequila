@@ -1,15 +1,27 @@
 use crate::prefix::config::{PrefixConfig, RegisteredExecutable};
 use crate::prefix::scanner::ApplicationScanner;
+use crate::prefix::error::{Result, PrefixError};
+use crate::prefix::traits::{PrefixManager as PrefixManagerTrait, WinePrefix, PrefixInfo};
 use std::path::PathBuf;
 use std::fs;
 use std::process::Command;
 
-pub struct PrefixManager {
-    pub wine_dir: PathBuf,
+#[derive(PartialEq)]
+pub struct Manager {
+    wine_dir: PathBuf,
     scanner: ApplicationScanner,
 }
 
-impl PrefixManager {
+impl Manager {
+    /// Create a new PrefixManager with the specified wine directory
+    ///
+    /// # Arguments
+    ///
+    /// * `wine_dir` - Directory containing Wine prefixes
+    ///
+    /// # Returns
+    ///
+    /// Returns a new PrefixManager instance
     pub fn new(wine_dir: PathBuf) -> Self {
         Self {
             wine_dir,
@@ -17,23 +29,31 @@ impl PrefixManager {
         }
     }
 
-    pub fn scan_prefixes(&self) -> Result<Vec<WinePrefix>, Box<dyn std::error::Error>> {
-        let mut prefixes = Vec::new();
+    /// Get the wine directory
+    pub fn wine_dir(&self) -> &PathBuf {
+        &self.wine_dir
+    }
+
+    /// Get a reference to the scanner
+    pub fn scanner(&self) -> &ApplicationScanner {
+        &self.scanner
+    }
+
+    pub fn scan_prefixes(&self) -> Result<Vec<WinePrefix>> {
+        let mut prefixes: Vec<WinePrefix> = Vec::new();
         
-        if let Ok(entries) = fs::read_dir(&self.wine_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    // Check if this directory looks like a Wine prefix
-                    if self.is_valid_wine_prefix(&path) {
-                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                            let config = self.load_or_create_config(&path, name)?;
-                            prefixes.push(WinePrefix {
-                                name: name.to_string(),
-                                path: path.clone(),
-                                config,
-                            });
-                        }
+        for entry in fs::read_dir(&self.wine_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            
+            if path.is_dir() && self.is_valid_wine_prefix(&path) {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if let Ok(config) = self.load_or_create_config(&path, name) {
+                        prefixes.push(WinePrefix {
+                            name: name.to_string(),
+                            path: path.clone(),
+                            config,
+                        });
                     }
                 }
             }
@@ -52,7 +72,7 @@ impl PrefixManager {
         drive_c.exists() && system_reg.exists() && user_reg.exists()
     }
 
-    fn load_or_create_config(&self, prefix_path: &PathBuf, name: &str) -> Result<PrefixConfig, Box<dyn std::error::Error>> {
+    fn load_or_create_config(&self, prefix_path: &PathBuf, name: &str) -> Result<PrefixConfig> {
         // Try to load existing config
         if let Some(config) = PrefixConfig::load_from_file(prefix_path)? {
             return Ok(config);
@@ -75,29 +95,29 @@ impl PrefixManager {
         Ok(config)
     }
 
-    fn detect_wine_version(&self, prefix_path: &PathBuf) -> Result<String, Box<dyn std::error::Error>> {
+    fn detect_wine_version(&self, prefix_path: &PathBuf) -> Result<String> {
         // Try to detect wine version from prefix
         let version_file = prefix_path.join(".update-timestamp");
         if version_file.exists() {
-            if let Ok(content) = fs::read_to_string(version_file) {
-                if let Ok(timestamp) = content.trim().parse::<u64>() {
-                    // Convert timestamp to readable format (this is a simplified approach)
-                    return Ok(format!("Wine (timestamp: {})", timestamp));
-                }
+            let content = fs::read_to_string(version_file)?;
+            if let Ok(timestamp) = content.trim().parse::<u64>() {
+                // Convert timestamp to readable format (this is a simplified approach)
+                return Ok(format!("Wine (timestamp: {})", timestamp));
             }
         }
 
         // Try to get wine version from system
-        if let Ok(output) = Command::new("wine").arg("--version").output() {
-            if let Ok(version_str) = String::from_utf8(output.stdout) {
-                return Ok(version_str.trim().to_string());
-            }
+        let output = Command::new("wine").arg("--version").output()?;
+        if output.status.success() {
+            let version_str = String::from_utf8(output.stdout)
+                .map_err(|e| PrefixError::Wine(format!("Failed to parse wine version: {}", e)))?;
+            return Ok(version_str.trim().to_string());
         }
 
-        Ok("unknown".to_string())
+        Err(PrefixError::Wine("Failed to get wine version".to_string()))
     }
 
-    fn detect_architecture(&self, prefix_path: &PathBuf) -> Result<String, Box<dyn std::error::Error>> {
+    fn detect_architecture(&self, prefix_path: &PathBuf) -> Result<String> {
         // Check for 64-bit indicators
         let program_files_x64 = prefix_path.join("drive_c/Program Files");
         let program_files_x86 = prefix_path.join("drive_c/Program Files (x86)");
@@ -112,12 +132,12 @@ impl PrefixManager {
         }
     }
 
-    pub fn create_prefix(&self, name: &str, architecture: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    pub fn create_prefix(&self, name: &str, architecture: &str) -> Result<PathBuf> {
         let prefix_path = self.wine_dir.join(name);
         
         // Check if prefix already exists
         if prefix_path.exists() {
-            return Err(format!("Prefix '{}' already exists", name).into());
+            return Err(PrefixError::AlreadyExists(format!("Prefix '{}' already exists", name)));
         }
         
         // Create prefix directory
@@ -137,32 +157,32 @@ impl PrefixManager {
             Ok(result) => {
                 if !result.status.success() {
                     let error = String::from_utf8_lossy(&result.stderr);
-                    return Err(format!("Failed to create Wine prefix: {}", error).into());
+                    return Err(PrefixError::Process(format!("Failed to create Wine prefix: {}", error)));
                 }
             }
             Err(e) => {
-                return Err(format!("Failed to run winecfg: {}", e).into());
+                return Err(PrefixError::Process(format!("Failed to run winecfg: {}", e)));
             }
         }
         
         Ok(prefix_path)
     }
 
-    pub fn delete_prefix(&self, prefix_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn delete_prefix(&self, prefix_path: &PathBuf) -> Result<()> {
         if !prefix_path.exists() {
-            return Err("Prefix does not exist".into());
+            return Err(PrefixError::NotFound("Prefix does not exist".to_string()));
         }
 
         // Additional safety check
         if !self.is_valid_wine_prefix(prefix_path) {
-            return Err("Not a valid Wine prefix".into());
+            return Err(PrefixError::Validation("Not a valid Wine prefix".to_string()));
         }
 
         fs::remove_dir_all(prefix_path)?;
         Ok(())
     }
 
-    pub fn scan_for_applications(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>, Box<dyn std::error::Error>> {
+    pub fn scan_for_applications(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>> {
         let mut executables = Vec::new();
         
         // Scan regular directories
@@ -178,11 +198,9 @@ impl PrefixManager {
         Ok(executables)
     }
 
-    pub fn update_config(&self, prefix_path: &PathBuf, config: &PrefixConfig) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn update_config(&self, prefix_path: &PathBuf, config: &PrefixConfig) -> Result<()> {
         // Validate config before saving
-        if let Err(e) = config.validate() {
-            return Err(format!("Invalid config: {}", e).into());
-        }
+        config.validate()?;
 
         let mut updated_config = config.clone();
         updated_config.update_last_modified();
@@ -190,57 +208,58 @@ impl PrefixManager {
         Ok(())
     }
 
-    pub fn add_executable_to_prefix(&self, prefix_path: &PathBuf, executable: RegisteredExecutable) -> Result<(), Box<dyn std::error::Error>> {
-        let mut config = self.load_or_create_config(prefix_path, &prefix_path
+    pub fn add_executable_to_prefix(&self, prefix_path: &PathBuf, executable: RegisteredExecutable) -> Result<()> {
+        let name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("unknown"))?;
+            .unwrap_or("unknown");
+        let mut config = self.load_or_create_config(prefix_path, name)?;
         
         config.add_executable(executable);
         self.update_config(prefix_path, &config)?;
         Ok(())
     }
 
-    pub fn remove_executable_from_prefix(&self, prefix_path: &PathBuf, index: usize) -> Result<(), Box<dyn std::error::Error>> {
-        let mut config = self.load_or_create_config(prefix_path, &prefix_path
+    pub fn remove_executable_from_prefix(&self, prefix_path: &PathBuf, index: usize) -> Result<()> {
+        let name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("unknown"))?;
+            .unwrap_or("unknown");
+        let mut config = self.load_or_create_config(prefix_path, name)?;
         
         config.remove_executable(index);
         self.update_config(prefix_path, &config)?;
         Ok(())
     }
 
-    pub fn launch_executable(&self, prefix_path: &PathBuf, executable: &RegisteredExecutable) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn launch_executable(&self, prefix_path: &PathBuf, executable: &RegisteredExecutable) -> Result<()> {
         if !executable.executable_path.exists() {
-            return Err("Executable file does not exist".into());
+            return Err(PrefixError::NotFound("Executable file does not exist".to_string()));
         }
 
         // Set WINEPREFIX environment variable
-        let mut command = Command::new("wine");
-        command.current_dir(&prefix_path);
-        command.env("WINEPREFIX", prefix_path.to_string_lossy().as_ref());
-        command.arg(&executable.executable_path);
-
-        let output = command.output();
+        let output = Command::new("wine")
+            .current_dir(&prefix_path)
+            .env("WINEPREFIX", prefix_path.to_string_lossy().as_ref())
+            .arg(&executable.executable_path)
+            .output();
         
         match output {
             Ok(result) => {
                 if !result.status.success() {
                     let error = String::from_utf8_lossy(&result.stderr);
-                    return Err(format!("Failed to launch executable: {}", error).into());
+                    return Err(PrefixError::Process(format!("Failed to launch executable: {}", error)));
                 }
             }
             Err(e) => {
-                return Err(format!("Failed to run wine: {}", e).into());
+                return Err(PrefixError::Process(format!("Failed to run wine: {}", e)));
             }
         }
         
         Ok(())
     }
 
-    pub fn run_winecfg(&self, prefix_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run_winecfg(&self, prefix_path: &PathBuf) -> Result<()> {
         let output = Command::new("winecfg")
             .current_dir(&prefix_path)
             .env("WINEPREFIX", prefix_path.to_string_lossy().as_ref())
@@ -250,22 +269,23 @@ impl PrefixManager {
             Ok(result) => {
                 if !result.status.success() {
                     let error = String::from_utf8_lossy(&result.stderr);
-                    return Err(format!("Failed to run winecfg: {}", error).into());
+                    return Err(PrefixError::Process(format!("Failed to run winecfg: {}", error)));
                 }
             }
             Err(e) => {
-                return Err(format!("Failed to run winecfg: {}", e).into());
+                return Err(PrefixError::Process(format!("Failed to run winecfg: {}", e)));
             }
         }
         
         Ok(())
     }
 
-    pub fn get_prefix_info(&self, prefix_path: &PathBuf) -> Result<PrefixInfo, Box<dyn std::error::Error>> {
-        let config = self.load_or_create_config(prefix_path, &prefix_path
+    pub fn get_prefix_info(&self, prefix_path: &PathBuf) -> Result<PrefixInfo> {
+        let name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("unknown"))?;
+            .unwrap_or("unknown");
+        let config = self.load_or_create_config(prefix_path, name)?;
         
         let size = self.calculate_prefix_size(prefix_path)?;
         let executable_count = config.get_executable_count();
@@ -282,36 +302,63 @@ impl PrefixManager {
         })
     }
 
-    fn calculate_prefix_size(&self, prefix_path: &PathBuf) -> Result<u64, Box<dyn std::error::Error>> {
-        let mut total_size = 0u64;
-        
-        for entry in walkdir::WalkDir::new(prefix_path).into_iter().flatten() {
-            if entry.file_type().is_file() {
-                if let Ok(metadata) = entry.metadata() {
-                    total_size += metadata.len();
-                }
-            }
-        }
+    fn calculate_prefix_size(&self, prefix_path: &PathBuf) -> Result<u64> {
+        let total_size = walkdir::WalkDir::new(prefix_path)
+            .into_iter()
+            .flatten()
+            .filter(|entry| entry.file_type().is_file())
+            .filter_map(|entry| entry.metadata().ok())
+            .map(|metadata| metadata.len())
+            .sum();
         
         Ok(total_size)
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct WinePrefix {
-    pub name: String,
-    pub path: PathBuf,
-    pub config: PrefixConfig,
+impl PrefixManagerTrait for Manager {
+    fn scan_prefixes(&self) -> Result<Vec<WinePrefix>> {
+        self.scan_prefixes()
+    }
+
+    fn create_prefix(&self, name: &str, architecture: &str) -> Result<PathBuf> {
+        self.create_prefix(name, architecture)
+    }
+
+    fn delete_prefix(&self, prefix_path: &PathBuf) -> Result<()> {
+        self.delete_prefix(prefix_path)
+    }
+
+    fn scan_for_applications(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>> {
+        self.scan_for_applications(prefix_path)
+    }
+
+    fn update_config(&self, prefix_path: &PathBuf, config: &PrefixConfig) -> Result<()> {
+        self.update_config(prefix_path, config)
+    }
+
+    fn add_executable_to_prefix(&self, prefix_path: &PathBuf, executable: RegisteredExecutable) -> Result<()> {
+        self.add_executable_to_prefix(prefix_path, executable)
+    }
+
+    fn remove_executable_from_prefix(&self, prefix_path: &PathBuf, index: usize) -> Result<()> {
+        self.remove_executable_from_prefix(prefix_path, index)
+    }
+
+    fn launch_executable(&self, prefix_path: &PathBuf, executable: &RegisteredExecutable) -> Result<()> {
+        self.launch_executable(prefix_path, executable)
+    }
+
+    fn run_winecfg(&self, prefix_path: &PathBuf) -> Result<()> {
+        self.run_winecfg(prefix_path)
+    }
+
+    fn get_prefix_info(&self, prefix_path: &PathBuf) -> Result<PrefixInfo> {
+        self.get_prefix_info(prefix_path)
+    }
 }
 
-#[derive(Debug)]
-pub struct PrefixInfo {
-    pub name: String,
-    pub path: PathBuf,
-    pub size: u64,
-    pub executable_count: usize,
-    pub wine_version: Option<String>,
-    pub architecture: String,
-    pub creation_date: chrono::DateTime<chrono::Utc>,
-    pub last_modified: chrono::DateTime<chrono::Utc>,
+impl std::fmt::Display for Manager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PrefixManager(wine_dir: {})", self.wine_dir.display())
+    }
 }

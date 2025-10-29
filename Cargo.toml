@@ -12,3 +12,5 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 walkdir = "2.3"
+tracker = "0.2.2"
+exe = "0.5.6"

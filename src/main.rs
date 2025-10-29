@@ -6,7 +6,7 @@ use std::path::PathBuf;
 mod prefix;
 mod ui;
 
-use prefix::manager::{PrefixManager, WinePrefix};
+use prefix::{Manager as PrefixManager, WinePrefix};
 use ui::{PrefixListModel, PrefixDetailsModel, AppManagerModel};
 
 struct AppModel {
@@ -21,9 +21,8 @@ struct AppModel {
 
 #[derive(Debug, Clone, PartialEq)]
 enum ViewType {
-    List,
-    Details,
-    AppManager,
+    Empty,
+    Content,
 }
 
 #[derive(Debug)]
@@ -36,7 +35,7 @@ enum AppMsg {
     RefreshPrefixes,
     SelectPrefix(usize),
     ShowPrefixDetails(usize),
-    ShowAppManager(usize),
+    // ShowAppManager(usize),
     HideDetails,
     ConfigUpdated(usize, prefix::config::PrefixConfig),
     ScanForApplications(usize),
@@ -63,6 +62,7 @@ impl SimpleComponent for AppModel {
     type Output = ();
 
     view! {
+        #[name = "main_window"]
         gtk::ApplicationWindow {
             set_title: Some("Tequila - Wine Prefix Manager"),
             set_default_width: 800,
@@ -139,96 +139,127 @@ impl SimpleComponent for AppModel {
                         set_width_request: 550,
 
                         match model.current_view {
-                            ViewType::List => {
+                            ViewType::Empty => {
                                 #[name = "empty_view"]
-                                    gtk::Box {
-                                        set_orientation: gtk::Orientation::Vertical,
-                                        set_halign: gtk::Align::Center,
-                                        set_valign: gtk::Align::Center,
+                                gtk::Box {
+                                    set_orientation: gtk::Orientation::Vertical,
+                                    set_halign: gtk::Align::Center,
+                                    set_valign: gtk::Align::Center,
+                                    set_vexpand: true,
+
+                                    gtk::Image {
+                                        set_icon_name: Some("wine-symbolic"),
+                                        set_pixel_size: 64,
+                                        add_css_class: "dim-label",
+                                    },
+
+                                    gtk::Label {
+                                        set_label: "No prefix selected",
+                                        add_css_class: "title-4",
+                                        add_css_class: "dim-label",
+                                        set_margin_top: 10,
+                                    },
+
+                                    gtk::Label {
+                                        set_label: "Select a prefix from the list to view details",
+                                        add_css_class: "body",
+                                        add_css_class: "dim-label",
+                                    }
+                                }
+                            },
+                            ViewType::Content => {
+                                gtk::Box {
+                                    set_hexpand: true,
+                                    set_vexpand: true,
+                                    set_orientation: gtk::Orientation::Vertical,
+
+                                    gtk::Notebook {
+                                        set_hexpand: true,
                                         set_vexpand: true,
+                                        set_show_border: false,
 
-                                        gtk::Image {
-                                            set_icon_name: Some("wine-symbolic"),
-                                            set_pixel_size: 64,
-                                            add_css_class: "dim-label",
-                                        },
+                                        append_page: (
+                                            &{
+                                                model.app_manager.widget().clone().upcast::<gtk::Widget>()
+                                            }, 
+                                            Some(&{
+                                                gtk::Label::builder().label("Apps").build()
+                                            }
+                                        )),
 
-                                        gtk::Label {
-                                            set_label: "No prefix selected",
-                                            add_css_class: "title-4",
-                                            add_css_class: "dim-label",
-                                            set_margin_top: 10,
-                                        },
-
-                                        gtk::Label {
-                                            set_label: "Select a prefix from the list to view details",
-                                            add_css_class: "body",
-                                            add_css_class: "dim-label",
-                                        }
+                                        append_page: (
+                                            &{
+                                                model.prefix_details.widget().clone().upcast::<gtk::Widget>()
+                                            }, 
+                                            Some(&{
+                                                gtk::Label::builder().label("Details").build()
+                                            }
+                                        )),
                                     }
-
+                                }
                             }
-                            ViewType::Details => {
-                                #[name = "details_view"]
-                                    gtk::Box {
-                                        set_orientation: gtk::Orientation::Vertical,
-                                        set_spacing: 10,
-                                        set_margin_all: 10,
+                        }
+                            // ViewType::Details => {
+                            //     #[name = "details_view"]
+                            //         gtk::Box {
+                            //             set_orientation: gtk::Orientation::Vertical,
+                            //             set_spacing: 10,
+                            //             set_margin_all: 10,
 
-                                        gtk::Box {
-                                            set_orientation: gtk::Orientation::Horizontal,
-                                            set_spacing: 10,
-                                            set_halign: gtk::Align::End,
+                            //             // gtk::Box {
+                            //             //     set_orientation: gtk::Orientation::Horizontal,
+                            //             //     set_spacing: 10,
+                            //             //     set_halign: gtk::Align::End,
 
-                                            gtk::Button {
-                                                set_label: "Back to List",
-                                                connect_clicked => AppMsg::HideDetails,
-                                                add_css_class: "flat",
-                                            },
+                            //             //     gtk::Button {
+                            //             //         set_label: "Back to List",
+                            //             //         connect_clicked => AppMsg::HideDetails,
+                            //             //         add_css_class: "flat",
+                            //             //     },
 
-                                            gtk::Button {
-                                                set_label: "Manage Apps",
-                                                connect_clicked => AppMsg::ShowAppManager(model.selected_prefix.unwrap_or(0)),
-                                                set_sensitive: model.selected_prefix.is_some() && model.selected_prefix.unwrap() < model.prefixes.len(),
-                                                add_css_class: "suggested-action",
-                                            },
-                                        },
+                            //             //     gtk::Button {
+                            //             //         set_label: "Manage Apps",
+                            //             //         connect_clicked => AppMsg::ShowAppManager(model.selected_prefix.unwrap_or(0)),
+                            //             //         set_sensitive: model.selected_prefix.is_some(),
+                            //             //         add_css_class: "suggested-action",
+                            //             //     },
+                            //             // },
 
-                                        #[local_ref]
-                                        prefix_details_widget -> gtk::Widget {},
-                                    }
-                            }
-                            ViewType::AppManager => {
-                                #[name = "app_manager_view"]
-                                    gtk::Box {
-                                        set_orientation: gtk::Orientation::Vertical,
-                                        set_spacing: 10,
-                                        set_margin_all: 10,
+                            //             // #[local_ref]
+                            //             // prefix_details_widget -> gtk::Widget {},
+                            //         }
+                            // }
+                            // ViewType::AppManager => {
+                            //     #[name = "app_manager_view"]
+                            //         gtk::Box {
+                            //             set_orientation: gtk::Orientation::Vertical,
+                            //             set_spacing: 10,
+                            //             set_margin_all: 10,
 
-                                        gtk::Box {
-                                            set_orientation: gtk::Orientation::Horizontal,
-                                            set_spacing: 10,
-                                            set_halign: gtk::Align::End,
+                            //             gtk::Box {
+                            //                 set_orientation: gtk::Orientation::Horizontal,
+                            //                 set_spacing: 10,
+                            //                 set_halign: gtk::Align::End,
 
-                                            gtk::Button {
-                                                set_label: "Back to Details",
-                                                connect_clicked => AppMsg::ShowPrefixDetails(model.selected_prefix.unwrap_or(0)),
-                                                set_sensitive: model.selected_prefix.is_some() && model.selected_prefix.unwrap() < model.prefixes.len(),
-                                                add_css_class: "flat",
-                                            },
+                            //                 gtk::Button {
+                            //                     set_label: "Back to Details",
+                            //                     connect_clicked => AppMsg::ShowPrefixDetails(model.selected_prefix.unwrap_or(0)),
+                            //                     set_sensitive: model.selected_prefix.is_some(),
+                            //                     add_css_class: "flat",
+                            //                 },
 
-                                            gtk::Button {
-                                                set_label: "Back to List",
-                                                connect_clicked => AppMsg::HideDetails,
-                                                add_css_class: "flat",
-                                            },
-                                        },
+                            //                 gtk::Button {
+                            //                     set_label: "Back to List",
+                            //                     connect_clicked => AppMsg::HideDetails,
+                            //                     add_css_class: "flat",
+                            //                 },
+                            //             },
 
-                                        #[local_ref]
-                                        app_manager_widget -> gtk::Widget {},
-                                    }
-                            }
-                        }    
+                            //             #[local_ref]
+                            //             app_manager_widget -> gtk::Widget {},
+                            //         }
+                            // }
+                         
                     }       
                 },
 
@@ -241,7 +272,7 @@ impl SimpleComponent for AppModel {
                     gtk::Label {
                         set_label: &format!("{} prefixes loaded from {}",
                                           model.prefixes.len(),
-                                          model.prefix_manager.wine_dir.display()),
+                                          model.prefix_manager.wine_dir().display()),
                         add_css_class: "caption"
                     }
                 }
@@ -266,7 +297,7 @@ impl SimpleComponent for AppModel {
             .forward(sender.input_sender(), |msg| match msg {
                 crate::ui::prefix_list::PrefixListMsg::SelectPrefix(index) => AppMsg::SelectPrefix(index),
                 crate::ui::prefix_list::PrefixListMsg::ShowPrefixDetails(index) => AppMsg::ShowPrefixDetails(index),
-                crate::ui::prefix_list::PrefixListMsg::ShowAppManager(index) => AppMsg::ShowAppManager(index),
+                // crate::ui::prefix_list::PrefixListMsg::ShowAppManager(index) => AppMsg::ShowAppManager(index),
             });
 
         let prefix_details = PrefixDetailsModel::builder()
@@ -275,6 +306,9 @@ impl SimpleComponent for AppModel {
                 crate::ui::prefix_details::PrefixDetailsMsg::ConfigUpdated(config) => {
                     AppMsg::ConfigUpdated(0, config) // Use 0 as fallback index
                 }
+                // crate::ui::prefix_details::PrefixDetailsMsg::ShowAppManager => {
+                //     AppMsg::ShowAppManager(0) // Use 0 as fallback index - will be updated when prefix is selected
+                // }
                 _ => AppMsg::RefreshPrefixes // Handle other messages
             });
 
@@ -294,20 +328,21 @@ impl SimpleComponent for AppModel {
             prefix_list,
             prefix_details,
             app_manager,
-            current_view: ViewType::List,
+            current_view: ViewType::Empty,
         };
 
         // Set up local references for child components
         let prefix_list_widget = model.prefix_list.widget().clone().upcast::<gtk::Widget>();
-        let prefix_details_widget = model.prefix_details.widget().clone().upcast::<gtk::Widget>();
-        let app_manager_widget = model.app_manager.widget().clone().upcast::<gtk::Widget>();
+        // let prefix_details_widget = model.prefix_details.widget().clone().upcast::<gtk::Widget>();
+        // let app_manager_widget = model.app_manager.widget().clone().upcast::<gtk::Widget>();
 
         let widgets = view_output!();
 
-        #[cfg(not(target_os = "macos"))]
+        // #[cfg(not(target_os = "macos"))]
         {
             let header_bar = gtk::HeaderBar::new();
-            widgets.root.set_titlebar(Some(&header_bar));
+            // header_bar.set
+            widgets.main_window.set_titlebar(Some(&header_bar));
         }
 
         ComponentParts { model, widgets }
@@ -479,7 +514,7 @@ impl SimpleComponent for AppModel {
                 println!("Refreshing prefix list");
                 self.prefixes = Self::scan_wine_prefixes(&self.prefix_manager);
                 self.selected_prefix = None;
-                self.current_view = ViewType::List;
+                self.current_view = ViewType::Empty;
                 
                 // Update the prefix list component
                 self.prefix_list.emit(crate::ui::prefix_list::PrefixListMsg::SelectPrefix(0));
@@ -495,27 +530,20 @@ impl SimpleComponent for AppModel {
             AppMsg::ShowPrefixDetails(index) => {
                 if index < self.prefixes.len() {
                     self.selected_prefix = Some(index);
-                    self.current_view = ViewType::Details;
+                    self.current_view = ViewType::Content;
                     
                     // Update the details component
                     let config = self.prefixes[index].config.clone();
-                    self.prefix_details.emit(ui::prefix_details::PrefixDetailsMsg::ConfigUpdated(config));
+                    self.prefix_details.emit(ui::prefix_details::PrefixDetailsMsg::ConfigUpdated(config.clone()));
+                    self.app_manager.emit(ui::app_manager::AppManagerMsg::ConfigUpdated(config));
+                    self.prefix_details.emit(ui::prefix_details::PrefixDetailsMsg::PrefixPathUpdated(self.prefixes[index].path.clone()));
+                    self.app_manager.emit(ui::app_manager::AppManagerMsg::PrefixPathUpdated(self.prefixes[index].path.clone()));
 
                     println!("Showing details for prefix: {}", self.prefixes[index].name);
                 }
             }
-            AppMsg::ShowAppManager(index) => {
-                if index < self.prefixes.len() {
-                    self.selected_prefix = Some(index);
-                    self.current_view = ViewType::AppManager;
-                    
-                    // Update the app manager component
-                    let config = self.prefixes[index].config.clone();
-                    self.app_manager.emit(ui::app_manager::AppManagerMsg::ConfigUpdated(config));
-                }
-            }
             AppMsg::HideDetails => {
-                self.current_view = ViewType::List;
+                self.current_view = ViewType::Empty;
             }
             AppMsg::ConfigUpdated(index, config) => {
                 if index < self.prefixes.len() {
@@ -575,4 +603,3 @@ fn main() {
     let app = RelmApp::new("com.github.tequila");
     app.run::<AppModel>(());
 }
-

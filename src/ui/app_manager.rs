@@ -1,15 +1,23 @@
 use relm4::{gtk, ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent};
+use relm4::factory::{FactoryComponent, FactorySender, FactoryVecDeque, DynamicIndex};
 use gtk::prelude::*;
 use crate::prefix::config::{RegisteredExecutable, PrefixConfig};
 use std::path::PathBuf;
+use tracker;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
+#[tracker::track]
 pub struct AppManagerModel {
     prefix_path: PathBuf,
     config: PrefixConfig,
-    available_executables: Vec<RegisteredExecutable>,
+    #[tracker::do_not_track]
+    available_executables: FactoryVecDeque<AvailableExecutable>,
+    #[tracker::do_not_track]
+    registered_executables: FactoryVecDeque<RegisteredExecutableItem>,
     selected_executable: Option<usize>,
     scanning: bool,
+    show_info_dialog: bool,
+    info_dialog_executable: Option<RegisteredExecutable>,
 }
 
 #[derive(Debug)]
@@ -22,7 +30,254 @@ pub enum AppManagerMsg {
     UpdateExecutableList(Vec<RegisteredExecutable>),
     SelectExecutable(usize),
     ConfigUpdated(PrefixConfig),
+    PrefixPathUpdated(PathBuf),
     ScanComplete(Result<Vec<RegisteredExecutable>, String>),
+    AddSelected,
+    RemoveSelected,
+    LaunchSelected,
+    ShowInfoDialog(usize),
+    CloseInfoDialog,
+}
+
+// Factory component for available executables (remains as list for now)
+#[derive(Debug)]
+struct AvailableExecutable {
+    executable: RegisteredExecutable,
+    index: usize,
+}
+
+#[derive(Debug)]
+enum AvailableExecutableMsg {
+    Select,
+}
+
+#[derive(Debug)]
+enum AvailableExecutableOutput {
+    Selected(usize),
+}
+
+#[relm4::factory]
+impl FactoryComponent for AvailableExecutable {
+    type Init = (RegisteredExecutable, usize);
+    type Input = AvailableExecutableMsg;
+    type Output = AvailableExecutableOutput;
+    type CommandOutput = ();
+    type ParentWidget = gtk::ListBox;
+
+    view! {
+        #[root]
+        gtk::ListBoxRow {
+            set_selectable: true,
+            set_activatable: true,
+
+            gtk::Box {
+                set_orientation: gtk::Orientation::Horizontal,
+                set_spacing: 10,
+                set_margin_top: 8,
+                set_margin_bottom: 8,
+                set_margin_start: 8,
+                set_margin_end: 8,
+
+                // Icon or placeholder
+                gtk::Image {
+                    set_pixel_size: 24,
+                    #[watch]
+                    set_from_file: self.executable.icon_path.as_ref(),
+                    set_icon_name: Some("application-x-executable"),
+                },
+
+                // Executable info
+                gtk::Box {
+                    set_orientation: gtk::Orientation::Vertical,
+                    set_spacing: 2,
+                    set_hexpand: true,
+
+                    gtk::Label {
+                        #[watch]
+                        set_label: &self.executable.name,
+                        set_halign: gtk::Align::Start,
+                        set_ellipsize: gtk::pango::EllipsizeMode::End,
+                    },
+
+                    gtk::Label {
+                        #[watch]
+                        set_label: &self.executable.description.as_deref().unwrap_or(""),
+                        set_halign: gtk::Align::Start,
+                        set_ellipsize: gtk::pango::EllipsizeMode::End,
+                        add_css_class: "caption",
+                        #[watch]
+                        set_visible: self.executable.description.is_some(),
+                    },
+                },
+            }
+        }
+    }
+
+    fn init_model(
+        init: Self::Init,
+        _index: &DynamicIndex,
+        _sender: FactorySender<Self>,
+    ) -> Self {
+        let (executable, index) = init;
+        Self { executable, index }
+    }
+
+    fn update(&mut self, msg: Self::Input, _sender: FactorySender<Self>) {
+        match msg {
+            AvailableExecutableMsg::Select => {
+                // Selection is handled through the output
+            }
+        }
+    }
+}
+
+// Grid-based factory component for registered executables
+#[derive(Debug)]
+struct RegisteredExecutableItem {
+    executable: RegisteredExecutable,
+    index: usize,
+    selected: bool,
+}
+
+
+#[derive(Debug)]
+enum RegisteredExecutableMsg {
+    Select,
+    Launch,
+    Remove,
+    ShowInfo,
+}
+
+#[derive(Debug)]
+enum RegisteredExecutableOutput {
+    Selected(usize),
+    Launch(usize),
+    Remove(usize),
+    ShowInfo(usize),
+}
+
+#[relm4::factory]
+impl FactoryComponent for RegisteredExecutableItem {
+    type Init = (RegisteredExecutable, usize);
+    type Input = RegisteredExecutableMsg;
+    type Output = RegisteredExecutableOutput;
+    type CommandOutput = ();
+    type ParentWidget = gtk::FlowBox;
+
+    view! {
+        #[root]
+        gtk::Box {
+            set_orientation: gtk::Orientation::Vertical,
+            set_spacing: 8,
+            set_margin_all: 10,
+            set_width_request: 32,
+            set_height_request: 32,
+            set_focusable: true,
+            // set_selectable: true,
+            
+            // Selection indicator
+            #[watch]
+            set_css_classes: if self.selected { &["card", "selected"] } else { &["card"] },
+            
+            // Click handler for selection
+            // set_cursor: gtk::gdk::Cursor::from_name("pointer", None).as_ref(),
+            set_cursor_from_name: Some("pointer"),
+            // connect_focus_on_click_notify[sender, index = self.index] => move |_, _| {
+            //     sender.input(RegisteredExecutableMsg::Select);
+            //     sender.output(RegisteredExecutableOutput::Selected(index)).unwrap();
+            //     gtk::glib::Propagation::Proceed
+            // },
+
+            // Icon
+            gtk::Image {
+                set_pixel_size: 48,
+                #[watch]
+                set_from_file: self.executable.icon_path.as_ref(),
+                set_icon_name: Some("application-x-executable"),
+                set_halign: gtk::Align::Center,
+                set_valign: gtk::Align::Center,
+            },
+
+            // Name
+            gtk::Label {
+                #[watch]
+                set_label: &self.executable.name,
+                set_halign: gtk::Align::Center,
+                set_ellipsize: gtk::pango::EllipsizeMode::End,
+                set_max_width_chars: 15,
+                set_lines: 2,
+            },
+
+            // Action buttons (visible on hover/selection)
+            // gtk::Box {
+            //     set_orientation: gtk::Orientation::Horizontal,
+            //     set_spacing: 4,
+            //     set_halign: gtk::Align::Center,
+            //     set_margin_top: 5,
+            //     #[watch]
+            //     set_visible: self.selected,
+
+            //     gtk::Button {
+            //         set_icon_name: "media-playback-start-symbolic",
+            //         set_tooltip_text: Some("Launch"),
+            //         add_css_class: "circular",
+            //         add_css_class: "suggested-action",
+            //         connect_clicked[sender, index = self.index] => move |_| {
+            //             sender.output(RegisteredExecutableOutput::Launch(index)).unwrap();
+            //         },
+            //     },
+
+            //     gtk::Button {
+            //         set_icon_name: "dialog-information-symbolic",
+            //         set_tooltip_text: Some("Info"),
+            //         add_css_class: "circular",
+            //         connect_clicked[sender, index = self.index] => move |_| {
+            //             sender.output(RegisteredExecutableOutput::ShowInfo(index)).unwrap();
+            //         },
+            //     },
+
+            //     gtk::Button {
+            //         set_icon_name: "user-trash-symbolic",
+            //         set_tooltip_text: Some("Remove"),
+            //         add_css_class: "circular",
+            //         add_css_class: "destructive-action",
+            //         connect_clicked[sender, index = self.index] => move |_| {
+            //             sender.output(RegisteredExecutableOutput::Remove(index)).unwrap();
+            //         },
+            //     },
+            // },
+        }
+    }
+
+    fn init_model(
+        init: Self::Init,
+        _index: &DynamicIndex,
+        _sender: FactorySender<Self>,
+    ) -> Self {
+        let (executable, index) = init;
+        Self {
+            executable,
+            index,
+            selected: false,
+        }
+    }
+
+    fn update(&mut self, msg: Self::Input, sender: FactorySender<Self>) {
+        match msg {
+            RegisteredExecutableMsg::Select => {
+                self.selected = true;
+            }
+            RegisteredExecutableMsg::Launch => {
+                // Launch is handled through the output
+            }
+            RegisteredExecutableMsg::Remove => {
+                // Remove is handled through the output
+            }
+            RegisteredExecutableMsg::ShowInfo => {
+                // Show info is handled through the output
+            }
+        }
+    }
 }
 
 #[relm4::component(pub)]
@@ -30,18 +285,13 @@ impl SimpleComponent for AppManagerModel {
     type Init = (PathBuf, PrefixConfig);
     type Input = AppManagerMsg;
     type Output = AppManagerMsg;
+    type Widgets = AppManagerWidgets;
 
     view! {
         gtk::Box {
             set_orientation: gtk::Orientation::Vertical,
             set_spacing: 10,
             set_margin_all: 10,
-
-            gtk::Label {
-                set_label: "Application Manager",
-                add_css_class: "heading",
-                set_margin_bottom: 10,
-            },
 
             gtk::Box {
                 set_orientation: gtk::Orientation::Horizontal,
@@ -50,13 +300,16 @@ impl SimpleComponent for AppManagerModel {
 
                 gtk::Button {
                     set_label: "Scan for Applications",
+                    #[track = "model.changed(AppManagerModel::scanning())"]
                     set_sensitive: !model.scanning,
                     connect_clicked => AppManagerMsg::ScanForApplications,
                     add_css_class: "suggested-action",
                 },
 
                 gtk::Spinner {
+                    #[track = "model.changed(AppManagerModel::scanning())"]
                     set_spinning: model.scanning,
+                    #[track = "model.changed(AppManagerModel::scanning())"]
                     set_visible: model.scanning,
                 },
             },
@@ -68,7 +321,7 @@ impl SimpleComponent for AppManagerModel {
                 set_spacing: 10,
                 set_homogeneous: true,
 
-                // Available executables
+                // Available executables (left panel)
                 gtk::Frame {
                     set_label: Some("Available Applications"),
                     set_hexpand: true,
@@ -79,20 +332,30 @@ impl SimpleComponent for AppManagerModel {
                         set_margin_all: 10,
 
                         gtk::Label {
+                            #[watch]
                             set_label: &format!("{} applications found", model.available_executables.len()),
                             add_css_class: "caption",
-                            set_visible: !model.available_executables.is_empty(),
+                            #[watch]
+                            set_visible: model.available_executables.len() > 0,
                         },
 
                         gtk::ScrolledWindow {
                             set_vexpand: true,
                             set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
                             set_min_content_height: 200,
-                            set_visible: !model.available_executables.is_empty(),
+                            #[watch]
+                            set_visible: model.available_executables.len() > 0,
 
-                            #[name = "available_list"]
-                            gtk::ListBox {
+                            #[local_ref]
+                            available_list_box -> gtk::ListBox {
                                 set_css_classes: &["boxed-list"],
+                                set_selection_mode: gtk::SelectionMode::Single,
+                                connect_row_selected[sender] => move |_, row| {
+                                    if let Some(row) = row {
+                                        let index = row.index();
+                                        sender.input(AppManagerMsg::SelectExecutable(index as usize));
+                                    }
+                                },
                             },
                         },
 
@@ -101,13 +364,14 @@ impl SimpleComponent for AppManagerModel {
                             set_halign: gtk::Align::Center,
                             set_valign: gtk::Align::Center,
                             set_wrap: true,
-                            set_visible: model.available_executables.is_empty(),
+                            #[watch]
+                            set_visible: model.available_executables.len() == 0,
                             add_css_class: "dim-label",
                         },
                     },
                 },
 
-                // Registered executables
+                // Registered executables (right panel - grid layout)
                 gtk::Frame {
                     set_label: Some("Registered Applications"),
                     set_hexpand: true,
@@ -118,7 +382,8 @@ impl SimpleComponent for AppManagerModel {
                         set_margin_all: 10,
 
                         gtk::Label {
-                            set_label: &format!("{} applications registered", model.config.registered_executables.len()),
+                            #[watch]
+                            set_label: &format!("{} applications registered", model.registered_executables.len()),
                             add_css_class: "caption",
                         },
 
@@ -127,9 +392,14 @@ impl SimpleComponent for AppManagerModel {
                             set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
                             set_min_content_height: 200,
 
-                            #[name = "registered_list"]
-                            gtk::ListBox {
-                                set_css_classes: &["boxed-list"],
+                            #[local_ref]
+                            registered_grid -> gtk::FlowBox {
+                                set_row_spacing: 10,
+                                set_column_spacing: 10,
+                                set_margin_all: 5,
+                                set_max_children_per_line: 4,
+                                set_selection_mode: gtk::SelectionMode::None,
+                                set_homogeneous: true,
                             },
                         },
 
@@ -138,13 +408,15 @@ impl SimpleComponent for AppManagerModel {
                             set_halign: gtk::Align::Center,
                             set_valign: gtk::Align::Center,
                             set_wrap: true,
-                            set_visible: model.config.registered_executables.is_empty(),
+                            #[watch]
+                            set_visible: model.registered_executables.len() == 0,
                             add_css_class: "dim-label",
                         },
                     },
                 },
             },
 
+            // Action bar at bottom
             gtk::Box {
                 set_orientation: gtk::Orientation::Horizontal,
                 set_spacing: 10,
@@ -153,33 +425,30 @@ impl SimpleComponent for AppManagerModel {
 
                 gtk::Button {
                     set_label: "Add Selected",
+                    #[track = "model.changed(AppManagerModel::selected_executable()) || model.changed(AppManagerModel::scanning())"]
                     set_sensitive: model.selected_executable.is_some() && !model.scanning,
-                    connect_clicked[sender, selected = model.selected_executable] => move |_| {
-                        if let Some(index) = selected {
-                            sender.input(AppManagerMsg::AddExecutable(index));
-                        }
+                    connect_clicked[sender] => move |_| {
+                        sender.input(AppManagerMsg::AddSelected);
                     },
                     add_css_class: "suggested-action",
                 },
 
                 gtk::Button {
                     set_label: "Remove Selected",
+                    #[track = "model.changed(AppManagerModel::selected_executable()) || model.changed(AppManagerModel::scanning())"]
                     set_sensitive: model.selected_executable.is_some() && !model.scanning,
-                    connect_clicked[sender, selected = model.selected_executable] => move |_| {
-                        if let Some(index) = selected {
-                            sender.input(AppManagerMsg::RemoveExecutable(index));
-                        }
+                    connect_clicked[sender] => move |_| {
+                        sender.input(AppManagerMsg::RemoveSelected);
                     },
                     add_css_class: "destructive-action",
                 },
 
                 gtk::Button {
                     set_label: "Launch",
+                    #[track = "model.changed(AppManagerModel::selected_executable()) || model.changed(AppManagerModel::scanning())"]
                     set_sensitive: model.selected_executable.is_some() && !model.scanning,
-                    connect_clicked[sender, selected = model.selected_executable] => move |_| {
-                        if let Some(index) = selected {
-                            sender.input(AppManagerMsg::LaunchExecutable(index));
-                        }
+                    connect_clicked[sender] => move |_| {
+                        sender.input(AppManagerMsg::LaunchSelected);
                     },
                 },
             },
@@ -193,66 +462,109 @@ impl SimpleComponent for AppManagerModel {
     ) -> ComponentParts<Self> {
         let (prefix_path, config) = init;
         
+        // Initialize factory for available executables
+        let available_executables = FactoryVecDeque::builder()
+            .launch(gtk::ListBox::default())
+            .forward(sender.input_sender(), |output| match output {
+                AvailableExecutableOutput::Selected(index) => AppManagerMsg::SelectExecutable(index),
+            });
+
+        // Initialize factory for registered executables (grid layout)
+        let registered_executables = FactoryVecDeque::builder()
+            .launch(gtk::FlowBox::default())
+            .forward(sender.input_sender(), |output| match output {
+                RegisteredExecutableOutput::Selected(index) => AppManagerMsg::SelectExecutable(index),
+                RegisteredExecutableOutput::Launch(index) => AppManagerMsg::LaunchExecutable(index),
+                RegisteredExecutableOutput::Remove(index) => AppManagerMsg::RemoveExecutable(index),
+                RegisteredExecutableOutput::ShowInfo(index) => AppManagerMsg::ShowInfoDialog(index),
+            });
+
         let model = AppManagerModel {
             prefix_path,
             config: config.clone(),
-            available_executables: Vec::new(),
+            available_executables,
+            registered_executables,
             selected_executable: None,
             scanning: false,
+            show_info_dialog: false,
+            info_dialog_executable: None,
+            tracker: 0
         };
+
+        // Get references to the factory widgets
+        let available_list_box = model.available_executables.widget();
+        let registered_grid = model.registered_executables.widget();
 
         let widgets = view_output!();
 
-        // Populate registered executables list
-        Self::populate_registered_list(&model, &widgets);
+        // sender.input(AppManagerMsg::ScanForApplications);
 
         ComponentParts { model, widgets }
     }
 
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
+        self.reset();
         match msg {
             AppManagerMsg::ScanForApplications => {
-                self.scanning = true;
-                self.selected_executable = None;
+                self.set_scanning(true);
+                self.set_selected_executable(None);
 
-                // Start scanning in a separate thread
-                let prefix_path = self.prefix_path.clone();
-                let sender_clone = sender.clone();
-                
-                std::thread::spawn(move || {
-                    // Create a temporary PrefixManager for scanning
-                    let prefix_manager = crate::prefix::manager::PrefixManager::new(prefix_path.parent().unwrap_or(&prefix_path).to_path_buf());
-                    
-                    match prefix_manager.scan_for_applications(&prefix_path) {
-                        Ok(executables) => {
-                            sender_clone.input(AppManagerMsg::ScanComplete(Ok(executables)));
+                println!("Scanning for applications... {}", &self.prefix_path.display());
+
+                // Simple synchronous scanning - no background threads
+                let prefix_manager = crate::prefix::Manager::new(self.prefix_path.parent().unwrap_or(&self.prefix_path).to_path_buf());
+                match prefix_manager.scan_for_applications(&self.prefix_path) {
+                    Ok(executables) => {
+                        println!("Scanning complete, found {} executables", executables.len());
+                        
+                        // Update available executables factory
+                        self.available_executables.guard().clear();
+                        for (index, executable) in executables.iter().enumerate() {
+                            self.available_executables.guard().push_back((executable.clone(), index));
                         }
-                        Err(e) => {
-                            sender_clone.input(AppManagerMsg::ScanComplete(Err(format!("Scan failed: {}", e))));
-                        }
+                        
+                        self.set_selected_executable(None);
                     }
-                });
+                    Err(e) => {
+                        eprintln!("Scan failed: {}", e);
+                    }
+                }
+                self.set_scanning(false);
             }
             AppManagerMsg::AddExecutable(index) => {
-                if index < self.available_executables.len() {
-                    let executable = self.available_executables[index].clone();
-                    self.config.add_executable(executable);
-                    sender.output(AppManagerMsg::ConfigUpdated(self.config.clone()));
+                println!("trying to add executable");
+                if let Some(executable) = self.available_executables.get(index).map(|item| item.executable.clone()) {
+                    println!("Adding executable: {}", executable.name);
+                    
+                    self.config.add_executable(executable.clone());
+                    
+                    // Update registered executables factory
+                    self.registered_executables.guard().clear();
+                    for (idx, exe) in self.config.registered_executables.iter().enumerate() {
+                        self.registered_executables.guard().push_back((exe.clone(), idx));
+                    }
+                    
+                    let _ = sender.output(AppManagerMsg::ConfigUpdated(self.config.clone()));
                 }
             }
             AppManagerMsg::RemoveExecutable(index) => {
                 if index < self.config.registered_executables.len() {
                     self.config.remove_executable(index);
-                    self.selected_executable = None;
-                    sender.output(AppManagerMsg::ConfigUpdated(self.config.clone()));
+                    self.set_selected_executable(None);
+                    
+                    // Update registered executables factory
+                    self.registered_executables.guard().clear();
+                    for (idx, exe) in self.config.registered_executables.iter().enumerate() {
+                        self.registered_executables.guard().push_back((exe.clone(), idx));
+                    }
+                    
+                    let _ = sender.output(AppManagerMsg::ConfigUpdated(self.config.clone()));
                 }
             }
             AppManagerMsg::LaunchExecutable(index) => {
-                if index < self.config.registered_executables.len() {
-                    let executable = &self.config.registered_executables[index];
-                    
+                if let Some(executable) = self.registered_executables.get(index).map(|item| &item.executable) {
                     // Create a temporary PrefixManager for launching
-                    let prefix_manager = crate::prefix::manager::PrefixManager::new(self.prefix_path.parent().unwrap_or(&self.prefix_path).to_path_buf());
+                    let prefix_manager = crate::prefix::Manager::new(self.prefix_path.parent().unwrap_or(&self.prefix_path).to_path_buf());
                     
                     match prefix_manager.launch_executable(&self.prefix_path, executable) {
                         Ok(_) => {
@@ -266,161 +578,248 @@ impl SimpleComponent for AppManagerModel {
                 }
             }
             AppManagerMsg::UpdateExecutableList(executables) => {
-                self.available_executables = executables;
-                self.selected_executable = None;
+                // Update available executables factory
+                self.available_executables.guard().clear();
+                for (index, executable) in executables.iter().enumerate() {
+                    self.available_executables.guard().push_back((executable.clone(), index));
+                }
+                self.set_selected_executable(None);
             }
             AppManagerMsg::SelectExecutable(index) => {
-                self.selected_executable = Some(index);
+                println!("Selected executable: {}", index);
+                self.set_selected_executable(Some(index));
+                
+                // Update selection state in registered executables
+                self.registered_executables.guard().clear();
+                for (idx, exe) in self.config.registered_executables.iter().enumerate() {
+                    self.registered_executables.guard().push_back((exe.clone(), idx));
+                }
             }
             AppManagerMsg::ConfigUpdated(config) => {
-                self.config = config;
+                self.set_config(config);
             }
-            AppManagerMsg::ScanComplete(result) => {
-                self.scanning = false;
-                match result {
-                    Ok(executables) => {
-                        self.available_executables = executables;
-                        self.selected_executable = None;
-                    }
-                    Err(error) => {
-                        eprintln!("Scan failed: {}", error);
-                    }
+            AppManagerMsg::PrefixPathUpdated(path) => {
+                self.set_prefix_path(path);
+            }
+            AppManagerMsg::ScanComplete(_) => {
+                // This message is no longer used with synchronous scanning
+            }
+            AppManagerMsg::AddSelected => {
+                if let Some(index) = self.selected_executable {
+                    println!("Add selected: {}", index);
+                    sender.input(AppManagerMsg::AddExecutable(index));
                 }
+            }
+            AppManagerMsg::RemoveSelected => {
+                if let Some(index) = self.selected_executable {
+                    println!("Remove selected: {}", index);
+                    sender.input(AppManagerMsg::RemoveExecutable(index));
+                }
+            }
+            AppManagerMsg::LaunchSelected => {
+                if let Some(index) = self.selected_executable {
+                    println!("Launch selected: {}", index);
+                    sender.input(AppManagerMsg::LaunchExecutable(index));
+                }
+            }
+            AppManagerMsg::ShowInfoDialog(index) => {
+                if let Some(executable) = self.registered_executables.get(index).map(|item| item.executable.clone()) {
+                    self.set_info_dialog_executable(Some(executable));
+                    self.set_show_info_dialog(true);
+                }
+            }
+            AppManagerMsg::CloseInfoDialog => {
+                self.set_show_info_dialog(false);
+                self.set_info_dialog_executable(None);
             }
         }
     }
 }
 
-impl AppManagerModel {
-    fn populate_available_list(
-        model: &AppManagerModel,
-        widgets: &<AppManagerModel as SimpleComponent>::Widgets,
-    ) {
-        // Clear existing items
-        while let Some(row) = widgets.available_list.first_child() {
-            widgets.available_list.remove(&row);
-        }
+// Info dialog component for showing executable metadata
+#[relm4::component]
+impl SimpleComponent for InfoDialogModel {
+    type Init = RegisteredExecutable;
+    type Input = InfoDialogMsg;
+    type Output = InfoDialogMsg;
+    type Widgets = InfoDialogWidgets;
 
-        // Add available executables to list
-        for (index, executable) in model.available_executables.iter().enumerate() {
-            let exec_box = gtk::Box::builder()
-                .orientation(gtk::Orientation::Horizontal)
-                .spacing(10)
-                .margin_top(8)
-                .margin_bottom(8)
-                .margin_start(8)
-                .margin_end(8)
-                .build();
-
-            // Icon or placeholder
-            let icon_widget = if let Some(icon_path) = &executable.icon_path {
-                if icon_path.exists() {
-                    gtk::Image::from_file(icon_path)
-                } else {
-                    gtk::Image::from_icon_name("application-x-executable")
+    view! {
+        gtk::Dialog {
+            set_title: Some("Executable Information"),
+            set_modal: true,
+            set_default_width: 400,
+            set_default_height: 300,
+            
+            add_button: ("Close", gtk::ResponseType::Close),
+            
+            gtk::Box {
+                set_orientation: gtk::Orientation::Vertical,
+                set_spacing: 10,
+                set_margin_all: 20,
+                
+                // Header with icon and name
+                gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_spacing: 15,
+                    set_margin_bottom: 15,
+                    
+                    gtk::Image {
+                        set_pixel_size: 64,
+                        set_from_file: model.executable.icon_path.as_ref(),
+                        set_icon_name: Some("application-x-executable"),
+                    },
+                    
+                    gtk::Box {
+                        set_orientation: gtk::Orientation::Vertical,
+                        set_spacing: 5,
+                        
+                        gtk::Label {
+                            set_label: &model.executable.name,
+                            add_css_class: "heading",
+                            set_halign: gtk::Align::Start,
+                        },
+                        
+                        gtk::Label {
+                            set_label: &model.executable.description.as_deref().unwrap_or("No description available"),
+                            set_halign: gtk::Align::Start,
+                            set_wrap: true,
+                            set_wrap_mode: gtk::pango::WrapMode::WordChar,
+                            add_css_class: "dim-label",
+                        },
+                    },
+                },
+                
+                gtk::Separator {},
+                
+                // Metadata
+                gtk::Frame {
+                    set_label: Some("Details"),
+                    
+                    gtk::Box {
+                        set_orientation: gtk::Orientation::Vertical,
+                        set_spacing: 8,
+                        set_margin_all: 15,
+                        
+                        // Executable path
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Horizontal,
+                            set_spacing: 5,
+                            
+                            gtk::Label {
+                                set_label: "Path:",
+                                set_width_chars: 12,
+                                set_halign: gtk::Align::Start,
+                            },
+                            
+                            gtk::Label {
+                                set_label: &model.executable.executable_path.display().to_string(),
+                                set_halign: gtk::Align::Start,
+                                set_ellipsize: gtk::pango::EllipsizeMode::Start,
+                                set_hexpand: true,
+                                add_css_class: "monospace",
+                                add_css_class: "caption",
+                            },
+                        },
+                        
+                        // Working directory
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Horizontal,
+                            set_spacing: 5,
+                            
+                            gtk::Label {
+                                set_label: "Working Dir:",
+                                set_width_chars: 12,
+                                set_halign: gtk::Align::Start,
+                            },
+                            
+                            gtk::Label {
+                                set_label: "Not available",
+                                set_halign: gtk::Align::Start,
+                                set_ellipsize: gtk::pango::EllipsizeMode::Start,
+                                set_hexpand: true,
+                                add_css_class: "caption",
+                            },
+                        },
+                        
+                        // Arguments
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Horizontal,
+                            set_spacing: 5,
+                            
+                            gtk::Label {
+                                set_label: "Arguments:",
+                                set_width_chars: 12,
+                                set_halign: gtk::Align::Start,
+                            },
+                            
+                            gtk::Label {
+                                set_label: "Not available",
+                                set_halign: gtk::Align::Start,
+                                set_hexpand: true,
+                                add_css_class: "caption",
+                            },
+                        },
+                        
+                        // Environment variables
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Horizontal,
+                            set_spacing: 5,
+                            
+                            gtk::Label {
+                                set_label: "Environment:",
+                                set_width_chars: 12,
+                                set_halign: gtk::Align::Start,
+                            },
+                            
+                            gtk::Label {
+                                set_label: "Not available",
+                                set_halign: gtk::Align::Start,
+                                set_hexpand: true,
+                                add_css_class: "caption",
+                            },
+                        },
+                    },
+                },
+            },
+            
+            connect_response[sender] => move |_, response| {
+                if response == gtk::ResponseType::Close {
+                    sender.input(InfoDialogMsg::Close);
                 }
-            } else {
-                gtk::Image::from_icon_name("application-x-executable")
-            };
-
-            icon_widget.set_pixel_size(24);
-            exec_box.append(&icon_widget);
-
-            // Executable info
-            let info_box = gtk::Box::builder()
-                .orientation(gtk::Orientation::Vertical)
-                .spacing(2)
-                .hexpand(true)
-                .build();
-
-            let name_label = gtk::Label::builder()
-                .label(&executable.name)
-                .halign(gtk::Align::Start)
-                .ellipsize(gtk::pango::EllipsizeMode::End)
-                .build();
-
-            info_box.append(&name_label);
-
-            if let Some(description) = &executable.description {
-                let desc_label = gtk::Label::builder()
-                    .label(description)
-                    .halign(gtk::Align::Start)
-                    // .add_css_class("caption")
-                    .ellipsize(gtk::pango::EllipsizeMode::End)
-                    .build();
-                info_box.append(&desc_label);
-            }
-
-            exec_box.append(&info_box);
-
-            let row = gtk::ListBoxRow::builder().child(&exec_box).build();
-            widgets.available_list.append(&row);
+            },
         }
     }
 
-    fn populate_registered_list(
-        model: &AppManagerModel,
-        widgets: &<AppManagerModel as SimpleComponent>::Widgets,
-    ) {
-        // Clear existing items
-        while let Some(row) = widgets.registered_list.first_child() {
-            widgets.registered_list.remove(&row);
-        }
+    fn init(
+        init: Self::Init,
+        root: Self::Root,
+        sender: ComponentSender<Self>,
+    ) -> ComponentParts<Self> {
+        let model = InfoDialogModel {
+            executable: init,
+        };
 
-        // Add registered executables to list
-        for (index, executable) in model.config.registered_executables.iter().enumerate() {
-            let exec_box = gtk::Box::builder()
-                .orientation(gtk::Orientation::Horizontal)
-                .spacing(10)
-                .margin_top(8)
-                .margin_bottom(8)
-                .margin_start(8)
-                .margin_end(8)
-                .build();
+        let widgets = view_output!();
 
-            // Icon or placeholder
-            let icon_widget = if let Some(icon_path) = &executable.icon_path {
-                if icon_path.exists() {
-                    gtk::Image::from_file(icon_path)
-                } else {
-                    gtk::Image::from_icon_name("application-x-executable")
-                }
-            } else {
-                gtk::Image::from_icon_name("application-x-executable")
-            };
+        ComponentParts { model, widgets }
+    }
 
-            icon_widget.set_pixel_size(24);
-            exec_box.append(&icon_widget);
-
-            // Executable info
-            let info_box = gtk::Box::builder()
-                .orientation(gtk::Orientation::Vertical)
-                .spacing(2)
-                .hexpand(true)
-                .build();
-
-            let name_label = gtk::Label::builder()
-                .label(&executable.name)
-                .halign(gtk::Align::Start)
-                .ellipsize(gtk::pango::EllipsizeMode::End)
-                .build();
-
-            info_box.append(&name_label);
-
-            if let Some(description) = &executable.description {
-                let desc_label = gtk::Label::builder()
-                    .label(description)
-                    .halign(gtk::Align::Start)
-                    // .add_css_class("caption")
-                    .ellipsize(gtk::pango::EllipsizeMode::End)
-                    .build();
-                info_box.append(&desc_label);
+    fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
+        match msg {
+            InfoDialogMsg::Close => {
+                let _ = sender.output(InfoDialogMsg::Close);
             }
-
-            exec_box.append(&info_box);
-
-            let row = gtk::ListBoxRow::builder().child(&exec_box).build();
-            widgets.registered_list.append(&row);
         }
     }
+}
+
+#[derive(Debug)]
+struct InfoDialogModel {
+    executable: RegisteredExecutable,
+}
+
+#[derive(Debug)]
+enum InfoDialogMsg {
+    Close,
 }

@@ -2,7 +2,7 @@ use relm4::{gtk, ComponentParts, ComponentSender, SimpleComponent};
 use gtk::prelude::*;
 use crate::prefix::WinePrefix;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PrefixListModel {
     prefixes: Vec<WinePrefix>,
     selected_prefix: Option<usize>,
@@ -13,7 +13,7 @@ pub struct PrefixListModel {
 pub enum PrefixListMsg {
     SelectPrefix(usize),
     ShowPrefixDetails(usize),
-    ShowAppManager(usize),
+    // ShowAppManager(usize),
 }
 
 #[relm4::component(pub)]
@@ -29,15 +29,11 @@ impl SimpleComponent for PrefixListModel {
             set_vexpand: true,
             set_hexpand: true,
             set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
-            set_width_request: 400,
+            set_width_request: 128,
 
             #[name = "prefix_list_box"]
             gtk::ListBox {
                 set_css_classes: &["boxed-list"],
-                // set_margin_top: 5,
-                // set_margin_bottom: 5,
-                // set_margin_start: 5,
-                // set_margin_end: 5,
                 set_selection_mode: gtk::SelectionMode::Single,
             }
         }
@@ -80,9 +76,9 @@ impl SimpleComponent for PrefixListModel {
             PrefixListMsg::ShowPrefixDetails(index) => {
                 let _ = sender.output(PrefixListMsg::ShowPrefixDetails(index));
             }
-            PrefixListMsg::ShowAppManager(index) => {
-                let _ = sender.output(PrefixListMsg::ShowAppManager(index));
-            }
+            // PrefixListMsg::ShowAppManager(index) => {
+            //     let _ = sender.output(PrefixListMsg::ShowAppManager(index));
+            // }
         }
     }
 }
@@ -201,24 +197,6 @@ impl PrefixListModel {
             details_btn.connect_clicked(move |_| {
                 sender_clone.input(PrefixListMsg::ShowPrefixDetails(details_index));
             });
-
-            // // Apps button
-            // let apps_btn = gtk::Button::builder()
-            //     .label("Apps")
-            //     .build();
-            // apps_btn.add_css_class("flat");
-            // apps_btn.set_tooltip_text(Some("Manage applications"));
-
-            // let sender_clone = sender.clone();
-            // let apps_index = index;
-            // apps_btn.connect_clicked(move |_| {
-            //     sender_clone.input(PrefixListMsg::ShowAppManager(apps_index));
-            // });
-
-            // actions_box.append(&details_btn);
-            // actions_box.append(&apps_btn);
-
-            // main_box.append(&actions_box);
 
             row.set_child(Some(&main_box));
 
