@@ -1,6 +1,8 @@
 use gtk::prelude::*;
-use relm4::{ComponentController, ComponentParts, ComponentSender, Controller, RelmApp, RelmWidgetExt, SimpleComponent, Component, gtk};
+use relm4::{ComponentController, ComponentParts, ComponentSender, Controller, RelmApp, RelmWidgetExt, SimpleComponent, Component, gtk, component::AsyncComponentController};
+use relm4::prelude::{AsyncController, AsyncComponent};
 use std::path::PathBuf;
+use tracker;
 
 // Import new modules
 mod prefix;
@@ -9,14 +11,19 @@ mod ui;
 use prefix::{Manager as PrefixManager, WinePrefix};
 use ui::{PrefixListModel, PrefixDetailsModel, AppManagerModel};
 
+#[tracker::track]
 struct AppModel {
     prefixes: Vec<WinePrefix>,
     prefix_manager: PrefixManager,
     selected_prefix: Option<usize>,
+    #[tracker::do_not_track]
     prefix_list: Controller<PrefixListModel>,
+    #[tracker::do_not_track]
     prefix_details: Controller<PrefixDetailsModel>,
-    app_manager: Controller<AppManagerModel>,
+    #[tracker::do_not_track]
+    app_manager: AsyncController<AppManagerModel>,
     current_view: ViewType,
+    sidebar_visible: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,6 +48,7 @@ enum AppMsg {
     ScanForApplications(usize),
     ShowCreatePrefixDialog,
     CreatePrefixComplete(String, String), // name, architecture
+    ToggleSidebar,
 }
 
 impl AppModel {
@@ -68,68 +76,137 @@ impl SimpleComponent for AppModel {
             set_default_width: 800,
             set_default_height: 600,
 
+            set_titlebar: Some(&{
+                let header_bar = gtk::HeaderBar::new();
+
+                #[cfg(target_os = "macos")]
+                header_bar.set_property("use-native-controls", true);
+                let title_label = gtk::Label::builder()
+                    .label("Tequila")
+                    .halign(gtk::Align::Center)
+                    .hexpand(true)
+                    .build();
+                title_label.add_css_class("title");
+
+                let sidebar_toggle_button = gtk::ToggleButton::builder()
+                    .icon_name("sidebar-show-symbolic")
+                    .tooltip_text("Show Sidebar")
+                    .build();
+
+                let title_box = gtk::Box::builder()
+                    .orientation(gtk::Orientation::Horizontal)
+                    .spacing(10)
+                    .hexpand(true)
+                    .build();
+
+                
+                title_box.append(&sidebar_toggle_button);
+                title_box.append(&title_label);
+                header_bar.set_title_widget(Some(&title_box));
+                
+                // Connect sidebar toggle button
+                let sender_clone = sender.clone();
+                sidebar_toggle_button.connect_clicked(move |_| {
+                    sender_clone.input(AppMsg::ToggleSidebar);
+                });
+                
+                header_bar
+            }),
+
             gtk::Box {
-                set_orientation: gtk::Orientation::Vertical,
+                set_orientation: gtk::Orientation::Horizontal,
                 set_spacing: 10,
-                set_margin_all: 10,
+                // set_margin_all: 10,
 
-                // Header bar
-                gtk::Box {
-                    set_orientation: gtk::Orientation::Horizontal,
-                    set_spacing: 10,
-                    set_margin_bottom: 15,
+                // // Header bar
+                // gtk::Box {
+                //     set_orientation: gtk::Orientation::Horizontal,
+                //     set_spacing: 10,
+                //     set_margin_bottom: 15,
 
-                    gtk::Label {
-                        set_label: "Wine Prefixes",
-                        add_css_class: "title-1"
-                    },
+                //     gtk::Label {
+                //         set_label: "Wine Prefixes",
+                //         add_css_class: "title-1"
+                //     },
 
+                //     gtk::Box {
+                //         set_hexpand: true,
+                //         set_halign: gtk::Align::End,
+
+                //         gtk::Button {
+                //             set_label: "Refresh",
+                //             connect_clicked => AppMsg::RefreshPrefixes,
+                //         },
+
+                //         gtk::Button {
+                //             set_label: "Create New Prefix",
+                //             connect_clicked => AppMsg::ShowCreatePrefixDialog,
+                //             add_css_class: "suggested-action",
+                //             set_margin_start: 5
+                //         }
+                //     }
+                // },
+
+                #[name = "sidebar_revealer"]
+                    // gtk::Revealer {
+                    //     #[track = "model.changed(AppModel::sidebar_visible())"]
+                    //     set_reveal_child: model.sidebar_visible,
+                    //     set_transition_type: gtk::RevealerTransitionType::SlideRight,
+                    //     set_transition_duration: 200,
+                    //     #[track = "model.changed(AppModel::sidebar_visible())"]
+                    //     set_width_request: (if model.sidebar_visible { 240 } else { 0 }),
                     gtk::Box {
-                        set_hexpand: true,
-                        set_halign: gtk::Align::End,
+                        #[track = "model.changed(AppModel::sidebar_visible())"]
+                        set_visible: model.sidebar_visible,
+                        set_orientation: gtk::Orientation::Horizontal,
+                        // Left panel - Enhanced prefix list
+                        #[name = "prefix_list_container"]
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Vertical,
+                            set_spacing: 10,
+                            set_width_request: 240,
+                            set_margin_all: 10,
 
-                        gtk::Button {
-                            set_label: "Refresh",
-                            connect_clicked => AppMsg::RefreshPrefixes,
+                            gtk::Label {
+                                set_label: "Prefix List",
+                                add_css_class: "heading",
+                                set_halign: gtk::Align::Start,
+                            },
+
+                            gtk::ScrolledWindow {
+                                set_vexpand: true,
+                                set_hexpand: true,
+                                set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
+
+                                #[local_ref]
+                                prefix_list_widget -> gtk::Widget {}
+                            },
+
+                            // Status bar
+                            gtk::Box {
+                                set_orientation: gtk::Orientation::Horizontal,
+                                set_spacing: 5,
+                                set_margin_top: 10,
+
+                                gtk::Label {
+                                    set_label: &format!("{} prefixes loaded from {}",
+                                                    model.prefixes.len(),
+                                                    model.prefix_manager.wine_dir().display()),
+                                    add_css_class: "caption"
+                                }
+                            }
                         },
 
-                        gtk::Button {
-                            set_label: "Create New Prefix",
-                            connect_clicked => AppMsg::ShowCreatePrefixDialog,
-                            add_css_class: "suggested-action",
-                            set_margin_start: 5
-                        }
-                    }
-                },
-
-                // Main content area - updated layout
-                gtk::Box {
-                    set_orientation: gtk::Orientation::Horizontal,
-                    set_spacing: 10,
-
-                    // Left panel - Enhanced prefix list
-                    #[name = "prefix_list_container"]
-                    gtk::Box {
-                        set_orientation: gtk::Orientation::Vertical,
-                        set_spacing: 10,
-                        set_width_request: 240,
-
-                        gtk::Label {
-                            set_label: "Prefix List",
-                            add_css_class: "heading",
-                            set_halign: gtk::Align::Start,
+                        gtk::Separator {
+                            set_orientation: gtk::Orientation::Vertical,
                         },
-
-                        gtk::ScrolledWindow {
-                            set_vexpand: true,
-                            set_hexpand: true,
-                            set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
-
-                            #[local_ref]
-                            prefix_list_widget -> gtk::Widget {}
-                        }
                     },
 
+
+
+                    
+
+                    
                     // Right panel - Dynamic content
                     #[name = "details_container"]
                     gtk::Box {
@@ -148,7 +225,7 @@ impl SimpleComponent for AppModel {
                                     set_vexpand: true,
 
                                     gtk::Image {
-                                        set_icon_name: Some("wine-symbolic"),
+                                        set_icon_name: Some("application-x-executable-symbolic"),
                                         set_pixel_size: 64,
                                         add_css_class: "dim-label",
                                     },
@@ -260,22 +337,7 @@ impl SimpleComponent for AppModel {
                             //         }
                             // }
                          
-                    }       
-                },
-
-                // Status bar
-                gtk::Box {
-                    set_orientation: gtk::Orientation::Horizontal,
-                    set_spacing: 5,
-                    set_margin_top: 10,
-
-                    gtk::Label {
-                        set_label: &format!("{} prefixes loaded from {}",
-                                          model.prefixes.len(),
-                                          model.prefix_manager.wine_dir().display()),
-                        add_css_class: "caption"
-                    }
-                }
+                    } ,      
             }
         }
     }
@@ -329,21 +391,14 @@ impl SimpleComponent for AppModel {
             prefix_details,
             app_manager,
             current_view: ViewType::Empty,
+            sidebar_visible: true,
+            tracker: 0,
         };
 
         // Set up local references for child components
         let prefix_list_widget = model.prefix_list.widget().clone().upcast::<gtk::Widget>();
-        // let prefix_details_widget = model.prefix_details.widget().clone().upcast::<gtk::Widget>();
-        // let app_manager_widget = model.app_manager.widget().clone().upcast::<gtk::Widget>();
 
         let widgets = view_output!();
-
-        // #[cfg(not(target_os = "macos"))]
-        {
-            let header_bar = gtk::HeaderBar::new();
-            // header_bar.set
-            widgets.main_window.set_titlebar(Some(&header_bar));
-        }
 
         ComponentParts { model, widgets }
     }
@@ -592,6 +647,10 @@ impl SimpleComponent for AppModel {
                         }
                     }
                 }
+            }
+            AppMsg::ToggleSidebar => {
+                self.set_sidebar_visible(!self.get_sidebar_visible());
+                println!("Sidebar visibility: {}", self.sidebar_visible);
             }
         }
         

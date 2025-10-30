@@ -23,6 +23,10 @@ pub enum PrefixError {
     InvalidPath(String),
     /// Wine-related operation failed
     Wine(String),
+    /// Registry operation failed
+    RegistryError(String),
+    /// ValidationError for registry entries
+    ValidationError(String),
 }
 
 impl fmt::Display for PrefixError {
@@ -36,6 +40,8 @@ impl fmt::Display for PrefixError {
             PrefixError::AlreadyExists(msg) => write!(f, "Already exists: {}", msg),
             PrefixError::InvalidPath(msg) => write!(f, "Invalid path: {}", msg),
             PrefixError::Wine(msg) => write!(f, "Wine error: {}", msg),
+            PrefixError::RegistryError(msg) => write!(f, "Registry error: {}", msg),
+            PrefixError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
         }
     }
 }

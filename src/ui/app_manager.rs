@@ -1,8 +1,13 @@
-use relm4::{gtk, ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent};
+use relm4::{
+    gtk, ComponentParts, ComponentSender, RelmWidgetExt,
+    component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
+    view
+};
 use relm4::factory::{FactoryComponent, FactorySender, FactoryVecDeque, DynamicIndex};
+use relm4::loading_widgets::LoadingWidgets;
 use gtk::prelude::*;
 use crate::prefix::config::{RegisteredExecutable, PrefixConfig};
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 use tracker;
 
 #[derive(Debug)]
@@ -280,11 +285,12 @@ impl FactoryComponent for RegisteredExecutableItem {
     }
 }
 
-#[relm4::component(pub)]
-impl SimpleComponent for AppManagerModel {
+#[relm4::component(pub, async)]
+impl AsyncComponent for AppManagerModel {
     type Init = (PathBuf, PrefixConfig);
     type Input = AppManagerMsg;
     type Output = AppManagerMsg;
+    type CommandOutput = ();
     type Widgets = AppManagerWidgets;
 
     view! {
@@ -296,77 +302,50 @@ impl SimpleComponent for AppManagerModel {
             gtk::Box {
                 set_orientation: gtk::Orientation::Horizontal,
                 set_spacing: 10,
-                set_halign: gtk::Align::End,
-
-                gtk::Button {
-                    set_label: "Scan for Applications",
-                    #[track = "model.changed(AppManagerModel::scanning())"]
-                    set_sensitive: !model.scanning,
-                    connect_clicked => AppManagerMsg::ScanForApplications,
-                    add_css_class: "suggested-action",
-                },
-
-                gtk::Spinner {
-                    #[track = "model.changed(AppManagerModel::scanning())"]
-                    set_spinning: model.scanning,
-                    #[track = "model.changed(AppManagerModel::scanning())"]
-                    set_visible: model.scanning,
-                },
-            },
-
-            gtk::Separator {},
-
-            gtk::Box {
-                set_orientation: gtk::Orientation::Horizontal,
-                set_spacing: 10,
                 set_homogeneous: true,
 
                 // Available executables (left panel)
+                
                 gtk::Frame {
                     set_label: Some("Available Applications"),
                     set_hexpand: true,
+                    gtk::Revealer {
+                        #[watch]
+                        set_reveal_child: (model.available_executables.len() > 0) && !model.scanning,
+                        set_transition_type: gtk::RevealerTransitionType::Crossfade,
+                        set_transition_duration: 200,
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Vertical,
+                            set_spacing: 5,
+                            set_margin_all: 10,
 
-                    gtk::Box {
-                        set_orientation: gtk::Orientation::Vertical,
-                        set_spacing: 5,
-                        set_margin_all: 10,
+                            gtk::ScrolledWindow {
+                                set_vexpand: true,
+                                set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
+                                set_min_content_height: 200,
+                                // #[watch]
+                                // set_visible: model.available_executables.len() > 0,
 
-                        gtk::Label {
-                            #[watch]
-                            set_label: &format!("{} applications found", model.available_executables.len()),
-                            add_css_class: "caption",
-                            #[watch]
-                            set_visible: model.available_executables.len() > 0,
-                        },
-
-                        gtk::ScrolledWindow {
-                            set_vexpand: true,
-                            set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
-                            set_min_content_height: 200,
-                            #[watch]
-                            set_visible: model.available_executables.len() > 0,
-
-                            #[local_ref]
-                            available_list_box -> gtk::ListBox {
-                                set_css_classes: &["boxed-list"],
-                                set_selection_mode: gtk::SelectionMode::Single,
-                                connect_row_selected[sender] => move |_, row| {
-                                    if let Some(row) = row {
-                                        let index = row.index();
-                                        sender.input(AppManagerMsg::SelectExecutable(index as usize));
-                                    }
+                                #[local_ref]
+                                available_list_box -> gtk::ListBox {
+                                    set_css_classes: &["boxed-list"],
+                                    set_selection_mode: gtk::SelectionMode::Single,
+                                    connect_row_selected[sender] => move |_, row| {
+                                        if let Some(row) = row {
+                                            let index = row.index();
+                                            sender.input(AppManagerMsg::SelectExecutable(index as usize));
+                                        }
+                                    },
                                 },
                             },
-                        },
 
-                        gtk::Label {
-                            set_label: "No applications found\nClick 'Scan for Applications' to search",
-                            set_halign: gtk::Align::Center,
-                            set_valign: gtk::Align::Center,
-                            set_wrap: true,
-                            #[watch]
-                            set_visible: model.available_executables.len() == 0,
-                            add_css_class: "dim-label",
+                            gtk::Label {
+                                #[watch]
+                                set_label: &format!("{} applications found", model.available_executables.len()),
+                                add_css_class: "caption",
+                                // #[watch]
+                                // set_visible: model.available_executables.len() > 0,
+                            },
                         },
                     },
                 },
@@ -455,11 +434,28 @@ impl SimpleComponent for AppManagerModel {
         }
     }
 
-    fn init(
+    fn init_loading_widgets(root: Self::Root) -> Option<LoadingWidgets> {
+        view! {
+            #[local]
+            root {
+                #[name(spinner)]
+                gtk::Spinner {
+                    start: (),
+                    set_halign: gtk::Align::Center,
+                    set_valign: gtk::Align::Center,
+                    set_hexpand: true,
+                    set_vexpand: true,
+                }
+            }
+        }
+        Some(LoadingWidgets::new(root, spinner))
+    }
+
+    async fn init(
         init: Self::Init,
         root: Self::Root,
-        sender: ComponentSender<Self>,
-    ) -> ComponentParts<Self> {
+        sender: AsyncComponentSender<Self>,
+    ) -> AsyncComponentParts<Self> {
         let (prefix_path, config) = init;
         
         // Initialize factory for available executables
@@ -499,10 +495,15 @@ impl SimpleComponent for AppManagerModel {
 
         // sender.input(AppManagerMsg::ScanForApplications);
 
-        ComponentParts { model, widgets }
+        AsyncComponentParts { model, widgets }
     }
 
-    fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
+    async fn update(
+        &mut self,
+        msg: Self::Input,
+        sender: AsyncComponentSender<Self>,
+        _root: &Self::Root,
+    ) {
         self.reset();
         match msg {
             AppManagerMsg::ScanForApplications => {
@@ -511,9 +512,11 @@ impl SimpleComponent for AppManagerModel {
 
                 println!("Scanning for applications... {}", &self.prefix_path.display());
 
-                // Simple synchronous scanning - no background threads
+                // Async scanning
                 let prefix_manager = crate::prefix::Manager::new(self.prefix_path.parent().unwrap_or(&self.prefix_path).to_path_buf());
-                match prefix_manager.scan_for_applications(&self.prefix_path) {
+                let prefix_path = self.prefix_path.clone();
+                
+                match prefix_manager.scan_for_applications_async(&prefix_path).await {
                     Ok(executables) => {
                         println!("Scanning complete, found {} executables", executables.len());
                         
@@ -597,6 +600,8 @@ impl SimpleComponent for AppManagerModel {
             }
             AppManagerMsg::ConfigUpdated(config) => {
                 self.set_config(config);
+                sender.input(AppManagerMsg::UpdateExecutableList(self.config.registered_executables.clone()));
+                sender.input(AppManagerMsg::ScanForApplications);
             }
             AppManagerMsg::PrefixPathUpdated(path) => {
                 self.set_prefix_path(path);
@@ -638,7 +643,7 @@ impl SimpleComponent for AppManagerModel {
 
 // Info dialog component for showing executable metadata
 #[relm4::component]
-impl SimpleComponent for InfoDialogModel {
+impl relm4::SimpleComponent for InfoDialogModel {
     type Init = RegisteredExecutable;
     type Input = InfoDialogMsg;
     type Output = InfoDialogMsg;
@@ -794,8 +799,8 @@ impl SimpleComponent for InfoDialogModel {
     fn init(
         init: Self::Init,
         root: Self::Root,
-        sender: ComponentSender<Self>,
-    ) -> ComponentParts<Self> {
+        sender: relm4::ComponentSender<Self>,
+    ) -> relm4::ComponentParts<Self> {
         let model = InfoDialogModel {
             executable: init,
         };
@@ -805,7 +810,7 @@ impl SimpleComponent for InfoDialogModel {
         ComponentParts { model, widgets }
     }
 
-    fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
+    fn update(&mut self, msg: Self::Input, sender: relm4::ComponentSender<Self>) {
         match msg {
             InfoDialogMsg::Close => {
                 let _ = sender.output(InfoDialogMsg::Close);

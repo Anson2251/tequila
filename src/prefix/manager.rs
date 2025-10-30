@@ -198,6 +198,23 @@ impl Manager {
         Ok(executables)
     }
 
+    /// Async version of scan_for_applications
+    pub async fn scan_for_applications_async(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>> {
+        let mut executables = Vec::new();
+        
+        // Scan regular directories asynchronously
+        executables.extend(self.scanner.scan_prefix_async(prefix_path).await?);
+        
+        // Scan desktop files and shortcuts asynchronously
+        executables.extend(self.scanner.scan_for_desktop_files_async(prefix_path).await?);
+        
+        // Remove duplicates and sort
+        executables.sort_by(|a, b| a.name.cmp(&b.name));
+        executables.dedup_by(|a, b| a.name == b.name && a.executable_path == b.executable_path);
+        
+        Ok(executables)
+    }
+
     pub fn update_config(&self, prefix_path: &PathBuf, config: &PrefixConfig) -> Result<()> {
         // Validate config before saving
         config.validate()?;

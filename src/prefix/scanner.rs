@@ -437,3 +437,36 @@ impl std::fmt::Display for ApplicationScanner {
                self.executable_extensions.len())
     }
 }
+
+impl ApplicationScanner {
+    /// Async version of scan_prefix that runs in a blocking task
+    pub async fn scan_prefix_async(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>> {
+        let prefix_path = prefix_path.clone();
+        let scanner = self.clone();
+        
+        tokio::task::spawn_blocking(move || {
+            scanner.scan_prefix(&prefix_path)
+        }).await.map_err(|e| PrefixError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to spawn scanning task: {}", e))))?
+    }
+
+    /// Async version of scan_for_desktop_files that runs in a blocking task
+    pub async fn scan_for_desktop_files_async(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>> {
+        let prefix_path = prefix_path.clone();
+        let scanner = self.clone();
+        
+        tokio::task::spawn_blocking(move || {
+            scanner.scan_for_desktop_files(&prefix_path)
+        }).await.map_err(|e| PrefixError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to spawn scanning task: {}", e))))?
+    }
+}
+
+// Clone implementation for ApplicationScanner
+impl Clone for ApplicationScanner {
+    fn clone(&self) -> Self {
+        Self {
+            app_dirs: self.app_dirs.clone(),
+            executable_extensions: self.executable_extensions.clone(),
+            icon_extensions: self.icon_extensions.clone(),
+        }
+    }
+}
