@@ -16,3 +16,6 @@ tracker = "0.2.2"
 exe = "0.5.6"
 regashii = "0.4.0"
 async-trait = "0.1.68"
+
+[build-dependencies]
+glib-build-tools = "0.17.10"

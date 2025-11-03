@@ -1,4 +1,6 @@
 use gtk::prelude::*;
+use gtk4::gio;
+use relm4::view;
 use relm4::{ComponentController, ComponentParts, ComponentSender, Controller, RelmApp, RelmWidgetExt, SimpleComponent, Component, gtk, component::AsyncComponentController};
 use relm4::prelude::{AsyncController, AsyncComponent};
 use std::path::PathBuf;
@@ -10,6 +12,7 @@ mod ui;
 
 use prefix::{Manager as PrefixManager, WinePrefix};
 use ui::{PrefixListModel, PrefixDetailsModel, AppManagerModel};
+use gtk::gdk;
 
 #[tracker::track]
 struct AppModel {
@@ -77,39 +80,34 @@ impl SimpleComponent for AppModel {
             set_default_height: 600,
 
             set_titlebar: Some(&{
+                view! {
+                    #[name(title_box)]
+                    gtk::Box {
+                        set_orientation: gtk::Orientation::Horizontal,
+                        set_spacing: 10,
+                        set_hexpand: true,
+
+                        gtk::Button {
+                            set_icon_name: "sidebar-show-symbolic",
+                            set_tooltip_text: Some("Show Sidebar"),
+                            connect_clicked: move |_| {
+                                sender.input(AppMsg::ToggleSidebar);
+                            }
+                        },
+                        gtk::Label {
+                            set_label: "Tequila",
+                            add_css_class: "title",
+                            set_halign: gtk::Align::Center,
+                            set_hexpand: true,
+                        },
+                    }
+                }
                 let header_bar = gtk::HeaderBar::new();
 
                 #[cfg(target_os = "macos")]
                 header_bar.set_property("use-native-controls", true);
-                let title_label = gtk::Label::builder()
-                    .label("Tequila")
-                    .halign(gtk::Align::Center)
-                    .hexpand(true)
-                    .build();
-                title_label.add_css_class("title");
 
-                let sidebar_toggle_button = gtk::ToggleButton::builder()
-                    .icon_name("sidebar-show-symbolic")
-                    .tooltip_text("Show Sidebar")
-                    .build();
-
-                let title_box = gtk::Box::builder()
-                    .orientation(gtk::Orientation::Horizontal)
-                    .spacing(10)
-                    .hexpand(true)
-                    .build();
-
-                
-                title_box.append(&sidebar_toggle_button);
-                title_box.append(&title_label);
                 header_bar.set_title_widget(Some(&title_box));
-                
-                // Connect sidebar toggle button
-                let sender_clone = sender.clone();
-                sidebar_toggle_button.connect_clicked(move |_| {
-                    sender_clone.input(AppMsg::ToggleSidebar);
-                });
-                
                 header_bar
             }),
 
@@ -224,10 +222,11 @@ impl SimpleComponent for AppModel {
                                     set_valign: gtk::Align::Center,
                                     set_vexpand: true,
 
+                                    #[name = "empty_view_icon"]
                                     gtk::Image {
-                                        set_icon_name: Some("application-x-executable-symbolic"),
-                                        set_pixel_size: 64,
+                                        set_pixel_size: 72,
                                         add_css_class: "dim-label",
+                                        set_icon_name: Some("brand-winehq-symbolic"),
                                     },
 
                                     gtk::Label {
@@ -601,12 +600,23 @@ impl SimpleComponent for AppModel {
                 self.current_view = ViewType::Empty;
             }
             AppMsg::ConfigUpdated(index, config) => {
-                if index < self.prefixes.len() {
-                    let prefix_path = &self.prefixes[index].path;
-                    if let Err(e) = self.prefix_manager.update_config(prefix_path, &config) {
-                        eprintln!("Failed to update config: {}", e);
-                    } else {
-                        self.prefixes[index].config = config;
+                // Handle config updates from both app_manager and prefix_details
+                if let Some(selected_index) = self.selected_prefix {
+                    let actual_index = if index == 0 { selected_index } else { index };
+                    
+                    if actual_index < self.prefixes.len() {
+                        let prefix_path = &self.prefixes[actual_index].path;
+                        
+                        // Save config to file
+                        if let Err(e) = self.prefix_manager.update_config(prefix_path, &config) {
+                            eprintln!("Failed to update config: {}", e);
+                        } else {
+                            println!("Config saved successfully for prefix: {}", self.prefixes[actual_index].name);
+                            self.prefixes[actual_index].config = config;
+                            
+                            // Refresh the prefix list to show updated state
+                            sender.input(AppMsg::RefreshPrefixes);
+                        }
                     }
                 }
             }
@@ -658,7 +668,19 @@ impl SimpleComponent for AppModel {
     }
 }
 
+fn initialize_custom_icons() {
+    gio::resources_register_include!("icons.gresource").unwrap();
+
+    let display = gdk::Display::default().unwrap();
+    let theme = gtk::IconTheme::for_display(&display);
+    theme.add_resource_path("/com/anson2251/tequila/icons");
+}
+
 fn main() {
-    let app = RelmApp::new("com.github.tequila");
+    let app = RelmApp::new("com.anson2251.tequila");
+
+    // custom icons
+    initialize_custom_icons();
+    
     app.run::<AppModel>(());
 }
