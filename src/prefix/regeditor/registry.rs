@@ -52,6 +52,126 @@ impl WineRegistry {
         .map_err(|e| PrefixError::RegistryError(format!("Task join error: {}", e)))?
     }
 
+    /// Load registry from multiple Wine registry files concurrently
+    /// Loads system.reg, user.reg, and userdef.reg concurrently for better performance
+    /// user.reg takes priority over other files
+    ///
+    /// # Arguments
+    /// * `prefix_path` - Path to the Wine prefix directory
+    ///
+    /// # Returns
+    /// `Result<Self>` - The merged registry or error
+    pub async fn load_from_prefix(prefix_path: &PathBuf) -> Result<Self> {
+        let system_reg_path = prefix_path.join("system.reg");
+        let user_reg_path = prefix_path.join("user.reg");
+        let userdef_reg_path = prefix_path.join("userdef.reg");
+        let prefix_path_clone = prefix_path.clone();
+
+        // Load all registry files concurrently for better performance
+        let (system_result, user_result, userdef_result) = tokio::join!(
+            tokio::task::spawn_blocking({
+                let path = system_reg_path.clone();
+                move || {
+                    if path.exists() {
+                        Registry::deserialize_file(&path).map(Some)
+                    } else {
+                        Ok(None)
+                    }
+                }
+            }),
+            tokio::task::spawn_blocking({
+                let path = user_reg_path.clone();
+                move || {
+                    if path.exists() {
+                        Registry::deserialize_file(&path).map(Some)
+                    } else {
+                        Ok(None)
+                    }
+                }
+            }),
+            tokio::task::spawn_blocking({
+                let path = userdef_reg_path.clone();
+                move || {
+                    if path.exists() {
+                        Registry::deserialize_file(&path).map(Some)
+                    } else {
+                        Ok(None)
+                    }
+                }
+            })
+        );
+
+        // Process results
+        let mut loaded_files = Vec::new();
+        let mut merged_registry = Registry::new(Format::Regedit5);
+
+        // Handle system.reg
+        match system_result.map_err(|e| PrefixError::RegistryError(format!("System registry task error: {}", e)))? {
+            Ok(Some(system_registry)) => {
+                println!("Loaded system.reg with {} keys", system_registry.keys().len());
+                merged_registry = system_registry;
+                loaded_files.push(system_reg_path);
+            }
+            Ok(None) => println!("system.reg not found, skipping"),
+            Err(e) => eprintln!("Warning: Failed to load system.reg: {}", e),
+        }
+
+        // Handle userdef.reg
+        match userdef_result.map_err(|e| PrefixError::RegistryError(format!("Userdef registry task error: {}", e)))? {
+            Ok(Some(userdef_registry)) => {
+                println!("Loaded userdef.reg with {} keys", userdef_registry.keys().len());
+                if merged_registry.keys().is_empty() {
+                    merged_registry = userdef_registry;
+                }
+                loaded_files.push(userdef_reg_path);
+            }
+            Ok(None) => println!("userdef.reg not found, skipping"),
+            Err(e) => eprintln!("Warning: Failed to load userdef.reg: {}", e),
+        }
+
+        // Handle user.reg (takes priority)
+        match user_result.map_err(|e| PrefixError::RegistryError(format!("User registry task error: {}", e)))? {
+            Ok(Some(user_registry)) => {
+                println!("Loaded user.reg with {} keys", user_registry.keys().len());
+                // user.reg takes priority since it contains user-specific settings like Mac Driver
+                merged_registry = user_registry;
+                loaded_files.push(user_reg_path);
+            }
+            Ok(None) => println!("user.reg not found, skipping"),
+            Err(e) => eprintln!("Warning: Failed to load user.reg: {}", e),
+        }
+
+        if loaded_files.is_empty() {
+            return Err(PrefixError::RegistryError(
+                "No valid registry files found in Wine prefix".to_string()
+            ));
+        }
+
+        println!("Successfully loaded {} Wine registry files: {:?}", loaded_files.len(), loaded_files);
+        println!("Total registry keys: {}", merged_registry.keys().len());
+
+        // Print Mac Driver related keys
+        println!("Looking for Mac Driver related keys:");
+        for (name, key) in merged_registry.keys() {
+            let name_str = name.raw();
+            if name_str.contains("Mac") || name_str.contains("Driver") {
+                println!("Found Mac Driver key: {}", name_str);
+                for (val_name, value) in key.values() {
+                    let val_name_str = match val_name {
+                        ValueName::Default => "(default)".to_string(),
+                        ValueName::Named(name) => name.clone(),
+                    };
+                    println!("  Value: '{}' = {:?}", val_name_str, value);
+                }
+            }
+        }
+
+        Ok(WineRegistry {
+            registry: Arc::new(RwLock::new(merged_registry)),
+            path: Some(prefix_path_clone),
+        })
+    }
+
     /// Save registry to a file
     /// 
     /// # Arguments
@@ -89,9 +209,11 @@ impl WineRegistry {
         
         tokio::task::spawn_blocking(move || {
             let reg = registry.blocking_read();
-            
-            // Find the key by path
+
+            println!("DEBUG: Looking for key path: {}", key_path);
+            println!("DEBUG: Available keys in registry:");
             for (name, key) in reg.keys() {
+                println!("DEBUG: Found key: {:?} (raw: {})", name, name.raw());
                 if name.raw() == key_path {
                     // Find the value by name
                     for (val_name, value) in key.values() {

@@ -3,6 +3,8 @@ use gtk::prelude::*;
 use crate::prefix::config::PrefixConfig;
 use std::path::PathBuf;
 use tracker;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 #[derive(Debug)]
 #[tracker::track]
@@ -10,6 +12,8 @@ pub struct PrefixDetailsModel {
     prefix_path: PathBuf,
     config: PrefixConfig,
     editing: bool,
+    description_updated: bool,
+    prefix_index: usize,
 }
 
 #[derive(Debug)]
@@ -23,6 +27,7 @@ pub enum PrefixDetailsMsg {
     UpdateWineVersion(String),
     ConfigUpdated(PrefixConfig),
     PrefixPathUpdated(PathBuf),
+    SetPrefixIndex(usize),
 }
 
 #[relm4::component(pub)]
@@ -133,7 +138,7 @@ impl SimpleComponent for PrefixDetailsModel {
                             set_buffer: Some(&gtk::TextBuffer::new(None)),
                             set_hexpand: true,
                             set_vexpand: true,
-                            
+
                             #[track = "model.changed(PrefixDetailsModel::editing())"]
                             set_editable: model.editing,
                             #[track = "model.changed(PrefixDetailsModel::editing())"]
@@ -237,6 +242,8 @@ impl SimpleComponent for PrefixDetailsModel {
             prefix_path,
             config: config.clone(),
             editing: false,
+            description_updated: false,
+            prefix_index: 0,
             tracker: 0,
         };
 
@@ -274,14 +281,17 @@ impl SimpleComponent for PrefixDetailsModel {
             }
             PrefixDetailsMsg::SaveConfig => {
                 self.set_editing(false);
-                
+
+                // Update last modified timestamp before saving
+                self.config.update_last_modified();
+
                 // Save config to file
                 if let Err(e) = self.config.save_to_file(&self.prefix_path) {
                     eprintln!("Failed to save config after editing prefix details: {}", e);
                 } else {
                     println!("Config saved successfully after editing prefix details");
                 }
-                
+
                 let _ = sender.output(PrefixDetailsMsg::ConfigUpdated(self.config.clone()));
             }
             PrefixDetailsMsg::UpdateName(name) => {
@@ -297,14 +307,15 @@ impl SimpleComponent for PrefixDetailsModel {
                 self.config.wine_version = if version.is_empty() { None } else { Some(version) };
             }
             PrefixDetailsMsg::ConfigUpdated(config) => {
-                self.set_config(config);
+                self.set_config(config.clone());
                 self.set_editing(false);
-                
-                // Update the description text view with new config
-                // This will be handled in the view through the tracker
+                self.set_description_updated(true);
             }
             PrefixDetailsMsg::PrefixPathUpdated(path) => {
                 self.set_prefix_path(path);
+            }
+            PrefixDetailsMsg::SetPrefixIndex(index) => {
+                self.set_prefix_index(index);
             }
             // PrefixDetailsMsg::ShowAppManager => {
             //     // This message will be handled by the parent component (main.rs)

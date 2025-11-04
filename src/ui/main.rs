@@ -356,6 +356,9 @@ impl SimpleComponent for AppModel {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
+        // Clone sender early to avoid borrow checker issues
+        let sender_clone = sender.clone();
+
         let wine_dir = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("~"))
             .join("Wine");
@@ -375,7 +378,7 @@ impl SimpleComponent for AppModel {
             .launch((PathBuf::new(), crate::prefix::config::PrefixConfig::new("".to_string(), "win64".to_string())))
             .forward(sender.input_sender(), |msg| match msg {
                 crate::ui::prefix_details::PrefixDetailsMsg::ConfigUpdated(config) => {
-                    AppMsg::ConfigUpdated(0, config) // Use 0 as fallback index
+                    AppMsg::ConfigUpdated(0, config) // Will be overridden by actual prefix index
                 }
                 // crate::ui::prefix_details::PrefixDetailsMsg::ShowAppManager => {
                 //     AppMsg::ShowAppManager(0) // Use 0 as fallback index - will be updated when prefix is selected
@@ -418,6 +421,12 @@ impl SimpleComponent for AppModel {
         let prefix_list_widget = model.prefix_list.widget().clone().upcast::<gtk::Widget>();
 
         let widgets = view_output!();
+
+        // Automatically select LTspice (index 0) to trigger registry loading for debugging
+        if !model.prefixes.is_empty() {
+            println!("AUTO-SELECT: Automatically selecting LTspice (index 0) for registry debugging");
+            sender_clone.input(AppMsg::ShowPrefixDetails(0));
+        }
 
         ComponentParts { model, widgets }
     }
@@ -605,17 +614,18 @@ impl SimpleComponent for AppModel {
                 if index < self.prefixes.len() {
                     self.selected_prefix = Some(index);
                     self.current_view = ViewType::Content;
-                    
+
                     // Update the details component
                     let config = self.prefixes[index].config.clone();
+                    let prefix_path = self.prefixes[index].path.clone();
+
                     self.prefix_details.emit(crate::ui::prefix_details::PrefixDetailsMsg::ConfigUpdated(config.clone()));
+                    self.prefix_details.emit(crate::ui::prefix_details::PrefixDetailsMsg::SetPrefixIndex(index));
                     self.app_manager.emit(crate::ui::app_manager::AppManagerMsg::ConfigUpdated(config.clone()));
                     self.registry_editor.emit(crate::ui::registry_editor::RegistryEditorMsg::ConfigUpdated(config.clone()));
-                    self.prefix_details.emit(crate::ui::prefix_details::PrefixDetailsMsg::PrefixPathUpdated(self.prefixes[index].path.clone()));
-                    self.app_manager.emit(crate::ui::app_manager::AppManagerMsg::PrefixPathUpdated(self.prefixes[index].path.clone()));
-                    self.registry_editor.emit(crate::ui::registry_editor::RegistryEditorMsg::PrefixPathUpdated(self.prefixes[index].path.clone()));
-
-                    println!("Showing details for prefix: {}", self.prefixes[index].name);
+                    self.prefix_details.emit(crate::ui::prefix_details::PrefixDetailsMsg::PrefixPathUpdated(prefix_path.clone()));
+                    self.app_manager.emit(crate::ui::app_manager::AppManagerMsg::PrefixPathUpdated(prefix_path.clone()));
+                    self.registry_editor.emit(crate::ui::registry_editor::RegistryEditorMsg::PrefixPathUpdated(prefix_path));
                 }
             }
             AppMsg::HideDetails => {
@@ -625,19 +635,21 @@ impl SimpleComponent for AppModel {
                 // Handle config updates from both app_manager and prefix_details
                 if let Some(selected_index) = self.selected_prefix {
                     let actual_index = if index == 0 { selected_index } else { index };
-                    
+
                     if actual_index < self.prefixes.len() {
                         let prefix_path = &self.prefixes[actual_index].path;
-                        
+
                         // Save config to file
                         if let Err(e) = self.prefix_manager.update_config(prefix_path, &config) {
                             eprintln!("Failed to update config: {}", e);
                         } else {
                             println!("Config saved successfully for prefix: {}", self.prefixes[actual_index].name);
-                            self.prefixes[actual_index].config = config;
-                            
-                            // Refresh the prefix list to show updated state
-                            sender.input(AppMsg::RefreshPrefixes);
+                            self.prefixes[actual_index].config = config.clone();
+
+                            // Update other components with the new config but don't refresh the entire list
+                            self.prefix_details.emit(crate::ui::prefix_details::PrefixDetailsMsg::ConfigUpdated(config.clone()));
+                            self.app_manager.emit(crate::ui::app_manager::AppManagerMsg::ConfigUpdated(config.clone()));
+                            self.registry_editor.emit(crate::ui::registry_editor::RegistryEditorMsg::ConfigUpdated(config.clone()));
                         }
                     }
                 }

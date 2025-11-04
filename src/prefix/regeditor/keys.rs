@@ -372,12 +372,61 @@ impl GraphicsDriver {
     }
 }
 
+/// X11 Driver settings for Wine
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct X11DriverSettings {
+    pub decorated: Option<bool>,
+    pub client_side_graphics: Option<bool>,
+    pub client_side_with_render: Option<bool>,
+    pub client_side_antialias_with_render: Option<bool>,
+    pub client_side_antialias_with_core: Option<bool>,
+    pub grab_fullscreen: Option<bool>,
+    pub grab_pointer: Option<bool>,
+    pub managed: Option<bool>,
+    pub use_xrandr: Option<bool>,
+    pub use_xvid_mode: Option<bool>,
+}
+
+impl X11DriverSettings {
+    pub fn new() -> Self {
+        Self {
+            decorated: None,
+            client_side_graphics: None,
+            client_side_with_render: None,
+            client_side_antialias_with_render: None,
+            client_side_antialias_with_core: None,
+            grab_fullscreen: None,
+            grab_pointer: None,
+            managed: None,
+            use_xrandr: None,
+            use_xvid_mode: None,
+        }
+    }
+}
+
+/// DPI settings for Windows display
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DpiSettings {
+    pub log_pixels: Option<u32>,
+}
+
+impl DpiSettings {
+    pub fn new() -> Self {
+        Self { log_pixels: None }
+    }
+
+    pub fn new_with_dpi(dpi: u32) -> Self {
+        Self { log_pixels: Some(dpi) }
+    }
+}
+
 /// Mac Driver settings for Wine on macOS
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MacDriverSettings {
     pub allow_vertical_sync: Option<bool>,
     pub capture_displays_for_fullscreen: Option<bool>,
     pub use_precise_scrolling: Option<bool>,
+    pub retina_mode: Option<bool>,
     pub windows_float_when_inactive: Option<WindowsFloatWhenInactive>,
 }
 
@@ -387,6 +436,7 @@ impl MacDriverSettings {
             allow_vertical_sync: None,
             capture_displays_for_fullscreen: None,
             use_precise_scrolling: None,
+            retina_mode: None,
             windows_float_when_inactive: None,
         }
     }

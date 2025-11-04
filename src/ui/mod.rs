@@ -11,6 +11,8 @@ pub mod d3d_tab;
 pub mod audio_tab;
 pub mod virtual_desktop_tab;
 pub mod mac_driver_tab;
+pub mod x11_driver_tab;
+pub mod dpi_tab;
 
 pub use main::{AppModel, AppMsg, ViewType, initialize_custom_icons};
 pub use prefix_details::PrefixDetailsModel;
@@ -25,3 +27,5 @@ pub use d3d_tab::D3DModel;
 pub use audio_tab::AudioModel;
 pub use virtual_desktop_tab::VirtualDesktopModel;
 pub use mac_driver_tab::MacDriverModel;
+pub use x11_driver_tab::X11DriverModel;
+pub use dpi_tab::DpiModel;

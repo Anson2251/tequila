@@ -126,6 +126,18 @@ pub trait RegEditor: Send + Sync {
     /// Remove application-specific settings
     async fn remove_app_settings(&mut self, app_name: &str) -> Result<()>;
 
+    /// Get X11 Driver settings
+    async fn get_x11_driver_settings(&self) -> Result<Option<X11DriverSettings>>;
+
+    /// Set X11 Driver settings
+    async fn set_x11_driver_settings(&mut self, settings: &X11DriverSettings) -> Result<()>;
+
+    /// Get DPI settings
+    async fn get_dpi_settings(&self) -> Result<Option<DpiSettings>>;
+
+    /// Set DPI settings
+    async fn set_dpi_settings(&mut self, settings: &DpiSettings) -> Result<()>;
+
     /// Get Mac Driver settings
     async fn get_mac_driver_settings(&self) -> Result<Option<MacDriverSettings>>;
 

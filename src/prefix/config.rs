@@ -53,6 +53,7 @@ pub struct RegisteredExecutable {
     /// Optional product name from executable metadata
     pub product_name: Option<String>,
     /// Optional list of imported modules (DLLs)
+    #[serde(default)]
     pub imported_modules: Vec<String>,
 }
 

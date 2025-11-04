@@ -41,25 +41,41 @@ impl Manager {
 
     pub fn scan_prefixes(&self) -> Result<Vec<WinePrefix>> {
         let mut prefixes: Vec<WinePrefix> = Vec::new();
-        
+
+        println!("Scanning Wine prefixes in directory: {:?}", self.wine_dir);
+
         for entry in fs::read_dir(&self.wine_dir)? {
             let entry = entry?;
             let path = entry.path();
-            
-            if path.is_dir() && self.is_valid_wine_prefix(&path) {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if let Ok(config) = self.load_or_create_config(&path, name) {
-                        prefixes.push(WinePrefix {
-                            name: name.to_string(),
-                            path: path.clone(),
-                            config,
-                        });
+
+            if path.is_dir() {
+                println!("Found directory: {:?}", path);
+                if self.is_valid_wine_prefix(&path) {
+                    println!("✅ Valid Wine prefix: {:?}", path);
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        println!("🔧 Loading config for prefix: {}", name);
+                        match self.load_or_create_config(&path, name) {
+                            Ok(config) => {
+                                println!("✅ Config loaded successfully for: {}", name);
+                                prefixes.push(WinePrefix {
+                                    name: name.to_string(),
+                                    path: path.clone(),
+                                    config,
+                                });
+                            }
+                            Err(e) => {
+                                println!("❌ Failed to load config for {}: {:?}", name, e);
+                            }
+                        }
                     }
+                } else {
+                    println!("❌ Not a valid Wine prefix (missing required files): {:?}", path);
                 }
             }
         }
-        
+
         prefixes.sort_by(|a, b| a.name.cmp(&b.name));
+        println!("Found {} Wine prefixes: {:?}", prefixes.len(), prefixes.iter().map(|p| &p.name).collect::<Vec<_>>());
         Ok(prefixes)
     }
 

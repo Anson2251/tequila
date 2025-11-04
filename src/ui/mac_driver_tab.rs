@@ -9,6 +9,7 @@ pub struct MacDriverModel {
     mac_allow_vertical_sync: Option<bool>,
     mac_capture_displays: Option<bool>,
     mac_precise_scrolling: Option<bool>,
+    mac_retina_mode: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -18,15 +19,18 @@ pub enum MacDriverMsg {
         allow_vertical_sync: Option<bool>,
         capture_displays: Option<bool>,
         precise_scrolling: Option<bool>,
+        retina_mode: Option<bool>,
     },
     UpdateMacAllowVerticalSync(bool),
     UpdateMacCaptureDisplays(bool),
     UpdateMacPreciseScrolling(bool),
+    UpdateMacRetinaMode(bool),
 }
 
 #[relm4::component(pub)]
 impl SimpleComponent for MacDriverModel {
     type Init = (
+        Option<bool>,
         Option<bool>,
         Option<bool>,
         Option<bool>,
@@ -84,6 +88,17 @@ impl SimpleComponent for MacDriverModel {
                         sender.input(MacDriverMsg::UpdateMacPreciseScrolling(check.is_active()));
                     },
                 },
+
+                gtk::CheckButton {
+                    set_label: Some("Enable Retina Mode"),
+                    #[track = "model.changed(MacDriverModel::mac_retina_mode())"]
+                    set_active: model.mac_retina_mode.unwrap_or(false),
+                    #[track = "model.changed(MacDriverModel::editing())"]
+                    set_sensitive: model.editing,
+                    connect_toggled[sender] => move |check| {
+                        sender.input(MacDriverMsg::UpdateMacRetinaMode(check.is_active()));
+                    },
+                },
             }
         }
     }
@@ -93,13 +108,14 @@ impl SimpleComponent for MacDriverModel {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let (allow_vertical_sync, capture_displays, precise_scrolling) = init;
-        
+        let (allow_vertical_sync, capture_displays, precise_scrolling, retina_mode) = init;
+
         let model = MacDriverModel {
             editing: false,
             mac_allow_vertical_sync: allow_vertical_sync,
             mac_capture_displays: capture_displays,
             mac_precise_scrolling: precise_scrolling,
+            mac_retina_mode: retina_mode,
             tracker: 0,
         };
 
@@ -114,10 +130,11 @@ impl SimpleComponent for MacDriverModel {
             MacDriverMsg::SetEditing(editing) => {
                 self.set_editing(editing);
             }
-            MacDriverMsg::SetMacDriverSettings { allow_vertical_sync, capture_displays, precise_scrolling } => {
+            MacDriverMsg::SetMacDriverSettings { allow_vertical_sync, capture_displays, precise_scrolling, retina_mode } => {
                 self.set_mac_allow_vertical_sync(allow_vertical_sync);
                 self.set_mac_capture_displays(capture_displays);
                 self.set_mac_precise_scrolling(precise_scrolling);
+                self.set_mac_retina_mode(retina_mode);
             }
             MacDriverMsg::UpdateMacAllowVerticalSync(enabled) => {
                 self.set_mac_allow_vertical_sync(Some(enabled));
@@ -130,6 +147,10 @@ impl SimpleComponent for MacDriverModel {
             MacDriverMsg::UpdateMacPreciseScrolling(enabled) => {
                 self.set_mac_precise_scrolling(Some(enabled));
                 let _ = sender.output(MacDriverMsg::UpdateMacPreciseScrolling(enabled));
+            }
+            MacDriverMsg::UpdateMacRetinaMode(enabled) => {
+                self.set_mac_retina_mode(Some(enabled));
+                let _ = sender.output(MacDriverMsg::UpdateMacRetinaMode(enabled));
             }
         }
     }
