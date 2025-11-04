@@ -157,13 +157,13 @@ impl FactoryComponent for RegisteredExecutableItem {
 
     fn init_model(
         init: Self::Init,
-        _index: &DynamicIndex,
+        index: &DynamicIndex,
         _sender: FactorySender<Self>,
     ) -> Self {
-        let (executable, index) = init;
+        let (executable, idx) = init;
         Self {
             executable,
-            index,
+            index: idx,
             selected: false,
         }
     }
@@ -238,10 +238,22 @@ impl AsyncComponent for RegisteredAppsListModel {
         let executables = FactoryVecDeque::builder()
             .launch(gtk::FlowBox::default())
             .forward(sender.input_sender(), |output| match output {
-                RegisteredExecutableOutput::Selected(index) => RegisteredAppsListMsg::SelectExecutable(index),
-                RegisteredExecutableOutput::Launch(index) => RegisteredAppsListMsg::SelectExecutable(index), // Convert to select message
-                RegisteredExecutableOutput::Remove(index) => RegisteredAppsListMsg::SelectExecutable(index), // Convert to select message
-                RegisteredExecutableOutput::ShowInfo(index) => RegisteredAppsListMsg::SelectExecutable(index), // Convert to select message
+                RegisteredExecutableOutput::Selected(index) => {
+                    // Handle selection internally and also forward to parent
+                    RegisteredAppsListMsg::SelectExecutable(index)
+                }
+                RegisteredExecutableOutput::Launch(index) => {
+                    // Forward launch action directly to parent
+                    RegisteredAppsListMsg::SelectExecutable(index)
+                }
+                RegisteredExecutableOutput::Remove(index) => {
+                    // Forward remove action directly to parent
+                    RegisteredAppsListMsg::SelectExecutable(index)
+                }
+                RegisteredExecutableOutput::ShowInfo(index) => {
+                    // Forward show info action directly to parent
+                    RegisteredAppsListMsg::SelectExecutable(index)
+                }
             });
 
         let mut model = RegisteredAppsListModel {
@@ -288,23 +300,22 @@ impl AsyncComponent for RegisteredAppsListModel {
             RegisteredAppsListMsg::SelectExecutable(index) => {
                 self.set_selected_index(Some(index));
                 
-                // Update selection state in factory
+                // Update selection state in factory without rebuilding the entire list
                 let mut guard = self.executables.guard();
-                guard.clear();
-                for (idx, exe) in self.registered_executables.iter().enumerate() {
-                    guard.push_back((exe.clone(), idx));
+                for (idx, item) in guard.iter_mut().enumerate() {
+                    item.selected = Some(idx) == self.selected_index;
                 }
                 
                 sender.output(RegisteredAppsListOutput::Selected(index));
             }
             RegisteredAppsListMsg::ClearSelection => {
+                println!("DEBUG: ClearSelection called");
                 self.set_selected_index(None);
                 
-                // Clear selection state in factory
+                // Clear selection state in factory without rebuilding entire list
                 let mut guard = self.executables.guard();
-                guard.clear();
-                for (idx, exe) in self.registered_executables.iter().enumerate() {
-                    guard.push_back((exe.clone(), idx));
+                for item in guard.iter_mut() {
+                    item.selected = false;
                 }
             }
         }

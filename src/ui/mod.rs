@@ -1,13 +1,27 @@
+pub mod main;
 pub mod prefix_details;
 pub mod app_manager;
 pub mod prefix_list;
 pub mod registered_apps_list;
 pub mod app_actions;
 pub mod add_app_popover;
+pub mod registry_editor;
+pub mod windows_version_tab;
+pub mod d3d_tab;
+pub mod audio_tab;
+pub mod virtual_desktop_tab;
+pub mod mac_driver_tab;
 
+pub use main::{AppModel, AppMsg, ViewType, initialize_custom_icons};
 pub use prefix_details::PrefixDetailsModel;
 pub use app_manager::AppManagerModel;
 pub use prefix_list::PrefixListModel;
 pub use registered_apps_list::RegisteredAppsListModel;
 pub use app_actions::AppActionsModel;
 pub use add_app_popover::AddAppPopoverModel;
+pub use registry_editor::RegistryEditorModel;
+pub use windows_version_tab::WindowsVersionModel;
+pub use d3d_tab::D3DModel;
+pub use audio_tab::AudioModel;
+pub use virtual_desktop_tab::VirtualDesktopModel;
+pub use mac_driver_tab::MacDriverModel;
