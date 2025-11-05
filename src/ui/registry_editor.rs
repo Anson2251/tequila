@@ -6,7 +6,7 @@ use crate::prefix::regeditor::{RegistryEditor, RegEditor};
 use crate::prefix::regeditor::keys::*;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, oneshot};
 use crate::prefix::regeditor::cache::InMemoryRegistryCache;
 use tracker;
 
@@ -42,6 +42,10 @@ pub enum RegistryEditorMsg {
     ToggleEdit,
     SaveRegistry,
     LoadRegistry,
+    RegistryEditorLoaded(Arc<Mutex<RegistryEditor>>),
+    RegistryEditorUpdateTabs(Option<String>, Option<String>, Option<u32>, Option<String>, Option<u32>, Option<String>, Option<VirtualDesktopSettings>, Option<DpiSettings>, Option<X11DriverSettings>, Option<MacDriverSettings>),
+    RegistrySaveComplete,
+    RegistrySaveError(String),
     ConfigUpdated(PrefixConfig),
     PrefixPathUpdated(PathBuf),
     // Messages from child components
@@ -580,8 +584,8 @@ impl SimpleComponent for RegistryEditorModel {
                     let cache = Arc::new(InMemoryRegistryCache::with_default_ttl());
                     let prefix_path = self.prefix_path.clone();
                     
-                    // Use relm4's spawn_blocking to avoid blocking UI
-                    let (tx, rx) = std::sync::mpsc::channel();
+                    // Use tokio::sync::oneshot channel for async communication
+                    let (tx, rx) = oneshot::channel();
                     
                     tokio::spawn(async move {
                         let result = async move {
@@ -624,119 +628,39 @@ impl SimpleComponent for RegistryEditorModel {
                         let _ = tx.send(result);
                     });
                     
-                    #[cfg(target_os = "macos")]
-                    if let Ok(Ok((editor, (windows_version, d3d_renderer, d3d_csmt, offscreen_rendering_mode, video_memory_size, audio_driver, virtual_desktop, dpi_settings, x11_driver_settings, mac_driver_settings)))) = rx.recv() {
-                        // Update Windows Version tab
-                        self.windows_version_controller.emit(super::windows_version_tab::WindowsVersionMsg::SetWindowsVersion(windows_version));
-                        
-                        // Update D3D tab
-                        self.d3d_controller.emit(super::d3d_tab::D3DMsg::SetD3DSettings {
-                            renderer: d3d_renderer,
-                            csmt: d3d_csmt,
-                            offscreen_mode: offscreen_rendering_mode,
-                            video_memory: video_memory_size,
-                        });
-                        
-                        // Update Audio tab
-                        self.audio_controller.emit(super::audio_tab::AudioMsg::SetAudioDriver(audio_driver));
-                        
-                        // Update Virtual Desktop tab
-                        if let Some(virtual_settings) = virtual_desktop {
-                            self.virtual_desktop_controller.emit(super::virtual_desktop_tab::VirtualDesktopMsg::SetVirtualDesktopSettings {
-                                enabled: virtual_settings.enabled,
-                                width: virtual_settings.width,
-                                height: virtual_settings.height,
-                            });
-                        }
-                        
-                        // Update DPI tab
-                        if let Some(dpi) = dpi_settings {
-                            self.dpi_controller.emit(super::dpi_tab::DpiMsg::SetDpiSettings {
-                                log_pixels: dpi.log_pixels,
-                            });
-                        }
-                        
-                        // Update X11 Driver tab
-                        if let Some(x11) = x11_driver_settings {
-                            self.x11_driver_controller.emit(super::x11_driver_tab::X11DriverMsg::SetX11DriverSettings {
-                                decorated: x11.decorated,
-                                client_side_graphics: x11.client_side_graphics,
-                                client_side_with_render: x11.client_side_with_render,
-                                client_side_antialias_with_render: x11.client_side_antialias_with_render,
-                                client_side_antialias_with_core: x11.client_side_antialias_with_core,
-                                grab_fullscreen: x11.grab_fullscreen,
-                                grab_pointer: x11.grab_pointer,
-                                managed: x11.managed,
-                                use_xrandr: x11.use_xrandr,
-                                use_xvid_mode: x11.use_xvid_mode,
-                            });
-                        }
-                        
-                        // Update Mac Driver tab
-                        if let Some(mac_settings) = mac_driver_settings {
-                            self.mac_driver_controller.emit(super::mac_driver_tab::MacDriverMsg::SetMacDriverSettings {
-                                allow_vertical_sync: mac_settings.allow_vertical_sync,
-                                capture_displays: mac_settings.capture_displays_for_fullscreen,
-                                precise_scrolling: mac_settings.use_precise_scrolling,
-                                retina_mode: mac_settings.retina_mode,
-                            });
-                        }
-                        
-                        // Wrap editor in Arc<Mutex<>> for thread-safe access
-                        self.registry_editor = Some(Arc::new(Mutex::new(editor)));
-                    }
+                    // Handle the result asynchronously without blocking UI
+                    let sender_clone = sender.clone();
                     
-                    #[cfg(not(target_os = "macos"))]
-                    if let Ok(Ok((editor, (windows_version, d3d_renderer, d3d_csmt, offscreen_rendering_mode, video_memory_size, audio_driver, virtual_desktop, dpi_settings, x11_driver_settings, _mac_driver_settings)))) = rx.recv() {
-                        // Update Windows Version tab
-                        self.windows_version_controller.emit(super::windows_version_tab::WindowsVersionMsg::SetWindowsVersion(windows_version));
-                        
-                        // Update D3D tab
-                        self.d3d_controller.emit(super::d3d_tab::D3DMsg::SetD3DSettings {
-                            renderer: d3d_renderer,
-                            csmt: d3d_csmt,
-                            offscreen_mode: offscreen_rendering_mode,
-                            video_memory: video_memory_size,
-                        });
-                        
-                        // Update Audio tab
-                        self.audio_controller.emit(super::audio_tab::AudioMsg::SetAudioDriver(audio_driver));
-                        
-                        // Update Virtual Desktop tab
-                        if let Some(virtual_settings) = virtual_desktop {
-                            self.virtual_desktop_controller.emit(super::virtual_desktop_tab::VirtualDesktopMsg::SetVirtualDesktopSettings {
-                                enabled: virtual_settings.enabled,
-                                width: virtual_settings.width,
-                                height: virtual_settings.height,
-                            });
+                    tokio::spawn(async move {
+                        match rx.await {
+                            Ok(Ok((editor, (windows_version, d3d_renderer, d3d_csmt, offscreen_rendering_mode, video_memory_size, audio_driver, virtual_desktop, dpi_settings, x11_driver_settings, mac_driver_settings)))) => {
+                                // Send message to update all tabs at once
+                                sender_clone.input(RegistryEditorMsg::RegistryEditorUpdateTabs(
+                                    windows_version,
+                                    d3d_renderer,
+                                    d3d_csmt,
+                                    offscreen_rendering_mode,
+                                    video_memory_size,
+                                    audio_driver,
+                                    virtual_desktop,
+                                    dpi_settings,
+                                    x11_driver_settings,
+                                    mac_driver_settings,
+                                ));
+                                
+                                // Send message to update the registry editor in the main thread
+                                sender_clone.input(RegistryEditorMsg::RegistryEditorLoaded(Arc::new(Mutex::new(editor))));
+                            }
+                            Ok(Err(e)) => {
+                                eprintln!("Failed to load registry: {}", e);
+                                // TODO: Show error dialog to user
+                            }
+                            Err(_) => {
+                                eprintln!("Failed to receive registry load result");
+                                // TODO: Show error dialog to user
+                            }
                         }
-                        
-                        // Update DPI tab
-                        if let Some(dpi) = dpi_settings {
-                            self.dpi_controller.emit(super::dpi_tab::DpiMsg::SetDpiSettings {
-                                log_pixels: dpi.log_pixels,
-                            });
-                        }
-                        
-                        // Update X11 Driver tab
-                        if let Some(x11) = x11_driver_settings {
-                            self.x11_driver_controller.emit(super::x11_driver_tab::X11DriverMsg::SetX11DriverSettings {
-                                decorated: x11.decorated,
-                                client_side_graphics: x11.client_side_graphics,
-                                client_side_with_render: x11.client_side_with_render,
-                                client_side_antialias_with_render: x11.client_side_antialias_with_render,
-                                client_side_antialias_with_core: x11.client_side_antialias_with_core,
-                                grab_fullscreen: x11.grab_fullscreen,
-                                grab_pointer: x11.grab_pointer,
-                                managed: x11.managed,
-                                use_xrandr: x11.use_xrandr,
-                                use_xvid_mode: x11.use_xvid_mode,
-                            });
-                        }
-                        
-                        // Wrap editor in Arc<Mutex<>> for thread-safe access
-                        self.registry_editor = Some(Arc::new(Mutex::new(editor)));
-                    }
+                    });
                 }
             }
             RegistryEditorMsg::SaveRegistry => {
@@ -799,11 +723,99 @@ impl SimpleComponent for RegistryEditorModel {
                 self.registry_editor = None; // Reset to reload with new path
                 sender.input(RegistryEditorMsg::LoadRegistry);
             }
+            RegistryEditorMsg::RegistryEditorLoaded(editor) => {
+                self.registry_editor = Some(editor);
+            }
+            RegistryEditorMsg::RegistryEditorUpdateTabs(windows_version, d3d_renderer, d3d_csmt, offscreen_rendering_mode, video_memory_size, audio_driver, virtual_desktop, dpi_settings, x11_driver_settings, mac_driver_settings) => {
+                // Update Windows Version tab
+                self.windows_version_controller.emit(super::windows_version_tab::WindowsVersionMsg::SetWindowsVersion(windows_version));
+                
+                // Update D3D tab
+                self.d3d_controller.emit(super::d3d_tab::D3DMsg::SetD3DSettings {
+                    renderer: d3d_renderer,
+                    csmt: d3d_csmt,
+                    offscreen_mode: offscreen_rendering_mode,
+                    video_memory: video_memory_size,
+                });
+                
+                // Update Audio tab
+                self.audio_controller.emit(super::audio_tab::AudioMsg::SetAudioDriver(audio_driver));
+                
+                // Update Virtual Desktop tab
+                if let Some(virtual_settings) = virtual_desktop {
+                    self.virtual_desktop_controller.emit(super::virtual_desktop_tab::VirtualDesktopMsg::SetVirtualDesktopSettings {
+                        enabled: virtual_settings.enabled,
+                        width: virtual_settings.width,
+                        height: virtual_settings.height,
+                    });
+                }
+                
+                // Update DPI tab
+                if let Some(dpi) = dpi_settings {
+                    self.dpi_controller.emit(super::dpi_tab::DpiMsg::SetDpiSettings {
+                        log_pixels: dpi.log_pixels,
+                    });
+                }
+                
+                // Update X11 Driver tab
+                if let Some(x11) = x11_driver_settings {
+                    self.x11_driver_controller.emit(super::x11_driver_tab::X11DriverMsg::SetX11DriverSettings {
+                        decorated: x11.decorated,
+                        client_side_graphics: x11.client_side_graphics,
+                        client_side_with_render: x11.client_side_with_render,
+                        client_side_antialias_with_render: x11.client_side_antialias_with_render,
+                        client_side_antialias_with_core: x11.client_side_antialias_with_core,
+                        grab_fullscreen: x11.grab_fullscreen,
+                        grab_pointer: x11.grab_pointer,
+                        managed: x11.managed,
+                        use_xrandr: x11.use_xrandr,
+                        use_xvid_mode: x11.use_xvid_mode,
+                    });
+                }
+                
+                // Update Mac Driver tab
+                if let Some(mac_settings) = mac_driver_settings {
+                    self.mac_driver_controller.emit(super::mac_driver_tab::MacDriverMsg::SetMacDriverSettings {
+                        allow_vertical_sync: mac_settings.allow_vertical_sync,
+                        capture_displays: mac_settings.capture_displays_for_fullscreen,
+                        precise_scrolling: mac_settings.use_precise_scrolling,
+                        retina_mode: mac_settings.retina_mode,
+                    });
+                }
+            }
+            RegistryEditorMsg::RegistrySaveComplete => {
+                self.set_editing(false);
+                
+                // Disable editing on all tab components
+                self.windows_version_controller.emit(super::windows_version_tab::WindowsVersionMsg::SetEditing(false));
+                self.d3d_controller.emit(super::d3d_tab::D3DMsg::SetEditing(false));
+                self.audio_controller.emit(super::audio_tab::AudioMsg::SetEditing(false));
+                self.virtual_desktop_controller.emit(super::virtual_desktop_tab::VirtualDesktopMsg::SetEditing(false));
+                self.mac_driver_controller.emit(super::mac_driver_tab::MacDriverMsg::SetEditing(false));
+                self.dpi_controller.emit(super::dpi_tab::DpiMsg::SetEditing(false));
+                self.x11_driver_controller.emit(super::x11_driver_tab::X11DriverMsg::SetEditing(false));
+            }
+            RegistryEditorMsg::RegistrySaveError(error) => {
+                eprintln!("Registry save error: {}", error);
+                // TODO: Show error dialog to user
+                // For now, just disable editing mode
+                self.set_editing(false);
+                
+                // Disable editing on all tab components
+                self.windows_version_controller.emit(super::windows_version_tab::WindowsVersionMsg::SetEditing(false));
+                self.d3d_controller.emit(super::d3d_tab::D3DMsg::SetEditing(false));
+                self.audio_controller.emit(super::audio_tab::AudioMsg::SetEditing(false));
+                self.virtual_desktop_controller.emit(super::virtual_desktop_tab::VirtualDesktopMsg::SetEditing(false));
+                self.mac_driver_controller.emit(super::mac_driver_tab::MacDriverMsg::SetEditing(false));
+                self.dpi_controller.emit(super::dpi_tab::DpiMsg::SetEditing(false));
+                self.x11_driver_controller.emit(super::x11_driver_tab::X11DriverMsg::SetEditing(false));
+            }
             // Handle updates from child components
             RegistryEditorMsg::WindowsVersionUpdate(version) => {
                 if let Some(editor_arc) = &self.registry_editor {
                     let editor_arc_clone = editor_arc.clone();
                     let version = version.clone();
+                    let sender_clone = sender.clone();
                     
                     tokio::spawn(async move {
                         let result = async {
@@ -811,8 +823,14 @@ impl SimpleComponent for RegistryEditorModel {
                             editor.set_windows_version(&version).await
                         }.await;
                         
-                        if let Err(e) = result {
-                            eprintln!("Failed to save Windows version: {}", e);
+                        match result {
+                            Ok(()) => {
+                                println!("Windows version updated successfully");
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to save Windows version: {}", e);
+                                sender_clone.input(RegistryEditorMsg::RegistrySaveError(format!("Failed to save Windows version: {}", e)));
+                            }
                         }
                     });
                 }
@@ -820,6 +838,7 @@ impl SimpleComponent for RegistryEditorModel {
             RegistryEditorMsg::D3DUpdate { renderer, csmt, offscreen_mode, video_memory } => {
                 if let Some(editor_arc) = &self.registry_editor {
                     let editor_arc_clone = editor_arc.clone();
+                    let sender_clone = sender.clone();
                     
                     tokio::spawn(async move {
                         let result = async {
@@ -850,8 +869,14 @@ impl SimpleComponent for RegistryEditorModel {
                             Ok::<(), PrefixError>(())
                         }.await;
                         
-                        if let Err(e) = result {
-                            eprintln!("Failed to save D3D settings: {}", e);
+                        match result {
+                            Ok(()) => {
+                                println!("D3D settings updated successfully");
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to save D3D settings: {}", e);
+                                sender_clone.input(RegistryEditorMsg::RegistrySaveError(format!("Failed to save D3D settings: {}", e)));
+                            }
                         }
                     });
                 }
@@ -860,6 +885,7 @@ impl SimpleComponent for RegistryEditorModel {
                 if let Some(editor_arc) = &self.registry_editor {
                     let editor_arc_clone = editor_arc.clone();
                     let driver = driver.clone();
+                    let sender_clone = sender.clone();
                     
                     tokio::spawn(async move {
                         let result = async {
@@ -867,8 +893,14 @@ impl SimpleComponent for RegistryEditorModel {
                             editor.set_audio_driver(&driver).await
                         }.await;
                         
-                        if let Err(e) = result {
-                            eprintln!("Failed to save audio driver: {}", e);
+                        match result {
+                            Ok(()) => {
+                                println!("Audio driver updated successfully");
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to save audio driver: {}", e);
+                                sender_clone.input(RegistryEditorMsg::RegistrySaveError(format!("Failed to save audio driver: {}", e)));
+                            }
                         }
                     });
                 }
@@ -876,6 +908,7 @@ impl SimpleComponent for RegistryEditorModel {
             RegistryEditorMsg::VirtualDesktopUpdate { enabled, width, height } => {
                 if let Some(editor_arc) = &self.registry_editor {
                     let editor_arc_clone = editor_arc.clone();
+                    let sender_clone = sender.clone();
                     
                     tokio::spawn(async move {
                         let result = async {
@@ -907,8 +940,14 @@ impl SimpleComponent for RegistryEditorModel {
                             editor.set_virtual_desktop(&virtual_settings).await
                         }.await;
                         
-                        if let Err(e) = result {
-                            eprintln!("Failed to save virtual desktop: {}", e);
+                        match result {
+                            Ok(()) => {
+                                println!("Virtual desktop updated successfully");
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to save virtual desktop: {}", e);
+                                sender_clone.input(RegistryEditorMsg::RegistrySaveError(format!("Failed to save virtual desktop: {}", e)));
+                            }
                         }
                     });
                 }
@@ -916,6 +955,7 @@ impl SimpleComponent for RegistryEditorModel {
             RegistryEditorMsg::MacDriverUpdate { allow_vertical_sync, capture_displays, precise_scrolling, retina_mode } => {
                 if let Some(editor_arc) = &self.registry_editor {
                     let editor_arc_clone = editor_arc.clone();
+                    let sender_clone = sender.clone();
                     
                     tokio::spawn(async move {
                         let result = async {
@@ -943,8 +983,14 @@ impl SimpleComponent for RegistryEditorModel {
                             editor.set_mac_driver_settings(&mac_settings).await
                         }.await;
                         
-                        if let Err(e) = result {
-                            eprintln!("Failed to save Mac driver settings: {}", e);
+                        match result {
+                            Ok(()) => {
+                                println!("Mac driver settings updated successfully");
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to save Mac driver settings: {}", e);
+                                sender_clone.input(RegistryEditorMsg::RegistrySaveError(format!("Failed to save Mac driver settings: {}", e)));
+                            }
                         }
                     });
                 }
@@ -952,6 +998,7 @@ impl SimpleComponent for RegistryEditorModel {
             RegistryEditorMsg::DpiUpdate { log_pixels } => {
                 if let Some(editor_arc) = &self.registry_editor {
                     let editor_arc_clone = editor_arc.clone();
+                    let sender_clone = sender.clone();
                     
                     tokio::spawn(async move {
                         let result = async {
@@ -972,8 +1019,14 @@ impl SimpleComponent for RegistryEditorModel {
                             editor.set_dpi_settings(&dpi_settings).await
                         }.await;
                         
-                        if let Err(e) = result {
-                            eprintln!("Failed to save DPI settings: {}", e);
+                        match result {
+                            Ok(()) => {
+                                println!("DPI settings updated successfully");
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to save DPI settings: {}", e);
+                                sender_clone.input(RegistryEditorMsg::RegistrySaveError(format!("Failed to save DPI settings: {}", e)));
+                            }
                         }
                     });
                 }
@@ -981,6 +1034,7 @@ impl SimpleComponent for RegistryEditorModel {
             RegistryEditorMsg::X11DriverUpdate { decorated, client_side_graphics, client_side_with_render, client_side_antialias_with_render, client_side_antialias_with_core, grab_fullscreen, grab_pointer, managed, use_xrandr, use_xvid_mode } => {
                 if let Some(editor_arc) = &self.registry_editor {
                     let editor_arc_clone = editor_arc.clone();
+                    let sender_clone = sender.clone();
                     
                     tokio::spawn(async move {
                         let result = async {
@@ -1029,8 +1083,14 @@ impl SimpleComponent for RegistryEditorModel {
                             editor.set_x11_driver_settings(&x11_settings).await
                         }.await;
                         
-                        if let Err(e) = result {
-                            eprintln!("Failed to save X11 driver settings: {}", e);
+                        match result {
+                            Ok(()) => {
+                                println!("X11 driver settings updated successfully");
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to save X11 driver settings: {}", e);
+                                sender_clone.input(RegistryEditorMsg::RegistrySaveError(format!("Failed to save X11 driver settings: {}", e)));
+                            }
                         }
                     });
                 }
