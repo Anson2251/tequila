@@ -18,6 +18,7 @@ pub struct RegistryEditorModel {
     prefix_path: PathBuf,
     config: PrefixConfig,
     editing: bool,
+    loading: bool,
     #[tracker::do_not_track]
     registry_editor: Option<Arc<Mutex<RegistryEditor>>>,
     // Tab component controllers
@@ -94,99 +95,120 @@ impl SimpleComponent for RegistryEditorModel {
 
     view! {
         gtk::ScrolledWindow {
-            gtk::Box {
-                set_orientation: gtk::Orientation::Vertical,
-                set_spacing: 10,
-                set_margin_all: 10,
-
-                #[name = "notebook"]
-                gtk::Notebook {
-                    set_hexpand: true,
-                    set_vexpand: true,
-                    set_show_border: false,
-
-                    // Windows Version tab
-                    append_page: (
-                        &{
-                            model.windows_version_controller.widget().clone().upcast::<gtk::Widget>()
-                        },
-                        Some(&gtk::Label::builder().label("Windows Version").build())
-                    ),
-
-                    // Direct3D tab
-                    append_page: (
-                        &{
-                            model.d3d_controller.widget().clone().upcast::<gtk::Widget>()
-                        },
-                        Some(&gtk::Label::builder().label("Direct3D").build())
-                    ),
-
-                    // Audio tab
-                    append_page: (
-                        &{
-                            model.audio_controller.widget().clone().upcast::<gtk::Widget>()
-                        },
-                        Some(&gtk::Label::builder().label("Audio").build())
-                    ),
-
-                    // Virtual Desktop tab
-                    append_page: (
-                        &{
-                            model.virtual_desktop_controller.widget().clone().upcast::<gtk::Widget>()
-                        },
-                        Some(&gtk::Label::builder().label("Virtual Desktop").build())
-                    ),
-
-                    // Mac Driver tab (only on macOS)
-                    append_page: (
-                        &{
-                            model.mac_driver_controller.widget().clone().upcast::<gtk::Widget>()
-                        },
-                        Some(&gtk::Label::builder().label("Mac Driver").build())
-                    ),
-
-                    // DPI tab
-                    append_page: (
-                        &{
-                            model.dpi_controller.widget().clone().upcast::<gtk::Widget>()
-                        },
-                        Some(&gtk::Label::builder().label("DPI").build())
-                    ),
-
-                    // X11 Driver tab
-                    append_page: (
-                        &{
-                            model.x11_driver_controller.widget().clone().upcast::<gtk::Widget>()
-                        },
-                        Some(&gtk::Label::builder().label("X11 Driver").build())
-                    ),
-                },
-
-                // Control buttons
+            #[transition = "Crossfade"]
+            if !model.loading {
                 gtk::Box {
-                    set_orientation: gtk::Orientation::Horizontal,
+                    set_orientation: gtk::Orientation::Vertical,
                     set_spacing: 10,
-                    set_halign: gtk::Align::End,
+                    set_margin_all: 10,
+
+                    #[name = "notebook"]
+                    gtk::Notebook {
+                        set_hexpand: true,
+                        set_vexpand: true,
+                        set_show_border: false,
+
+                        // Windows Version tab
+                        append_page: (
+                            &{
+                                model.windows_version_controller.widget().clone().upcast::<gtk::Widget>()
+                            },
+                            Some(&gtk::Label::builder().label("Windows Version").build())
+                        ),
+
+                        // Direct3D tab
+                        append_page: (
+                            &{
+                                model.d3d_controller.widget().clone().upcast::<gtk::Widget>()
+                            },
+                            Some(&gtk::Label::builder().label("Direct3D").build())
+                        ),
+
+                        // Audio tab
+                        append_page: (
+                            &{
+                                model.audio_controller.widget().clone().upcast::<gtk::Widget>()
+                            },
+                            Some(&gtk::Label::builder().label("Audio").build())
+                        ),
+
+                        // Virtual Desktop tab
+                        append_page: (
+                            &{
+                                model.virtual_desktop_controller.widget().clone().upcast::<gtk::Widget>()
+                            },
+                            Some(&gtk::Label::builder().label("Virtual Desktop").build())
+                        ),
+
+                        // Mac Driver tab (only on macOS)
+                        append_page: (
+                            &{
+                                model.mac_driver_controller.widget().clone().upcast::<gtk::Widget>()
+                            },
+                            Some(&gtk::Label::builder().label("Mac Driver").build())
+                        ),
+
+                        // DPI tab
+                        append_page: (
+                            &{
+                                model.dpi_controller.widget().clone().upcast::<gtk::Widget>()
+                            },
+                            Some(&gtk::Label::builder().label("DPI").build())
+                        ),
+
+                        // X11 Driver tab
+                        append_page: (
+                            &{
+                                model.x11_driver_controller.widget().clone().upcast::<gtk::Widget>()
+                            },
+                            Some(&gtk::Label::builder().label("X11 Driver").build())
+                        ),
+                    },
+
+                    // Control buttons
+                    gtk::Box {
+                        set_orientation: gtk::Orientation::Horizontal,
+                        set_spacing: 10,
+                        set_halign: gtk::Align::End,
+                        set_margin_top: 10,
+
+                        gtk::Button {
+                            #[track = "model.changed(RegistryEditorModel::editing())"]
+                            set_label: if model.editing { "Save" } else { "Edit" },
+                            #[track = "model.changed(RegistryEditorModel::editing())"]
+                            add_css_class: if model.editing { "suggested-action" } else { "" },
+                            connect_clicked => RegistryEditorMsg::ToggleEdit,
+                        },
+
+                        gtk::Button {
+                            set_label: "Cancel",
+                            #[track = "model.changed(RegistryEditorModel::editing())"]
+                            set_visible: model.editing,
+                            connect_clicked[sender, config = model.config.clone()] => move |_| {
+                                sender.input(RegistryEditorMsg::ConfigUpdated(config.clone()));
+                            },
+                        },
+                    },
+                }
+            }
+            else {
+                gtk::Box {
+                    set_orientation: gtk::Orientation::Vertical,
+                    set_spacing: 10,
                     set_margin_top: 10,
 
-                    gtk::Button {
-                        #[track = "model.changed(RegistryEditorModel::editing())"]
-                        set_label: if model.editing { "Save" } else { "Edit" },
-                        #[track = "model.changed(RegistryEditorModel::editing())"]
-                        add_css_class: if model.editing { "suggested-action" } else { "" },
-                        connect_clicked => RegistryEditorMsg::ToggleEdit,
+                    gtk::Spinner {
+                        set_halign: gtk::Align::Center,
+                        set_margin_bottom: 10,
                     },
 
-                    gtk::Button {
-                        set_label: "Cancel",
-                        #[track = "model.changed(RegistryEditorModel::editing())"]
-                        set_visible: model.editing,
-                        connect_clicked[sender, config = model.config.clone()] => move |_| {
-                            sender.input(RegistryEditorMsg::ConfigUpdated(config.clone()));
-                        },
+                    gtk::Label {
+                        set_label: "Loading registry editor...",
+                        set_halign: gtk::Align::Center,
                     },
-                },
+                }
             }
+            
         }
     }
 
@@ -534,6 +556,7 @@ impl SimpleComponent for RegistryEditorModel {
             config: config.clone(),
             registry_editor: None,
             editing: false,
+            loading: false,
             windows_version_controller,
             d3d_controller,
             audio_controller,
@@ -575,6 +598,7 @@ impl SimpleComponent for RegistryEditorModel {
                 }
             }
             RegistryEditorMsg::LoadRegistry => {
+                self.set_loading(true);
                 // Always reload when LoadRegistry is called, especially when switching prefixes
                 if !self.prefix_path.as_os_str().is_empty() {
                     // Reset registry editor to force reload
@@ -725,6 +749,7 @@ impl SimpleComponent for RegistryEditorModel {
             }
             RegistryEditorMsg::RegistryEditorLoaded(editor) => {
                 self.registry_editor = Some(editor);
+                self.loading = false;
             }
             RegistryEditorMsg::RegistryEditorUpdateTabs(windows_version, d3d_renderer, d3d_csmt, offscreen_rendering_mode, video_memory_size, audio_driver, virtual_desktop, dpi_settings, x11_driver_settings, mac_driver_settings) => {
                 // Update Windows Version tab
