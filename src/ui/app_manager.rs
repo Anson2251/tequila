@@ -9,6 +9,7 @@ use crate::ui::{
     registered_apps_list::{RegisteredAppsListModel, RegisteredAppsListMsg, RegisteredAppsListOutput},
     app_actions::{AppActionsModel, AppActionsMsg, AppActionsOutput},
     add_app_popover::{AddAppPopoverModel, AddAppPopoverMsg, AddAppPopoverOutput},
+    executable_info_dialog::{ExecutableInfoDialogModel, ExecutableInfoDialogMsg},
 };
 
 #[derive(Debug)]
@@ -17,8 +18,6 @@ pub struct AppManagerModel {
     prefix_path: PathBuf,
     config: PrefixConfig,
     scanning: bool,
-    show_info_dialog: bool,
-    info_dialog_executable: Option<RegisteredExecutable>,
     selected_executable: Option<usize>,
     available_executables: Vec<RegisteredExecutable>,
     #[tracker::do_not_track]
@@ -29,6 +28,8 @@ pub struct AppManagerModel {
     app_actions: AsyncController<AppActionsModel>,
     #[tracker::do_not_track]
     add_app_popover: AsyncController<AddAppPopoverModel>,
+    #[tracker::do_not_track]
+    executable_info_dialog: AsyncController<ExecutableInfoDialogModel>,
 }
 
 #[derive(Debug)]
@@ -43,7 +44,6 @@ pub enum AppManagerMsg {
     ConfigUpdated(PrefixConfig),
     PrefixPathUpdated(PathBuf),
     ShowInfoDialog(usize),
-    CloseInfoDialog,
     // Messages from child components
     RegisteredAppsList(RegisteredAppsListOutput),
     AppActions(AppActionsOutput),
@@ -126,18 +126,22 @@ impl AsyncComponent for AppManagerModel {
             .launch(gtk::Button::new())
             .forward(sender.input_sender(), |output| AppManagerMsg::AddAppPopover(output));
 
+        // Initialize executable info dialog (hidden by default)
+        let executable_info_dialog = ExecutableInfoDialogModel::builder()
+            .launch(())
+            .detach();
+
         let model = AppManagerModel {
             prefix_path,
             config: config.clone(),
             scanning: false,
-            show_info_dialog: false,
-            info_dialog_executable: None,
             selected_executable: None,
             available_executables: Vec::new(),
             show_popover_after_scan: false,
             registered_apps_list,
             app_actions,
             add_app_popover,
+            executable_info_dialog,
             tracker: 0
         };
 
@@ -296,13 +300,8 @@ impl AsyncComponent for AppManagerModel {
             }
             AppManagerMsg::ShowInfoDialog(index) => {
                 if let Some(executable) = self.config.registered_executables.get(index) {
-                    self.set_info_dialog_executable(Some(executable.clone()));
-                    self.set_show_info_dialog(true);
+                    self.executable_info_dialog.emit(ExecutableInfoDialogMsg::ShowInfo(executable.clone()));
                 }
-            }
-            AppManagerMsg::CloseInfoDialog => {
-                self.set_show_info_dialog(false);
-                self.set_info_dialog_executable(None);
             }
             // Handle messages from child components
             AppManagerMsg::RegisteredAppsList(output) => {

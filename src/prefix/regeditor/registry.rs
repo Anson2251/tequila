@@ -213,7 +213,7 @@ impl WineRegistry {
             println!("DEBUG: Looking for key path: {}", key_path);
             println!("DEBUG: Available keys in registry:");
             for (name, key) in reg.keys() {
-                println!("DEBUG: Found key: {:?} (raw: {})", name, name.raw());
+                // println!("DEBUG: Found key: {:?} (raw: {})", name, name.raw());
                 if name.raw() == key_path {
                     // Find the value by name
                     for (val_name, value) in key.values() {

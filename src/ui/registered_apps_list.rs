@@ -237,7 +237,7 @@ impl AsyncComponent for RegisteredAppsListModel {
         // Initialize factory for registered executables (grid layout)
         let executables = FactoryVecDeque::builder()
             .launch(gtk::FlowBox::default())
-            .forward(sender.input_sender(), |output| match output {
+            .forward(sender.clone().input_sender(), move |output| match output {
                 RegisteredExecutableOutput::Selected(index) => {
                     // Handle selection internally and also forward to parent
                     RegisteredAppsListMsg::SelectExecutable(index)
@@ -252,6 +252,7 @@ impl AsyncComponent for RegisteredAppsListModel {
                 }
                 RegisteredExecutableOutput::ShowInfo(index) => {
                     // Forward show info action directly to parent
+                    sender.output(RegisteredAppsListOutput::ShowInfo(index)).unwrap();
                     RegisteredAppsListMsg::SelectExecutable(index)
                 }
             });
