@@ -1,7 +1,8 @@
 use relm4::{
-    gtk, ComponentParts, ComponentSender, RelmWidgetExt,
+    gtk,
     component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
-    view
+    view,
+    RelmWidgetExt,
 };
 use relm4::factory::{FactoryComponent, FactorySender, FactoryVecDeque, DynamicIndex};
 use gtk::prelude::*;
@@ -14,14 +15,12 @@ pub struct RegisteredAppsListModel {
     #[tracker::do_not_track]
     executables: FactoryVecDeque<RegisteredExecutableItem>,
     registered_executables: Vec<RegisteredExecutable>,
-    selected_index: Option<usize>,
 }
 
 #[derive(Debug)]
 pub enum RegisteredAppsListMsg {
     UpdateExecutables(Vec<RegisteredExecutable>),
-    SelectExecutable(usize),
-    ClearSelection,
+    SelectionChanged,
 }
 
 #[derive(Debug)]
@@ -37,30 +36,13 @@ pub enum RegisteredAppsListOutput {
 struct RegisteredExecutableItem {
     executable: RegisteredExecutable,
     index: usize,
-    selected: bool,
-}
-
-#[derive(Debug)]
-enum RegisteredExecutableMsg {
-    Select,
-    Launch,
-    Remove,
-    ShowInfo,
-}
-
-#[derive(Debug)]
-enum RegisteredExecutableOutput {
-    Selected(usize),
-    Launch(usize),
-    Remove(usize),
-    ShowInfo(usize),
 }
 
 #[relm4::factory]
 impl FactoryComponent for RegisteredExecutableItem {
     type Init = (RegisteredExecutable, usize);
-    type Input = RegisteredExecutableMsg;
-    type Output = RegisteredExecutableOutput;
+    type Input = ();
+    type Output = ();
     type CommandOutput = ();
     type ParentWidget = gtk::FlowBox;
 
@@ -73,83 +55,33 @@ impl FactoryComponent for RegisteredExecutableItem {
             set_width_request: 120,
             set_height_request: 120,
             set_focusable: true,
-            
-            // Selection indicator
-            #[watch]
-            set_css_classes: if self.selected { &["card", "selected"] } else { &["card"] },
-            
-            // Clickable area for selection
-            gtk::Button {
-                add_css_class: "flat",
-                add_css_class: "selection-area",
-                set_cursor_from_name: Some("pointer"),
-                connect_clicked[sender, index = self.index] => move |_| {
-                    sender.input(RegisteredExecutableMsg::Select);
-                    sender.output(RegisteredExecutableOutput::Selected(index)).unwrap();
-                },
-                
-                gtk::Box {
-                    set_orientation: gtk::Orientation::Vertical,
-                    set_spacing: 8,
-                    
-                    gtk::Image {
-                        set_pixel_size: 48,
-                        #[watch]
-                        set_from_file: self.executable.icon_path.as_ref(),
-                        set_icon_name: Some("application-x-executable"),
-                        set_halign: gtk::Align::Center,
-                        set_valign: gtk::Align::Center,
-                    },
 
-                    gtk::Label {
-                        #[watch]
-                        set_label: &self.executable.name,
-                        set_halign: gtk::Align::Center,
-                        set_ellipsize: gtk::pango::EllipsizeMode::End,
-                        set_max_width_chars: 15,
-                        set_lines: 2,
-                        set_wrap: true,
-                        set_wrap_mode: gtk::pango::WrapMode::WordChar,
-                    },
-                },
-            },
+            // Use FlowBox's built-in selection
+            add_css_class: "card",
 
-            // Action buttons (visible on hover/selection)
             gtk::Box {
-                set_orientation: gtk::Orientation::Horizontal,
-                set_spacing: 4,
-                set_halign: gtk::Align::Center,
-                set_margin_top: 5,
-                #[watch]
-                set_visible: self.selected,
+                set_orientation: gtk::Orientation::Vertical,
+                set_spacing: 8,
 
-                gtk::Button {
-                    set_icon_name: "media-playback-start-symbolic",
-                    set_tooltip_text: Some("Launch"),
-                    add_css_class: "circular",
-                    add_css_class: "suggested-action",
-                    connect_clicked[sender, index = self.index] => move |_| {
-                        sender.output(RegisteredExecutableOutput::Launch(index)).unwrap();
-                    },
+                gtk::Image {
+                    set_pixel_size: 48,
+                    #[watch]
+                    set_from_file: self.executable.icon_path.as_ref(),
+                    set_icon_name: Some("application-x-executable"),
+                    set_halign: gtk::Align::Center,
+                    set_valign: gtk::Align::Center,
+                    set_hexpand: true,
                 },
 
-                gtk::Button {
-                    set_icon_name: "dialog-information-symbolic",
-                    set_tooltip_text: Some("Info"),
-                    add_css_class: "circular",
-                    connect_clicked[sender, index = self.index] => move |_| {
-                        sender.output(RegisteredExecutableOutput::ShowInfo(index)).unwrap();
-                    },
-                },
-
-                gtk::Button {
-                    set_icon_name: "user-trash-symbolic",
-                    set_tooltip_text: Some("Remove"),
-                    add_css_class: "circular",
-                    add_css_class: "destructive-action",
-                    connect_clicked[sender, index = self.index] => move |_| {
-                        sender.output(RegisteredExecutableOutput::Remove(index)).unwrap();
-                    },
+                gtk::Label {
+                    #[watch]
+                    set_label: &self.executable.name,
+                    set_halign: gtk::Align::Center,
+                    set_ellipsize: gtk::pango::EllipsizeMode::End,
+                    set_max_width_chars: 15,
+                    set_lines: 2,
+                    set_wrap: true,
+                    set_wrap_mode: gtk::pango::WrapMode::WordChar,
                 },
             },
         }
@@ -157,24 +89,18 @@ impl FactoryComponent for RegisteredExecutableItem {
 
     fn init_model(
         init: Self::Init,
-        index: &DynamicIndex,
+        _index: &DynamicIndex,
         _sender: FactorySender<Self>,
     ) -> Self {
         let (executable, idx) = init;
         Self {
             executable,
             index: idx,
-            selected: false,
         }
     }
 
-    fn update(&mut self, msg: Self::Input, _sender: FactorySender<Self>) {
-        match msg {
-            RegisteredExecutableMsg::Select => {
-                self.selected = true;
-            }
-            _ => {}
-        }
+    fn update(&mut self, _msg: Self::Input, _sender: FactorySender<Self>) {
+        // No messages to handle - selection is handled by FlowBox
     }
 }
 
@@ -210,10 +136,13 @@ impl AsyncComponent for RegisteredAppsListModel {
                     set_margin_all: 10,
                     set_max_children_per_line: 5,
                     set_min_children_per_line: 3,
-                    set_selection_mode: gtk::SelectionMode::None,
+                    set_selection_mode: gtk::SelectionMode::Single,
                     set_homogeneous: true,
                     set_valign: gtk::Align::Start,
                     set_halign: gtk::Align::Fill,
+                    connect_selected_children_changed[sender] => move |_| {
+                        sender.input(RegisteredAppsListMsg::SelectionChanged);
+                    },
                 },
             },
 
@@ -237,30 +166,11 @@ impl AsyncComponent for RegisteredAppsListModel {
         // Initialize factory for registered executables (grid layout)
         let executables = FactoryVecDeque::builder()
             .launch(gtk::FlowBox::default())
-            .forward(sender.clone().input_sender(), move |output| match output {
-                RegisteredExecutableOutput::Selected(index) => {
-                    // Handle selection internally and also forward to parent
-                    RegisteredAppsListMsg::SelectExecutable(index)
-                }
-                RegisteredExecutableOutput::Launch(index) => {
-                    // Forward launch action directly to parent
-                    RegisteredAppsListMsg::SelectExecutable(index)
-                }
-                RegisteredExecutableOutput::Remove(index) => {
-                    // Forward remove action directly to parent
-                    RegisteredAppsListMsg::SelectExecutable(index)
-                }
-                RegisteredExecutableOutput::ShowInfo(index) => {
-                    // Forward show info action directly to parent
-                    sender.output(RegisteredAppsListOutput::ShowInfo(index)).unwrap();
-                    RegisteredAppsListMsg::SelectExecutable(index)
-                }
-            });
+            .detach();
 
         let mut model = RegisteredAppsListModel {
             executables,
             registered_executables: init.clone(),
-            selected_index: None,
             tracker: 0
         };
 
@@ -290,7 +200,7 @@ impl AsyncComponent for RegisteredAppsListModel {
         match msg {
             RegisteredAppsListMsg::UpdateExecutables(executables) => {
                 self.registered_executables = executables.clone();
-                
+
                 // Update factory
                 let mut guard = self.executables.guard();
                 guard.clear();
@@ -298,25 +208,17 @@ impl AsyncComponent for RegisteredAppsListModel {
                     guard.push_back((exe.clone(), idx));
                 }
             }
-            RegisteredAppsListMsg::SelectExecutable(index) => {
-                self.set_selected_index(Some(index));
-                
-                // Update selection state in factory without rebuilding the entire list
-                let mut guard = self.executables.guard();
-                for (idx, item) in guard.iter_mut().enumerate() {
-                    item.selected = Some(idx) == self.selected_index;
-                }
-                
-                sender.output(RegisteredAppsListOutput::Selected(index));
-            }
-            RegisteredAppsListMsg::ClearSelection => {
-                println!("DEBUG: ClearSelection called");
-                self.set_selected_index(None);
-                
-                // Clear selection state in factory without rebuilding entire list
-                let mut guard = self.executables.guard();
-                for item in guard.iter_mut() {
-                    item.selected = false;
+            RegisteredAppsListMsg::SelectionChanged => {
+                // Get the FlowBox widget to query selected children
+                let flowbox = self.executables.widget();
+                let selected_children = flowbox.selected_children();
+
+                if let Some(child) = selected_children.first() {
+                    // Get the index of the selected child
+                    let index = child.index() as usize;
+                    if index < self.registered_executables.len() {
+                        sender.output(RegisteredAppsListOutput::Selected(index));
+                    }
                 }
             }
         }

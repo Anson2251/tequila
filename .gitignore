@@ -2,3 +2,4 @@
 /relm4-book
 .DS_Store
 logs/
+.mcp.json*

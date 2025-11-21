@@ -165,6 +165,7 @@ impl AsyncComponent for AppManagerModel {
             AppManagerMsg::ScanForApplications => {
                 self.set_scanning(true);
                 self.set_selected_executable(None);
+                self.app_actions.emit(AppActionsMsg::SetSelection(false));
 
                 println!("Scanning for applications... {}", &self.prefix_path.display());
 
@@ -248,14 +249,15 @@ impl AsyncComponent for AppManagerModel {
                 if index < self.config.registered_executables.len() {
                     self.config.remove_executable(index);
                     self.set_selected_executable(None);
-                    
+                    self.app_actions.emit(AppActionsMsg::SetSelection(false));
+
                     // Save config to file
                     if let Err(e) = self.config.save_to_file(&self.prefix_path) {
                         eprintln!("Failed to save config after removing executable: {}", e);
                     } else {
                         println!("Config saved successfully after removing executable");
                     }
-                    
+
                     let _ = sender.output(AppManagerMsg::ConfigUpdated(self.config.clone()));
                 }
             }
@@ -310,6 +312,7 @@ impl AsyncComponent for AppManagerModel {
                     RegisteredAppsListOutput::Selected(index) => {
                         println!("DEBUG: Setting selected executable to: {}", index);
                         self.set_selected_executable(Some(index));
+                        self.app_actions.emit(AppActionsMsg::SetSelection(true));
                     }
                     RegisteredAppsListOutput::Launch(index) => {
                         sender.input(AppManagerMsg::LaunchExecutable(index));
@@ -333,16 +336,21 @@ impl AsyncComponent for AppManagerModel {
                     AppActionsOutput::Add => {
                         // Set flag to show popover after scan completes
                         self.show_popover_after_scan = true;
-                        
+
                         // First, scan for applications to populate available_executables
                         sender.input(AppManagerMsg::ScanForApplications);
-                        
+
                         // We'll show the popover after the scan completes
                         // The scan will update available_executables, then we can show the popover
                     }
                     AppActionsOutput::Remove => {
                         if let Some(index) = self.selected_executable {
                             sender.input(AppManagerMsg::RemoveExecutable(index));
+                        }
+                    }
+                    AppActionsOutput::ShowInfo => {
+                        if let Some(index) = self.selected_executable {
+                            sender.input(AppManagerMsg::ShowInfoDialog(index));
                         }
                     }
                 }

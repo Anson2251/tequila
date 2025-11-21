@@ -19,6 +19,7 @@ pub enum AppActionsMsg {
     Launch,
     Add,
     Remove,
+    ShowInfo,
 }
 
 #[derive(Debug)]
@@ -26,6 +27,7 @@ pub enum AppActionsOutput {
     Launch,
     Add,
     Remove,
+    ShowInfo,
 }
 
 #[relm4::component(pub, async)]
@@ -62,6 +64,15 @@ impl AsyncComponent for AppActionsModel {
                     sender.input(AppActionsMsg::Remove);
                 },
                 add_css_class: "destructive-action",
+            },
+
+            gtk::Button {
+                set_label: "Info",
+                #[track = "model.changed(AppActionsModel::has_selection()) || model.changed(AppActionsModel::is_scanning())"]
+                set_sensitive: model.has_selection && !model.is_scanning,
+                connect_clicked[sender] => move |_| {
+                    sender.input(AppActionsMsg::ShowInfo);
+                },
             },
 
             gtk::Button {
@@ -116,6 +127,9 @@ impl AsyncComponent for AppActionsModel {
             }
             AppActionsMsg::Remove => {
                 let _ = sender.output(AppActionsOutput::Remove);
+            }
+            AppActionsMsg::ShowInfo => {
+                let _ = sender.output(AppActionsOutput::ShowInfo);
             }
         }
     }
