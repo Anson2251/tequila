@@ -65,13 +65,8 @@ impl AsyncComponent for AppManagerModel {
             set_margin_all: 10,
 
             gtk::ScrolledWindow{
-                gtk::Frame {
-                    set_label: Some("Registered Applications"),
-                    set_hexpand: true,
-
-                    #[local_ref]
-                    registered_apps_list_widget -> gtk::Widget {},
-                },
+                #[local_ref]
+                registered_apps_list_widget -> gtk::Widget {},
             },
 
             // Action bar at bottom
@@ -110,7 +105,7 @@ impl AsyncComponent for AppManagerModel {
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
         let (prefix_path, config) = init;
-        
+
         // Initialize registered apps list component with the current registered executables
         let registered_apps_list = RegisteredAppsListModel::builder()
             .launch(config.registered_executables.clone())
@@ -172,18 +167,18 @@ impl AsyncComponent for AppManagerModel {
                 // Async scanning
                 let prefix_manager = crate::prefix::Manager::new(self.prefix_path.parent().unwrap_or(&self.prefix_path).to_path_buf());
                 let prefix_path = self.prefix_path.clone();
-                
+
                 match prefix_manager.scan_for_applications_async(&prefix_path).await {
                     Ok(executables) => {
                         println!("Scanning complete, found {} executables", executables.len());
                         self.available_executables = executables.clone();
                         self.set_selected_executable(None);
-                        
+
                         // Check if we should show popover after scan (triggered by Add button)
                         if self.show_popover_after_scan && !executables.is_empty() {
                             // Update available apps in popover before showing
                             self.add_app_popover.emit(AddAppPopoverMsg::UpdateAvailableApps(self.available_executables.clone()));
-                            
+
                             // Get the add button from the app_actions component
                             let app_actions_widget = self.app_actions.widget();
                             if let Some(box_widget) = app_actions_widget.downcast_ref::<gtk::Box>() {
@@ -194,9 +189,9 @@ impl AsyncComponent for AppManagerModel {
                                     }
                                 }
                             }
-                            
+
                             self.add_app_popover.emit(AddAppPopoverMsg::Show);
-                            
+
                             // Reset the flag
                             self.show_popover_after_scan = false;
                         }
@@ -210,39 +205,39 @@ impl AsyncComponent for AppManagerModel {
             AppManagerMsg::AddExecutable(index) => {
                 if let Some(executable) = self.available_executables.get(index) {
                     println!("Adding executable: {}", executable.name);
-                    
+
                     self.config.add_executable(executable.clone());
-                    
+
                     // Save config to file
                     if let Err(e) = self.config.save_to_file(&self.prefix_path) {
                         eprintln!("Failed to save config after adding executable: {}", e);
                     } else {
                         println!("Config saved successfully after adding executable");
                     }
-                    
+
                     let _ = sender.output(AppManagerMsg::ConfigUpdated(self.config.clone()));
                 }
             }
             AppManagerMsg::AddExecutables(indices) => {
                 println!("Adding {} executables: {:?}", indices.len(), indices);
-                
+
                 for &index in &indices {
                     if let Some(executable) = self.available_executables.get(index) {
                         println!("Adding executable: {}", executable.name);
                         self.config.add_executable(executable.clone());
                     }
                 }
-                
+
                 // Save config to file
                 if let Err(e) = self.config.save_to_file(&self.prefix_path) {
                     eprintln!("Failed to save config after adding executables: {}", e);
                 } else {
                     println!("Config saved successfully after adding executables");
                 }
-                
+
                 // Update the registered apps list with the new config's registered executables
                 self.registered_apps_list.emit(RegisteredAppsListMsg::UpdateExecutables(self.config.registered_executables.clone()));
-                
+
                 let _ = sender.output(AppManagerMsg::ConfigUpdated(self.config.clone()));
             }
             AppManagerMsg::RemoveExecutable(index) => {
@@ -265,7 +260,7 @@ impl AsyncComponent for AppManagerModel {
                 if let Some(executable) = self.config.registered_executables.get(index) {
                     // Create a temporary PrefixManager for launching
                     let prefix_manager = crate::prefix::Manager::new(self.prefix_path.parent().unwrap_or(&self.prefix_path).to_path_buf());
-                    
+
                     match prefix_manager.launch_executable(&self.prefix_path, executable) {
                         Ok(_) => {
                             println!("Successfully launched: {}", executable.name);
@@ -280,7 +275,7 @@ impl AsyncComponent for AppManagerModel {
             AppManagerMsg::UpdateExecutableList(executables) => {
                 self.available_executables = executables.clone();
                 self.set_selected_executable(None);
-                
+
                 // Update the registered apps list with the current config's registered executables
                 self.registered_apps_list.emit(RegisteredAppsListMsg::UpdateExecutables(self.config.registered_executables.clone()));
             }
@@ -290,10 +285,10 @@ impl AsyncComponent for AppManagerModel {
             }
             AppManagerMsg::ConfigUpdated(config) => {
                 self.set_config(config);
-                
+
                 // Update the registered apps list with the new config's registered executables
                 self.registered_apps_list.emit(RegisteredAppsListMsg::UpdateExecutables(self.config.registered_executables.clone()));
-                
+
                 // Also update available executables by scanning
                 sender.input(AppManagerMsg::ScanForApplications);
             }

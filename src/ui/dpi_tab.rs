@@ -72,89 +72,73 @@ impl SimpleComponent for DpiModel {
                                 sender.input(DpiMsg::UpdateLogPixels(spin.text().to_string()));
                             },
                         },
-
-                        gtk::Label {
-                            set_label: "(96 = 100%, 120 = 125%, 144 = 150%)",
-                            add_css_class: "caption",
-                            set_halign: gtk::Align::Start,
-                        },
                     },
+                },
+            },
+                gtk::Frame {
+                set_label: Some("Commmon values"),
+
+                gtk::Box {
+                set_orientation: gtk::Orientation::Vertical,
+                set_spacing: 5,
+
+                gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_spacing: 15,
 
                     gtk::Label {
-                        set_label: "Controls the system DPI scaling. Higher values make text and UI elements larger.",
-                        set_wrap: true,
+                        set_label: "96 DPI:",
+                        set_halign: gtk::Align::End,
+                        set_width_request: 80,
+                    },
+                    gtk::Label {
+                        set_label: "100% (Default)",
                         add_css_class: "caption",
-                        set_margin_top: 5,
                     },
+                },
+
+                gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_spacing: 15,
 
                     gtk::Label {
-                        set_label: "Common values:",
-                        set_halign: gtk::Align::Start,
-                        set_margin_top: 10,
+                        set_label: "120 DPI:",
+                        set_halign: gtk::Align::End,
+                        set_width_request: 80,
                     },
-
-                    gtk::Box {
-                    set_orientation: gtk::Orientation::Vertical,
-                    set_spacing: 5,
-
-                    gtk::Box {
-                        set_orientation: gtk::Orientation::Horizontal,
-                        set_spacing: 15,
-
-                        gtk::Label {
-                            set_label: "96 DPI:",
-                            set_halign: gtk::Align::End,
-                            set_width_request: 80,
-                        },
-                        gtk::Label {
-                            set_label: "100% (Default)",
-                            add_css_class: "caption",
-                        },
+                    gtk::Label {
+                        set_label: "125% scaling",
+                        add_css_class: "caption",
                     },
+                },
 
-                    gtk::Box {
-                        set_orientation: gtk::Orientation::Horizontal,
-                        set_spacing: 15,
+                gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_spacing: 15,
 
-                        gtk::Label {
-                            set_label: "120 DPI:",
-                            set_halign: gtk::Align::End,
-                            set_width_request: 80,
-                        },
-                        gtk::Label {
-                            set_label: "125% scaling",
-                            add_css_class: "caption",
-                        },
+                    gtk::Label {
+                        set_label: "144 DPI:",
+                        set_halign: gtk::Align::End,
+                        set_width_request: 80,
                     },
-
-                    gtk::Box {
-                        set_orientation: gtk::Orientation::Horizontal,
-                        set_spacing: 15,
-
-                        gtk::Label {
-                            set_label: "144 DPI:",
-                            set_halign: gtk::Align::End,
-                            set_width_request: 80,
-                        },
-                        gtk::Label {
-                            set_label: "150% scaling",
-                            add_css_class: "caption",
-                        },
+                    gtk::Label {
+                        set_label: "150% scaling",
+                        add_css_class: "caption",
                     },
+                },
 
-                    gtk::Box {
-                        set_orientation: gtk::Orientation::Horizontal,
-                        set_spacing: 15,
+                gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_spacing: 15,
 
-                        gtk::Label {
-                            set_label: "192 DPI:",
-                            set_halign: gtk::Align::End,
-                            set_width_request: 80,
-                        },
-                        gtk::Label {
-                            set_label: "200% scaling",
-                            add_css_class: "caption",
-                        },
+                    gtk::Label {
+                        set_label: "192 DPI:",
+                        set_halign: gtk::Align::End,
+                        set_width_request: 80,
+                    },
+                    gtk::Label {
+                        set_label: "200% scaling",
+                        add_css_class: "caption",
                     },
                 },
                 }

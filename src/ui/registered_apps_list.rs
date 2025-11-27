@@ -50,18 +50,14 @@ impl FactoryComponent for RegisteredExecutableItem {
         #[root]
         gtk::Box {
             set_orientation: gtk::Orientation::Vertical,
-            set_spacing: 8,
-            set_margin_all: 10,
-            set_width_request: 120,
-            set_height_request: 120,
+            set_spacing: 6,
+            set_margin_all: 8,
+            set_width_request: 64,
+            set_height_request: 64,
             set_focusable: true,
 
             // Use FlowBox's built-in selection
-            add_css_class: "card",
-
-            gtk::Box {
-                set_orientation: gtk::Orientation::Vertical,
-                set_spacing: 8,
+            // add_css_class: "card",
 
                 gtk::Image {
                     set_pixel_size: 48,
@@ -70,7 +66,7 @@ impl FactoryComponent for RegisteredExecutableItem {
                     set_icon_name: Some("application-x-executable"),
                     set_halign: gtk::Align::Center,
                     set_valign: gtk::Align::Center,
-                    set_hexpand: true,
+                    set_vexpand: true,
                 },
 
                 gtk::Label {
@@ -83,7 +79,7 @@ impl FactoryComponent for RegisteredExecutableItem {
                     set_wrap: true,
                     set_wrap_mode: gtk::pango::WrapMode::WordChar,
                 },
-            },
+
         }
     }
 
@@ -118,13 +114,12 @@ impl AsyncComponent for RegisteredAppsListModel {
             set_spacing: 5,
             set_margin_all: 10,
 
-            gtk::Label {
-                #[watch]
-                set_label: &format!("{} applications registered", model.registered_executables.len()),
-                add_css_class: "caption",
-            },
+
 
             gtk::ScrolledWindow {
+                #[watch]
+                set_visible: model.registered_executables.len() != 0,
+
                 set_vexpand: true,
                 set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
                 set_min_content_height: 200,
@@ -147,6 +142,14 @@ impl AsyncComponent for RegisteredAppsListModel {
             },
 
             gtk::Label {
+                #[watch]
+                set_visible: model.registered_executables.len() != 0,
+                #[watch]
+                set_label: &format!("{} applications registered", model.registered_executables.len()),
+                add_css_class: "caption",
+            },
+
+            gtk::Label {
                 set_label: "No registered applications\nAdd applications from left panel",
                 set_halign: gtk::Align::Center,
                 set_valign: gtk::Align::Center,
@@ -154,6 +157,8 @@ impl AsyncComponent for RegisteredAppsListModel {
                 #[watch]
                 set_visible: model.registered_executables.len() == 0,
                 add_css_class: "dim-label",
+                set_hexpand: true,
+                set_vexpand: true,
             },
         }
     }
