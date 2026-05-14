@@ -66,7 +66,7 @@ impl FactoryComponent for AvailableExecutable {
         gtk::ListBoxRow {
             set_selectable: false,
             set_activatable: true,
-            
+
             #[watch]
             set_css_classes: if self.selected { &["activatable", "selected-row"] } else { &["activatable"] },
 
@@ -91,9 +91,7 @@ impl FactoryComponent for AvailableExecutable {
                 // Icon or placeholder
                 gtk::Image {
                     set_pixel_size: 24,
-                    // #[watch]
-                    // set_from_file: self.executable.icon_path.as_ref(),
-                    set_icon_name: Some("application-x-executable"),
+                    set_from_file: self.executable.icon_path.as_deref(),
                 },
 
                 // Executable info
@@ -161,7 +159,7 @@ impl AsyncComponent for AddAppPopoverModel {
             connect_closed[sender] => move |_| {
                 sender.input(AddAppPopoverMsg::Hide);
             },
-            
+
             gtk::Box {
                 set_orientation: gtk::Orientation::Vertical,
                 set_spacing: 10,
@@ -289,7 +287,7 @@ impl AsyncComponent for AddAppPopoverModel {
             }
             AddAppPopoverMsg::UpdateAvailableApps(apps) => {
                 self.available_apps = apps.clone();
-                
+
                 // Update factory
                 {
                     let mut guard = self.available_executables.guard();
@@ -300,17 +298,17 @@ impl AsyncComponent for AddAppPopoverModel {
                 }
             }
             AddAppPopoverMsg::SelectApp(index) => {
-                println!("DEBUG: SelectApp called with index: {}", index);
-                
+                // println!("DEBUG: SelectApp called with index: {}", index);
+
                 // Prevent recursive calls
                 if self.is_processing_selection {
-                    println!("DEBUG: Skipping recursive SelectApp call");
+                    // println!("DEBUG: Skipping recursive SelectApp call");
                     return;
                 }
-                
+
                 // Check if this index is actually different from current state to prevent loops
                 let currently_selected = self.selected_indices.contains(&index);
-                
+
                 // Toggle selection for the clicked index
                 if currently_selected {
                     self.selected_indices.remove(&index);
@@ -319,10 +317,10 @@ impl AsyncComponent for AddAppPopoverModel {
                     self.selected_indices.insert(index);
                     println!("DEBUG: Selected index: {}", index);
                 }
-                
+
                 // Set flag to prevent recursive calls
                 self.is_processing_selection = true;
-                
+
                 // Update the factory to reflect the new selection state
                 {
                     let mut guard = self.available_executables.guard();
@@ -333,18 +331,18 @@ impl AsyncComponent for AddAppPopoverModel {
                         }
                     }
                 }
-                
+
                 // Notify tracker that selected_indices has changed AFTER updating factory
                 // This ensures UI updates properly
                 self.set_selected_indices(self.selected_indices.clone());
-                
+
                 // Reset flag after a short delay to allow UI to update
                 let sender = sender.clone();
                 relm4::spawn(async move {
                     relm4::tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     sender.input(AddAppPopoverMsg::ResetProcessingFlag);
                 });
-                
+
                 println!("DEBUG: Current selected indices: {:?}", self.selected_indices);
             }
             AddAppPopoverMsg::ResetProcessingFlag => {
@@ -357,16 +355,16 @@ impl AsyncComponent for AddAppPopoverModel {
                     let _ = sender.output(AddAppPopoverOutput::AddApp(selected_vec));
                     self.set_is_visible(false);
                     widgets.popdown();
-                    
+
                     // Clear selection after adding
                     self.selected_indices.clear();
-                    
+
                     // Notify tracker that selected_indices has changed
                     self.set_selected_indices(self.selected_indices.clone());
-                    
+
                     // Set flag to prevent recursive calls during cleanup
                     self.is_processing_selection = true;
-                    
+
                     // Update selection state in factory without rebuilding
                     {
                         let mut guard = self.available_executables.guard();
@@ -374,7 +372,7 @@ impl AsyncComponent for AddAppPopoverModel {
                             item.selected = false;
                         }
                     }
-                    
+
                     // Reset flag after a short delay
                     let sender = sender.clone();
                     relm4::spawn(async move {

@@ -1,5 +1,5 @@
 //! Registry editor implementation
-//! 
+//!
 //! This module provides the main implementation of the RegEditor trait,
 //! handling all Wine registry operations with validation and caching.
 
@@ -38,10 +38,10 @@ impl std::fmt::Debug for RegistryEditor {
 
 impl RegistryEditor {
     /// Create a new registry editor
-    /// 
+    ///
     /// # Arguments
     /// * `cache` - Cache implementation for registry operations
-    /// 
+    ///
     /// # Returns
     /// A new registry editor instance
     pub fn new(cache: Arc<dyn RegistryCache>) -> Self {
@@ -51,8 +51,8 @@ impl RegistryEditor {
             prefix_path: None,
         }
     }
-    
-    
+
+
     /// Create a registry editor with a specific cache
     ///
     /// # Arguments
@@ -93,26 +93,26 @@ impl RegistryEditor {
             .join("user.reg")
             .canonicalize()
             .map_err(|e| PrefixError::InvalidPath(format!("Invalid prefix path: {}", e)))?;
-        
+
         Ok(reg_path)
     }
 
     /// Helper method to get a string value from registry
     async fn get_string_value(&self, key_path: &str, value_name: &str) -> Result<Option<String>> {
-        println!("DEBUG: Getting string value - Key: {}, Value: {}", key_path, value_name);
+        // println!("DEBUG: Getting string value - Key: {}, Value: {}", key_path, value_name);
 
         if let Some(value) = self.registry.get_value(key_path, value_name).await? {
-            println!("DEBUG: Found value: {:?}", value);
+            // println!("DEBUG: Found value: {:?}", value);
             match value {
                 Value::Sz(s) => Ok(Some(s)),
                 Value::ExpandSz(s) => Ok(Some(s)),
                 _ => {
-                    println!("DEBUG: Value type mismatch, returning None");
+                    // println!("DEBUG: Value type mismatch, returning None");
                     Ok(None)
                 },
             }
         } else {
-            println!("DEBUG: No value found for key: {}, value: {}", key_path, value_name);
+            // println!("DEBUG: No value found for key: {}, value: {}", key_path, value_name);
             Ok(None)
         }
     }
@@ -187,10 +187,10 @@ impl RegEditor for RegistryEditor {
         let registry_path = Self::get_registry_path(prefix_path)?;
         self.registry = WineRegistry::load_from_file(&registry_path).await?;
         self.prefix_path = Some(prefix_path.clone());
-        
+
         // Update cache
         self.cache.cache_registry(prefix_path, self.registry.clone()).await?;
-        
+
         Ok(())
     }
 
@@ -198,10 +198,10 @@ impl RegEditor for RegistryEditor {
     async fn save_registry(&self, prefix_path: &PathBuf) -> Result<()> {
         let registry_path = Self::get_registry_path(prefix_path)?;
         self.registry.save_to_file(&registry_path).await?;
-        
+
         // Invalidate cache since file was modified
         self.cache.invalidate_cache(prefix_path).await?;
-        
+
         Ok(())
     }
 
@@ -215,7 +215,7 @@ impl RegEditor for RegistryEditor {
         let key_path = "Software\\Wine";
         Self::validate_key_path(key_path)?;
         Self::validate_value_name("Version")?;
-        
+
         if let Some(parsed_version) = WindowsVersion::from_string(version) {
             self.set_string_value(key_path, "Version", parsed_version.to_string()).await
         } else {
@@ -233,7 +233,7 @@ impl RegEditor for RegistryEditor {
         let key_path = "Software\\Wine\\Direct3D";
         Self::validate_key_path(key_path)?;
         Self::validate_value_name("renderer")?;
-        
+
         if let Some(parsed_renderer) = D3DRenderer::from_string(renderer) {
             self.set_string_value(key_path, "renderer", parsed_renderer.to_string()).await
         } else {
@@ -251,7 +251,7 @@ impl RegEditor for RegistryEditor {
         let key_path = "Software\\Wine\\Direct3D";
         Self::validate_key_path(key_path)?;
         Self::validate_value_name("csmt")?;
-        
+
         let value = if enabled { 1 } else { 0 };
         self.set_dword_value(key_path, "csmt", value).await
     }
@@ -266,7 +266,7 @@ impl RegEditor for RegistryEditor {
         let key_path = "Software\\Wine\\Direct3D";
         Self::validate_key_path(key_path)?;
         Self::validate_value_name("OffscreenRenderingMode")?;
-        
+
         if let Some(parsed_mode) = OffscreenRenderingMode::from_string(mode) {
             self.set_string_value(key_path, "OffscreenRenderingMode", parsed_mode.to_string()).await
         } else {
@@ -284,7 +284,7 @@ impl RegEditor for RegistryEditor {
         let key_path = "Software\\Wine\\DirectInput";
         Self::validate_key_path(key_path)?;
         Self::validate_value_name("MouseWarpOverride")?;
-        
+
         if let Some(parsed_mode) = MouseWarpOverride::from_string(mode) {
             self.set_string_value(key_path, "MouseWarpOverride", parsed_mode.to_string()).await
         } else {
@@ -302,7 +302,7 @@ impl RegEditor for RegistryEditor {
         let key_path = "Software\\Wine\\Drivers\\Audio";
         Self::validate_key_path(key_path)?;
         Self::validate_value_name("")?;
-        
+
         if let Some(parsed_driver) = AudioDriver::from_string(driver) {
             self.set_string_value(key_path, "", parsed_driver.to_string()).await
         } else {
@@ -320,7 +320,7 @@ impl RegEditor for RegistryEditor {
         let key_path = "Software\\Wine\\Drivers\\Graphics";
         Self::validate_key_path(key_path)?;
         Self::validate_value_name("")?;
-        
+
         if let Some(parsed_driver) = GraphicsDriver::from_string(driver) {
             self.set_string_value(key_path, "", parsed_driver.to_string()).await
         } else {
@@ -331,14 +331,14 @@ impl RegEditor for RegistryEditor {
     /// Get desktop settings
     async fn get_desktop_settings(&self) -> Result<Option<DesktopSettings>> {
         let key_path = "Software\\Wine\\Explorer";
-        
+
         let desktop = self.get_string_value(key_path, "Desktop").await?;
         let show_systray = self.get_dword_value(key_path, "ShowSystray").await?.unwrap_or(1) != 0;
-        
+
         // Get desktops
         let desktops_path = format!("{}\\Desktops", key_path);
         let mut desktops = HashMap::new();
-        
+
         let values = self.registry.get_key_values(&desktops_path).await?;
         if !values.is_empty() {
             for (name, value) in values {
@@ -349,7 +349,7 @@ impl RegEditor for RegistryEditor {
                 }
             }
         }
-        
+
         Ok(Some(DesktopSettings {
             desktop,
             desktops,
@@ -361,23 +361,23 @@ impl RegEditor for RegistryEditor {
     async fn set_desktop_settings(&mut self, settings: &DesktopSettings) -> Result<()> {
         let key_path = "Software\\Wine\\Explorer";
         Self::validate_key_path(key_path)?;
-        
+
         // Set desktop
         if let Some(desktop) = &settings.desktop {
             self.set_string_value(key_path, "Desktop", desktop).await?;
         }
-        
+
         // Set show systray
         let systray_value = if settings.show_systray { 1 } else { 0 };
         self.set_dword_value(key_path, "ShowSystray", systray_value).await?;
-        
+
         // Set desktops
         let desktops_path = format!("{}\\Desktops", key_path);
         for (name, size) in &settings.desktops {
             Self::validate_value_name(name)?;
             self.set_string_value(&desktops_path, name, &size.to_string()).await?;
         }
-        
+
         Ok(())
     }
 
@@ -385,7 +385,7 @@ impl RegEditor for RegistryEditor {
     async fn get_font_replacements(&self) -> Result<Vec<FontReplacement>> {
         let key_path = "Software\\Wine\\Fonts\\Replacements";
         let mut replacements = Vec::new();
-        
+
         let values = self.registry.get_key_values(key_path).await?;
         if !values.is_empty() {
             for (original, value) in values {
@@ -394,7 +394,7 @@ impl RegEditor for RegistryEditor {
                 }
             }
         }
-        
+
         Ok(replacements)
     }
 
@@ -403,7 +403,7 @@ impl RegEditor for RegistryEditor {
         let key_path = "Software\\Wine\\Fonts\\Replacements";
         Self::validate_key_path(key_path)?;
         Self::validate_value_name(original)?;
-        
+
         self.set_string_value(key_path, original, replacement).await
     }
 
@@ -412,7 +412,7 @@ impl RegEditor for RegistryEditor {
         let key_path = "Software\\Wine\\Fonts\\Replacements";
         Self::validate_key_path(key_path)?;
         Self::validate_value_name(original)?;
-        
+
         self.registry.delete_value(key_path, original).await
     }
 
@@ -420,7 +420,7 @@ impl RegEditor for RegistryEditor {
     async fn get_dll_overrides(&self) -> Result<Vec<DllOverride>> {
         let key_path = "Software\\Wine\\DllOverrides";
         let mut overrides = Vec::new();
-        
+
         let values = self.registry.get_key_values(key_path).await?;
         if !values.is_empty() {
             for (dll, value) in values {
@@ -431,7 +431,7 @@ impl RegEditor for RegistryEditor {
                 }
             }
         }
-        
+
         Ok(overrides)
     }
 
@@ -440,7 +440,7 @@ impl RegEditor for RegistryEditor {
         let key_path = "Software\\Wine\\DllOverrides";
         Self::validate_key_path(key_path)?;
         Self::validate_value_name(dll)?;
-        
+
         self.set_string_value(key_path, dll, setting.to_string()).await
     }
 
@@ -449,7 +449,7 @@ impl RegEditor for RegistryEditor {
         let key_path = "Software\\Wine\\DllOverrides";
         Self::validate_key_path(key_path)?;
         Self::validate_value_name(dll)?;
-        
+
         self.registry.delete_value(key_path, dll).await
     }
 
@@ -463,32 +463,32 @@ impl RegEditor for RegistryEditor {
         let key_path = "Software\\Wine\\Direct3D";
         Self::validate_key_path(key_path)?;
         Self::validate_value_name("VideoMemorySize")?;
-        
+
         if size_mb == 0 || size_mb > 16384 {
             return Err(PrefixError::ValidationError(
                 "Video memory size must be between 1 and 16384 MB".to_string(),
             ));
         }
-        
+
         self.set_dword_value(key_path, "VideoMemorySize", size_mb).await
     }
 
     /// Get shader model settings
     async fn get_shader_model_settings(&self) -> Result<Option<ShaderModelSettings>> {
         let key_path = "Software\\Wine\\Direct3D";
-        
+
         let max_shader_model_vs = self.get_dword_value(key_path, "MaxShaderModelVS").await?;
         let max_shader_model_ps = self.get_dword_value(key_path, "MaxShaderModelPS").await?;
         let max_shader_model_gs = self.get_dword_value(key_path, "MaxShaderModelGS").await?;
         let max_shader_model_hs = self.get_dword_value(key_path, "MaxShaderModelHS").await?;
         let max_shader_model_ds = self.get_dword_value(key_path, "MaxShaderModelDS").await?;
         let max_shader_model_cs = self.get_dword_value(key_path, "MaxShaderModelCS").await?;
-        
+
         if max_shader_model_vs.is_none() && max_shader_model_ps.is_none() && max_shader_model_gs.is_none()
             && max_shader_model_hs.is_none() && max_shader_model_ds.is_none() && max_shader_model_cs.is_none() {
             return Ok(None);
         }
-        
+
         Ok(Some(ShaderModelSettings {
             max_shader_model_vs,
             max_shader_model_ps,
@@ -503,44 +503,44 @@ impl RegEditor for RegistryEditor {
     async fn set_shader_model_settings(&mut self, settings: &ShaderModelSettings) -> Result<()> {
         let key_path = "Software\\Wine\\Direct3D";
         Self::validate_key_path(key_path)?;
-        
+
         if let Some(vs) = settings.max_shader_model_vs {
             Self::validate_value_name("MaxShaderModelVS")?;
             self.set_dword_value(key_path, "MaxShaderModelVS", vs).await?;
         }
-        
+
         if let Some(ps) = settings.max_shader_model_ps {
             Self::validate_value_name("MaxShaderModelPS")?;
             self.set_dword_value(key_path, "MaxShaderModelPS", ps).await?;
         }
-        
+
         if let Some(gs) = settings.max_shader_model_gs {
             Self::validate_value_name("MaxShaderModelGS")?;
             self.set_dword_value(key_path, "MaxShaderModelGS", gs).await?;
         }
-        
+
         if let Some(hs) = settings.max_shader_model_hs {
             Self::validate_value_name("MaxShaderModelHS")?;
             self.set_dword_value(key_path, "MaxShaderModelHS", hs).await?;
         }
-        
+
         if let Some(ds) = settings.max_shader_model_ds {
             Self::validate_value_name("MaxShaderModelDS")?;
             self.set_dword_value(key_path, "MaxShaderModelDS", ds).await?;
         }
-        
+
         if let Some(cs) = settings.max_shader_model_cs {
             Self::validate_value_name("MaxShaderModelCS")?;
             self.set_dword_value(key_path, "MaxShaderModelCS", cs).await?;
         }
-        
+
         Ok(())
     }
 
     /// Get virtual desktop settings
     async fn get_virtual_desktop(&self) -> Result<Option<VirtualDesktopSettings>> {
         let desktop_settings = self.get_desktop_settings().await?;
-        
+
         if let Some(settings) = desktop_settings {
             if let Some(desktop_name) = settings.desktop {
                 if let Some(size) = settings.desktops.get(&desktop_name) {
@@ -552,7 +552,7 @@ impl RegEditor for RegistryEditor {
                 }
             }
         }
-        
+
         Ok(None)
     }
 
@@ -568,15 +568,15 @@ impl RegEditor for RegistryEditor {
                 },
                 show_systray: false,
             };
-            
+
             self.set_desktop_settings(&desktop_settings).await
         } else {
             // Disable virtual desktop
             let key_path = "Software\\Wine\\Explorer";
             Self::validate_key_path(key_path)?;
-            
+
             self.registry.delete_value(key_path, "Desktop").await?;
-            
+
             Ok(())
         }
     }
@@ -584,13 +584,13 @@ impl RegEditor for RegistryEditor {
     /// Get application-specific settings
     async fn get_app_settings(&self, app_name: &str) -> Result<Option<AppSettings>> {
         let key_path = format!("Software\\Wine\\AppDefaults\\{}", app_name);
-        
+
         if !self.registry.key_exists(&key_path).await? {
             return Ok(None);
         }
-        
+
         let mut app_settings = AppSettings::new(app_name.to_string());
-        
+
         // Get DLL overrides for this app
         let dll_overrides_path = format!("{}\\DllOverrides", key_path);
         let values = self.registry.get_key_values(&dll_overrides_path).await?;
@@ -603,21 +603,21 @@ impl RegEditor for RegistryEditor {
                 }
             }
         }
-        
+
         // Get Direct3D renderer
         if let Some(renderer_str) = self.get_string_value(&format!("{}\\Direct3D", key_path), "renderer").await? {
             if let Some(renderer) = D3DRenderer::from_string(&renderer_str) {
                 app_settings.d3d_renderer = Some(renderer);
             }
         }
-        
+
         // Get offscreen rendering mode
         if let Some(mode_str) = self.get_string_value(&format!("{}\\Direct3D", key_path), "OffscreenRenderingMode").await? {
             if let Some(mode) = OffscreenRenderingMode::from_string(&mode_str) {
                 app_settings.offscreen_rendering_mode = Some(mode);
             }
         }
-        
+
         Ok(Some(app_settings))
     }
 
@@ -625,7 +625,7 @@ impl RegEditor for RegistryEditor {
     async fn set_app_settings(&mut self, app_name: &str, settings: &AppSettings) -> Result<()> {
         let base_key_path = format!("Software\\Wine\\AppDefaults\\{}", app_name);
         Self::validate_key_path(&base_key_path)?;
-        
+
         // Set DLL overrides
         if !settings.dll_overrides.is_empty() {
             let dll_overrides_path = format!("{}\\DllOverrides", base_key_path);
@@ -634,27 +634,27 @@ impl RegEditor for RegistryEditor {
                 self.set_string_value(&dll_overrides_path, &dll_override.dll, dll_override.setting.to_string()).await?;
             }
         }
-        
+
         // Set Direct3D renderer
         if let Some(renderer) = &settings.d3d_renderer {
             let d3d_path = format!("{}\\Direct3D", base_key_path);
             Self::validate_value_name("renderer")?;
             self.set_string_value(&d3d_path, "renderer", renderer.to_string()).await?;
         }
-        
+
         // Set offscreen rendering mode
         if let Some(mode) = &settings.offscreen_rendering_mode {
             let d3d_path = format!("{}\\Direct3D", base_key_path);
             Self::validate_value_name("OffscreenRenderingMode")?;
             self.set_string_value(&d3d_path, "OffscreenRenderingMode", mode.to_string()).await?;
         }
-        
+
         // Set custom settings
         for (key, value) in &settings.custom_settings {
             Self::validate_value_name(key)?;
             self.set_string_value(&base_key_path, key, value).await?;
         }
-        
+
         Ok(())
     }
 
@@ -662,7 +662,7 @@ impl RegEditor for RegistryEditor {
     async fn remove_app_settings(&mut self, app_name: &str) -> Result<()> {
         let key_path = format!("Software\\Wine\\AppDefaults\\{}", app_name);
         Self::validate_key_path(&key_path)?;
-        
+
         self.registry.delete_key(&key_path).await
     }
 
@@ -846,7 +846,7 @@ impl RegEditor for RegistryEditor {
     async fn get_mac_driver_settings(&self) -> Result<Option<MacDriverSettings>> {
         let key_path = "Software\\Wine\\Mac Driver";
 
-        println!("DEBUG: Looking for Mac Driver settings at path: {}", key_path);
+        // println!("DEBUG: Looking for Mac Driver settings at path: {}", key_path);
 
         let allow_vertical_sync = self.get_string_value(key_path, "AllowVerticalSync").await?;
         let capture_displays_for_fullscreen = self.get_string_value(key_path, "CaptureDisplaysForFullscreen").await?;
@@ -854,24 +854,24 @@ impl RegEditor for RegistryEditor {
         let retina_mode = self.get_string_value(key_path, "RetinaMode").await?;
         let windows_float_when_inactive = self.get_string_value(key_path, "WindowsFloatWhenInactive").await?;
 
-        println!("DEBUG: Retrieved Mac Driver settings - RetinaMode: {:?}", retina_mode);
+        // println!("DEBUG: Retrieved Mac Driver settings - RetinaMode: {:?}", retina_mode);
 
         // If none of the settings exist, return None
         if allow_vertical_sync.is_none() && capture_displays_for_fullscreen.is_none()
             && use_precise_scrolling.is_none() && retina_mode.is_none() && windows_float_when_inactive.is_none() {
             return Ok(None);
         }
-        
+
         let mut settings = MacDriverSettings::new();
-        
+
         if let Some(sync_str) = allow_vertical_sync {
             settings.allow_vertical_sync = Some(sync_str == "y");
         }
-        
+
         if let Some(capture_str) = capture_displays_for_fullscreen {
             settings.capture_displays_for_fullscreen = Some(capture_str == "y");
         }
-        
+
         if let Some(scroll_str) = use_precise_scrolling {
             settings.use_precise_scrolling = Some(scroll_str == "y");
         }
@@ -885,7 +885,7 @@ impl RegEditor for RegistryEditor {
                 settings.windows_float_when_inactive = Some(float_mode);
             }
         }
-        
+
         Ok(Some(settings))
     }
 
@@ -893,21 +893,21 @@ impl RegEditor for RegistryEditor {
     async fn set_mac_driver_settings(&mut self, settings: &MacDriverSettings) -> Result<()> {
         let key_path = "Software\\Wine\\Mac Driver";
         Self::validate_key_path(key_path)?;
-        
+
         // Set AllowVerticalSync
         if let Some(sync) = settings.allow_vertical_sync {
             let sync_str = if sync { "y" } else { "n" };
             Self::validate_value_name("AllowVerticalSync")?;
             self.set_string_value(key_path, "AllowVerticalSync", sync_str).await?;
         }
-        
+
         // Set CaptureDisplaysForFullscreen
         if let Some(capture) = settings.capture_displays_for_fullscreen {
             let capture_str = if capture { "y" } else { "n" };
             Self::validate_value_name("CaptureDisplaysForFullscreen")?;
             self.set_string_value(key_path, "CaptureDisplaysForFullscreen", capture_str).await?;
         }
-        
+
         // Set UsePreciseScrolling
         if let Some(scrolling) = settings.use_precise_scrolling {
             let scroll_str = if scrolling { "y" } else { "n" };
@@ -921,30 +921,30 @@ impl RegEditor for RegistryEditor {
             Self::validate_value_name("RetinaMode")?;
             self.set_string_value(key_path, "RetinaMode", retina_str).await?;
         }
-        
+
         // Set WindowsFloatWhenInactive
         if let Some(float_mode) = &settings.windows_float_when_inactive {
             Self::validate_value_name("WindowsFloatWhenInactive")?;
             self.set_string_value(key_path, "WindowsFloatWhenInactive", float_mode.to_string()).await?;
         }
-        
+
         Ok(())
     }
 
     /// Validate registry entries
     async fn validate_registry(&self) -> Result<Vec<ValidationError>> {
         let mut errors = Vec::new();
-        
+
         // Get all keys and validate them
         let all_keys = self.registry.find_keys("").await?;
-        
+
         for key_path in all_keys {
             // Validate key path format
             if let Err(e) = Self::validate_key_path(&key_path) {
                 errors.push(ValidationError::new(key_path.clone(), None, e.to_string()));
                 continue;
             }
-            
+
             // Get all values in this key
             if let Ok(values) = self.registry.get_key_values(&key_path).await {
                 for (value_name, _) in &values {
@@ -954,7 +954,7 @@ impl RegEditor for RegistryEditor {
                 }
             }
         }
-        
+
         Ok(errors)
     }
 
@@ -974,22 +974,22 @@ mod tests {
     async fn test_registry_editor_basic() {
         let cache = Arc::new(InMemoryRegistryCache::with_default_ttl());
         let mut editor = RegistryEditor::new(cache);
-        
+
         // Test setting and getting Windows version
         editor.set_windows_version("win10").await.unwrap();
         let version = editor.get_windows_version().await.unwrap();
         assert_eq!(version, Some("win10".to_string()));
-        
+
         // Test setting and getting Direct3D renderer
         editor.set_d3d_renderer("vulkan").await.unwrap();
         let renderer = editor.get_d3d_renderer().await.unwrap();
         assert_eq!(renderer, Some("vulkan".to_string()));
-        
+
         // Test CSMT setting
         editor.set_d3d_csmt(true).await.unwrap();
         let csmt = editor.get_d3d_csmt().await.unwrap();
         assert_eq!(csmt, Some(1));
-        
+
         editor.set_d3d_csmt(false).await.unwrap();
         let csmt = editor.get_d3d_csmt().await.unwrap();
         assert_eq!(csmt, Some(0));
@@ -999,37 +999,37 @@ mod tests {
     async fn test_mac_driver_settings() {
         let cache = Arc::new(InMemoryRegistryCache::with_default_ttl());
         let mut editor = RegistryEditor::new(cache);
-        
+
         // Test setting and getting Mac Driver settings
         let mut mac_settings = MacDriverSettings::new();
         mac_settings.allow_vertical_sync = Some(true);
         mac_settings.capture_displays_for_fullscreen = Some(false);
         mac_settings.use_precise_scrolling = Some(true);
         mac_settings.windows_float_when_inactive = Some(WindowsFloatWhenInactive::NonFullscreen);
-        
+
         editor.set_mac_driver_settings(&mac_settings).await.unwrap();
-        
+
         let retrieved_settings = editor.get_mac_driver_settings().await.unwrap();
         assert!(retrieved_settings.is_some());
-        
+
         let settings = retrieved_settings.unwrap();
         assert_eq!(settings.allow_vertical_sync, Some(true));
         assert_eq!(settings.capture_displays_for_fullscreen, Some(false));
         assert_eq!(settings.use_precise_scrolling, Some(true));
         assert_eq!(settings.windows_float_when_inactive, Some(WindowsFloatWhenInactive::NonFullscreen));
-        
+
         // Test individual settings - create a new editor to avoid state conflicts
         let cache2 = Arc::new(InMemoryRegistryCache::with_default_ttl());
         let mut editor2 = RegistryEditor::new(cache2);
-        
+
         let mut individual_settings = MacDriverSettings::new();
         individual_settings.allow_vertical_sync = Some(false);
-        
+
         editor2.set_mac_driver_settings(&individual_settings).await.unwrap();
-        
+
         let retrieved_individual = editor2.get_mac_driver_settings().await.unwrap();
         assert!(retrieved_individual.is_some());
-        
+
         let individual = retrieved_individual.unwrap();
         assert_eq!(individual.allow_vertical_sync, Some(false));
         assert_eq!(individual.capture_displays_for_fullscreen, None);
@@ -1049,11 +1049,11 @@ mod tests {
         // Test getting font replacements
         let replacements = editor.get_font_replacements().await.unwrap();
         assert_eq!(replacements.len(), 2);
-        
+
         // Check that both replacements were added correctly
         let ms_ui_gothic = replacements.iter().find(|r| r.original == "MS UI Gothic");
         let ms_gothic = replacements.iter().find(|r| r.original == "ＭＳ ゴシック");
-        
+
         assert!(ms_ui_gothic.is_some());
         assert!(ms_gothic.is_some());
         assert_eq!(ms_ui_gothic.unwrap().replacement, "ヒラギノ丸ゴ ProN W4");

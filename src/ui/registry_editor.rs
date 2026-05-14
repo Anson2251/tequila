@@ -108,60 +108,57 @@ impl SimpleComponent for RegistryEditorModel {
                         set_vexpand: true,
                         set_show_border: false,
 
-                        // Windows Version tab
                         append_page: (
                             &{
-                                model.windows_version_controller.widget().clone().upcast::<gtk::Widget>()
+                                let b = gtk::Box::builder()
+                                    .orientation(gtk::Orientation::Vertical)
+                                    .spacing(0)
+                                    .hexpand(true)
+                                    .vexpand(true)
+                                    .build();
+                                let w1 = model.windows_version_controller.widget().clone();
+                                let w2 = model.audio_controller.widget().clone();
+                                let w3 = model.dpi_controller.widget().clone();
+                                b.append(&w1);
+                                b.append(&w2);
+                                b.append(&w3);
+                                b.upcast::<gtk::Widget>()
                             },
-                            Some(&gtk::Label::builder().label("Windows Version").build())
+                            Some(&gtk::Label::builder().label("General").build())
                         ),
 
-                        // Direct3D tab
                         append_page: (
                             &{
-                                model.d3d_controller.widget().clone().upcast::<gtk::Widget>()
+                                let b = gtk::Box::builder()
+                                    .orientation(gtk::Orientation::Vertical)
+                                    .spacing(0)
+                                    .hexpand(true)
+                                    .vexpand(true)
+                                    .build();
+                                let w1 = model.d3d_controller.widget().clone();
+                                let w2 = model.virtual_desktop_controller.widget().clone();
+                                b.append(&w1);
+                                b.append(&w2);
+                                b.upcast::<gtk::Widget>()
                             },
-                            Some(&gtk::Label::builder().label("Direct3D").build())
+                            Some(&gtk::Label::builder().label("Graphics").build())
                         ),
 
-                        // Audio tab
                         append_page: (
                             &{
-                                model.audio_controller.widget().clone().upcast::<gtk::Widget>()
+                                let b = gtk::Box::builder()
+                                    .orientation(gtk::Orientation::Vertical)
+                                    .spacing(0)
+                                    .hexpand(true)
+                                    .vexpand(true)
+                                    .build();
+                                let w1 = model.mac_driver_controller.widget().clone();
+                                let w2 = model.x11_driver_controller.widget().clone();
+                                b.append(&w1);
+                                b.append(&w2);
+                                b.upcast::<gtk::Widget>()
                             },
-                            Some(&gtk::Label::builder().label("Audio").build())
-                        ),
-
-                        // Virtual Desktop tab
-                        append_page: (
-                            &{
-                                model.virtual_desktop_controller.widget().clone().upcast::<gtk::Widget>()
-                            },
-                            Some(&gtk::Label::builder().label("Virtual Desktop").build())
-                        ),
-
-                        // Mac Driver tab (only on macOS)
-                        append_page: (
-                            &{
-                                model.mac_driver_controller.widget().clone().upcast::<gtk::Widget>()
-                            },
-                            Some(&gtk::Label::builder().label("Mac Driver").build())
-                        ),
-
-                        // DPI tab
-                        append_page: (
-                            &{
-                                model.dpi_controller.widget().clone().upcast::<gtk::Widget>()
-                            },
-                            Some(&gtk::Label::builder().label("DPI").build())
-                        ),
-
-                        // X11 Driver tab
-                        append_page: (
-                            &{
-                                model.x11_driver_controller.widget().clone().upcast::<gtk::Widget>()
-                            },
-                            Some(&gtk::Label::builder().label("X11 Driver").build())
+                            Some(&gtk::Label::builder().label("Platform").build())
                         ),
                     },
 

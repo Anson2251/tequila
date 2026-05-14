@@ -3,7 +3,9 @@ use relm4::{
 };
 use gtk::prelude::*;
 use crate::prefix::config::{RegisteredExecutable, PrefixConfig};
-use std::{path::PathBuf, time::Duration};
+use crate::prefix::IconCache;
+use std::path::PathBuf;
+use std::sync::Arc;
 use tracker;
 use crate::ui::{
     registered_apps_list::{RegisteredAppsListModel, RegisteredAppsListMsg, RegisteredAppsListOutput},
@@ -12,7 +14,6 @@ use crate::ui::{
     executable_info_dialog::{ExecutableInfoDialogModel, ExecutableInfoDialogMsg},
 };
 
-#[derive(Debug)]
 #[tracker::track]
 pub struct AppManagerModel {
     prefix_path: PathBuf,
@@ -30,6 +31,8 @@ pub struct AppManagerModel {
     add_app_popover: AsyncController<AddAppPopoverModel>,
     #[tracker::do_not_track]
     executable_info_dialog: AsyncController<ExecutableInfoDialogModel>,
+    #[tracker::do_not_track]
+    icon_cache: Arc<IconCache>,
 }
 
 #[derive(Debug)]
@@ -52,7 +55,7 @@ pub enum AppManagerMsg {
 
 #[relm4::component(pub, async)]
 impl AsyncComponent for AppManagerModel {
-    type Init = (PathBuf, PrefixConfig);
+    type Init = (PathBuf, PrefixConfig, Arc<IconCache>);
     type Input = AppManagerMsg;
     type Output = AppManagerMsg;
     type CommandOutput = ();
@@ -104,7 +107,7 @@ impl AsyncComponent for AppManagerModel {
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
-        let (prefix_path, config) = init;
+        let (prefix_path, config, icon_cache) = init;
 
         // Initialize registered apps list component with the current registered executables
         let registered_apps_list = RegisteredAppsListModel::builder()
@@ -137,6 +140,7 @@ impl AsyncComponent for AppManagerModel {
             app_actions,
             add_app_popover,
             executable_info_dialog,
+            icon_cache,
             tracker: 0
         };
 
@@ -158,6 +162,12 @@ impl AsyncComponent for AppManagerModel {
         self.reset();
         match msg {
             AppManagerMsg::ScanForApplications => {
+                // Guard against scanning with no prefix path set
+                if self.prefix_path.as_os_str().is_empty() {
+                    println!("Skipping scan: no prefix path set");
+                    return;
+                }
+
                 self.set_scanning(true);
                 self.set_selected_executable(None);
                 self.app_actions.emit(AppActionsMsg::SetSelection(false));
@@ -165,7 +175,10 @@ impl AsyncComponent for AppManagerModel {
                 println!("Scanning for applications... {}", &self.prefix_path.display());
 
                 // Async scanning
-                let prefix_manager = crate::prefix::Manager::new(self.prefix_path.parent().unwrap_or(&self.prefix_path).to_path_buf());
+                let prefix_manager = crate::prefix::Manager::new(
+                    self.prefix_path.parent().unwrap_or(&self.prefix_path).to_path_buf(),
+                    Arc::clone(&self.icon_cache),
+                );
                 let prefix_path = self.prefix_path.clone();
 
                 match prefix_manager.scan_for_applications_async(&prefix_path).await {
@@ -259,7 +272,10 @@ impl AsyncComponent for AppManagerModel {
             AppManagerMsg::LaunchExecutable(index) => {
                 if let Some(executable) = self.config.registered_executables.get(index) {
                     // Create a temporary PrefixManager for launching
-                    let prefix_manager = crate::prefix::Manager::new(self.prefix_path.parent().unwrap_or(&self.prefix_path).to_path_buf());
+                    let prefix_manager = crate::prefix::Manager::new(
+                        self.prefix_path.parent().unwrap_or(&self.prefix_path).to_path_buf(),
+                        Arc::clone(&self.icon_cache),
+                    );
 
                     match prefix_manager.launch_executable(&self.prefix_path, executable) {
                         Ok(_) => {
@@ -286,7 +302,42 @@ impl AsyncComponent for AppManagerModel {
             AppManagerMsg::ConfigUpdated(config) => {
                 self.set_config(config);
 
-                // Update the registered apps list with the new config's registered executables
+                // Retro-fill icons and metadata for executables
+                {
+                    let mut changed = false;
+                    for exe in &mut self.config.registered_executables {
+                        // Always refresh icon (converts old .ico paths to .png)
+                        if let Some(icon_path) = crate::prefix::extract_icon_for_exe(
+                            &exe.executable_path,
+                            &self.icon_cache,
+                        ) {
+                            if exe.icon_path.as_ref() != Some(&icon_path) {
+                                exe.icon_path = Some(icon_path);
+                                changed = true;
+                            }
+                        }
+                        // Fill metadata
+                        if exe.file_description.is_none() {
+                            let meta = crate::prefix::extract_metadata_for_exe(&exe.executable_path);
+                            if meta.file_version.is_some() || meta.file_description.is_some() {
+                                exe.file_version = meta.file_version;
+                                exe.product_version = meta.product_version;
+                                exe.company_name = meta.company_name;
+                                exe.file_description = meta.file_description;
+                                exe.product_name = meta.product_name;
+                                exe.imported_modules = meta.imported_modules;
+                                changed = true;
+                            }
+                        }
+                    }
+                    if changed {
+                        if let Err(e) = self.config.save_to_file(&self.prefix_path) {
+                            eprintln!("Failed to save config after retro-fill: {}", e);
+                        }
+                    }
+                }
+
+                // Update the registered apps list
                 self.registered_apps_list.emit(RegisteredAppsListMsg::UpdateExecutables(self.config.registered_executables.clone()));
 
                 // Also update available executables by scanning

@@ -62,8 +62,7 @@ impl FactoryComponent for RegisteredExecutableItem {
                 gtk::Image {
                     set_pixel_size: 48,
                     #[watch]
-                    set_from_file: self.executable.icon_path.as_ref(),
-                    set_icon_name: Some("application-x-executable"),
+                    set_from_file: self.executable.icon_path.as_deref(),
                     set_halign: gtk::Align::Center,
                     set_valign: gtk::Align::Center,
                     set_vexpand: true,
@@ -136,7 +135,7 @@ impl AsyncComponent for RegisteredAppsListModel {
                     set_valign: gtk::Align::Start,
                     set_halign: gtk::Align::Fill,
                     connect_selected_children_changed[sender] => move |_| {
-                        sender.input(RegisteredAppsListMsg::SelectionChanged);
+                        let _ = sender.input(RegisteredAppsListMsg::SelectionChanged);
                     },
                 },
             },

@@ -4,6 +4,7 @@ use relm4::view;
 use relm4::{ComponentController, ComponentParts, ComponentSender, Controller, RelmWidgetExt, SimpleComponent, Component, gtk, component::AsyncComponentController};
 use relm4::prelude::{AsyncController, AsyncComponent};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracker;
 
 use crate::prefix::{Manager as PrefixManager, WinePrefix};
@@ -363,7 +364,15 @@ impl SimpleComponent for AppModel {
             .unwrap_or_else(|| PathBuf::from("~"))
             .join("Wine");
 
-        let prefix_manager = PrefixManager::new(wine_dir.clone());
+        let icon_cache = Arc::new(
+            crate::prefix::IconCache::open(
+                dirs::cache_dir()
+                    .unwrap_or_else(|| PathBuf::from("/tmp"))
+                    .join("tequila/icons"),
+            ).expect("Failed to open icon cache"),
+        );
+
+        let prefix_manager = PrefixManager::new(wine_dir.clone(), Arc::clone(&icon_cache));
         let prefixes = Self::scan_wine_prefixes(&prefix_manager);
 
         let prefix_list = PrefixListModel::builder()
@@ -387,7 +396,7 @@ impl SimpleComponent for AppModel {
             });
 
         let app_manager = AppManagerModel::builder()
-            .launch((PathBuf::new(), crate::prefix::config::PrefixConfig::new("".to_string(), "win64".to_string())))
+            .launch((PathBuf::new(), crate::prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()), Arc::clone(&icon_cache)))
             .forward(sender.input_sender(), |msg| match msg {
                 crate::ui::app_manager::AppManagerMsg::ConfigUpdated(config) => {
                     AppMsg::ConfigUpdated(0, config) // Use 0 as fallback index
@@ -619,13 +628,15 @@ impl SimpleComponent for AppModel {
                     let config = self.prefixes[index].config.clone();
                     let prefix_path = self.prefixes[index].path.clone();
 
+                    // Emit path first so ConfigUpdated handlers have the correct prefix path
+                    self.prefix_details.emit(crate::ui::prefix_details::PrefixDetailsMsg::PrefixPathUpdated(prefix_path.clone()));
+                    self.app_manager.emit(crate::ui::app_manager::AppManagerMsg::PrefixPathUpdated(prefix_path.clone()));
+                    self.registry_editor.emit(crate::ui::registry_editor::RegistryEditorMsg::PrefixPathUpdated(prefix_path));
+
                     self.prefix_details.emit(crate::ui::prefix_details::PrefixDetailsMsg::ConfigUpdated(config.clone()));
                     self.prefix_details.emit(crate::ui::prefix_details::PrefixDetailsMsg::SetPrefixIndex(index));
                     self.app_manager.emit(crate::ui::app_manager::AppManagerMsg::ConfigUpdated(config.clone()));
                     self.registry_editor.emit(crate::ui::registry_editor::RegistryEditorMsg::ConfigUpdated(config.clone()));
-                    self.prefix_details.emit(crate::ui::prefix_details::PrefixDetailsMsg::PrefixPathUpdated(prefix_path.clone()));
-                    self.app_manager.emit(crate::ui::app_manager::AppManagerMsg::PrefixPathUpdated(prefix_path.clone()));
-                    self.registry_editor.emit(crate::ui::registry_editor::RegistryEditorMsg::PrefixPathUpdated(prefix_path));
                 }
             }
             AppMsg::HideDetails => {

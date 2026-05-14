@@ -1,10 +1,23 @@
 {
   "version": "1.0.0",
-  "name": "Undertale",
-  "creation_date": "2025-10-25T08:06:58.922608Z",
-  "last_modified": "2025-10-25T08:06:58.922608Z",
-  "wine_version": "Wine (timestamp: 1747573016)",
+  "name": "ewb",
+  "creation_date": "2025-10-25T08:06:58.925707Z",
+  "last_modified": "2025-11-21T07:32:02.255171Z",
+  "wine_version": "Wine (timestamp: 1719182675)",
   "architecture": "win64",
   "description": null,
-  "registered_executables": []
+  "registered_executables": [
+    {
+      "name": "LTspice",
+      "description": "Application: ADI",
+      "icon_path": "/Users/anson/Library/Caches/tequila/icons/d6418d7bc19f58fbdd29730014274482848c5217e938c4fa4d21ecaf7e3aa47d.ico",
+      "executable_path": "/Users/anson/Wine/LTspice/drive_c/Program Files/ADI/LTspice/LTspice.exe",
+      "file_version": null,
+      "product_version": null,
+      "company_name": null,
+      "file_description": null,
+      "product_name": null,
+      "imported_modules": []
+    }
+  ]
 }

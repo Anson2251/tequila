@@ -51,8 +51,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                     gtk::Image {
                         set_pixel_size: 64,
                         #[watch]
-                        set_from_file: model.executable.as_ref().and_then(|e| e.icon_path.as_ref()),
-                        set_icon_name: Some("application-x-executable"),
+                        set_from_file: model.executable.as_ref().and_then(|e| e.icon_path.as_deref()),
                         set_halign: gtk::Align::Center,
                         set_valign: gtk::Align::Center,
                     },

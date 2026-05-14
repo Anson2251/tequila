@@ -1,18 +1,21 @@
 use crate::prefix::config::RegisteredExecutable;
 use crate::prefix::error::{Result, PrefixError};
 use crate::prefix::traits::Scanner;
-use std::path::PathBuf;
+use crate::prefix::IconCache;
+use crate::prefix::icon_extract;
+use std::path::{Path, PathBuf};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::Arc;
 use walkdir::WalkDir;
 use std::fs;
 use exe::VecPE;
-use exe::types::ImportDirectory;
-use exe::types::CCharString;
+use exe::types::{ImportDirectory, CCharString, VSVersionInfo};
+use sha2::{Sha256, Digest};
 
 /// Scanner for discovering Windows applications in Wine prefixes
 ///
 /// This struct scans Wine prefix directories to find Windows executables
 /// and their associated metadata like icons and descriptions.
-#[derive(PartialEq)]
 pub struct ApplicationScanner {
     /// Directories to scan for applications
     app_dirs: Vec<&'static str>,
@@ -20,22 +23,24 @@ pub struct ApplicationScanner {
     executable_extensions: Vec<&'static str>,
     /// File extensions that indicate icon files
     icon_extensions: Vec<&'static str>,
+    /// Cache for extracted PE icons (SHA256 -> .ico blob)
+    icon_cache: Arc<IconCache>,
 }
 
 /// Metadata extracted from Windows executables using the exe crate
 #[derive(Debug, Default)]
-struct ExecutableMetadata {
-    file_version: Option<String>,
-    product_version: Option<String>,
-    company_name: Option<String>,
-    file_description: Option<String>,
-    product_name: Option<String>,
-    imported_modules: Vec<String>,
+pub struct ExecutableMetadata {
+    pub file_version: Option<String>,
+    pub product_version: Option<String>,
+    pub company_name: Option<String>,
+    pub file_description: Option<String>,
+    pub product_name: Option<String>,
+    pub imported_modules: Vec<String>,
 }
 
 impl ApplicationScanner {
-    /// Create a new ApplicationScanner with default configuration
-    pub fn new() -> Self {
+    /// Create a new ApplicationScanner with default configuration and icon cache.
+    pub fn new(icon_cache: Arc<IconCache>) -> Self {
         Self {
             app_dirs: vec![
                 "drive_c/Program Files",
@@ -46,12 +51,13 @@ impl ApplicationScanner {
             ],
             executable_extensions: vec!["exe"],
             icon_extensions: vec!["ico", "icns", "png", "jpg", "jpeg"],
+            icon_cache,
         }
     }
 
     pub fn scan_prefix(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>> {
         let mut executables = Vec::new();
-        
+
         for app_dir in &self.app_dirs {
             let full_path = prefix_path.join(app_dir);
             println!("Scanning directory: {}, {}", &full_path.display(), &prefix_path.display());
@@ -66,11 +72,11 @@ impl ApplicationScanner {
                 }
             }
         }
-        
+
         // Remove duplicates and sort using functional programming patterns
         executables.sort_by(|a, b| a.name.cmp(&b.name));
         executables.dedup_by(|a, b| a.name == b.name && a.executable_path == b.executable_path);
-        
+
         Ok(executables)
     }
 
@@ -104,7 +110,7 @@ impl ApplicationScanner {
                 }
             })
             .collect();
-            
+
         println!("Scanned directory {}: found {} executables", dir_path.display(), executables.len());
         Ok(executables)
     }
@@ -121,23 +127,33 @@ impl ApplicationScanner {
             .and_then(|n| n.to_str())
             .unwrap_or("Unknown")
             .to_string();
-        
-        // Try to find icon file
-        let icon_path = self.find_icon_for_executable(path)?;
-        
+
+        // Try to find icon file (external file first, then PE extraction with cache)
+        let mut icon_path = self.find_icon_for_executable(path)?;
+        if icon_path.is_none() {
+            icon_path = self.extract_icon_with_cache(path);
+        }
+
         // Try to extract description from path or file metadata
         let description = self.extract_description_from_path(path);
-        
-        // Extract rich metadata using exe crate
-        let metadata = self.extract_executable_metadata(path);
-        
+
+        // Load and process PE image for metadata (catch panics from exe/pkbuffer UB on ARM64)
+        let exe_path_for_meta = path.clone();
+        let metadata = catch_unwind(AssertUnwindSafe(|| {
+            let image = VecPE::from_disk_file(&exe_path_for_meta).ok()?;
+            self.extract_executable_metadata(&image)
+        })).unwrap_or_else(|_| {
+            println!("PE parsing panicked for: {}", exe_path_for_meta.display());
+            None
+        });
+
         let mut executable = RegisteredExecutable::new(name, path.to_path_buf())
             .with_description(description.unwrap_or_default());
-        
+
         if let Some(icon) = icon_path {
             executable = executable.with_icon_path(icon);
         }
-        
+
         // Add extracted metadata if available
         if let Some(meta) = metadata {
             if let Some(file_version) = meta.file_version {
@@ -159,7 +175,7 @@ impl ApplicationScanner {
                 executable = executable.with_imported_modules(meta.imported_modules);
             }
         }
-        
+
         Ok(Some(executable))
     }
 
@@ -241,6 +257,12 @@ impl ApplicationScanner {
         Ok(common_icon)
     }
 
+    /// Extract icon from PE file, using SQLite cache keyed by SHA256.
+    /// Returns the path to a cached .ico file on success.
+    fn extract_icon_with_cache(&self, exe_path: &Path) -> Option<PathBuf> {
+        extract_icon_for_exe(exe_path, &self.icon_cache)
+    }
+
     fn extract_description_from_path(&self, path: &PathBuf) -> Option<String> {
         // Try to extract description from directory structure
         let path_components: Vec<&str> = path.components()
@@ -272,43 +294,62 @@ impl ApplicationScanner {
         None
     }
 
-    /// Extract rich metadata from Windows executables using the exe crate
-    fn extract_executable_metadata(&self, path: &PathBuf) -> Option<ExecutableMetadata> {
-        let path_str = path.to_string_lossy();
-        
-        // Try to load the PE file
-        let image = match VecPE::from_disk_file(path_str.as_ref()) {
-            Ok(image) => image,
-            Err(e) => {
-                println!("Failed to parse PE file {}: {}", path.display(), e);
-                return None;
-            }
-        };
-
+    /// Extract rich metadata from a loaded PE image
+    fn extract_executable_metadata(&self, image: &VecPE) -> Option<ExecutableMetadata> {
         let mut metadata = ExecutableMetadata::default();
 
         // Extract version information if available
-        self.extract_version_info(&image, &mut metadata);
-        
+        self.extract_version_info(image, &mut metadata);
+
         // Extract imported modules
-        self.extract_imported_modules(&image, &mut metadata);
-        
+        self.extract_imported_modules(image, &mut metadata);
+
         Some(metadata)
     }
 
-    /// Extract version information from PE file
-    fn extract_version_info(&self, _image: &VecPE, metadata: &mut ExecutableMetadata) {
-        // For now, this is a placeholder implementation
-        // The full version info extraction requires complex PE resource parsing
-        // which would need additional dependencies and more complex parsing
+    /// Extract version information from PE file resource section
+    fn extract_version_info(&self, image: &VecPE, metadata: &mut ExecutableMetadata) {
+        match VSVersionInfo::parse(image) {
+            Ok(version_info) => {
+                // Extract fixed file info (MS/LS version parts)
+                if let Some(fixed) = version_info.value {
+                    let major = fixed.file_version_ms >> 16;
+                    let minor = fixed.file_version_ms & 0xFFFF;
+                    let patch = fixed.file_version_ls >> 16;
+                    let build = fixed.file_version_ls & 0xFFFF;
+                    metadata.file_version = Some(format!("{}.{}.{}.{}", major, minor, patch, build));
 
-        // We can add basic version info extraction in the future
-        // For now, the imported modules extraction is working and will be useful
+                    let prod_major = fixed.product_version_ms >> 16;
+                    let prod_minor = fixed.product_version_ms & 0xFFFF;
+                    let prod_patch = fixed.product_version_ls >> 16;
+                    let prod_build = fixed.product_version_ls & 0xFFFF;
+                    metadata.product_version = Some(format!("{}.{}.{}.{}", prod_major, prod_minor, prod_patch, prod_build));
+                }
 
-        // Set a placeholder to indicate this is a Windows executable
-        metadata.file_description = Some("Windows Application".to_string());
-
-        println!("Version info extraction placeholder - imported modules are being extracted successfully");
+                // Extract string file info
+                if let Some(string_info) = version_info.string_file_info {
+                    for table in &string_info.children {
+                        match table.string_map() {
+                            Ok(map) => {
+                                for (key, value) in &map {
+                                    match key.as_str() {
+                                        "CompanyName" => { metadata.company_name = Some(value.clone()); }
+                                        "FileDescription" => { metadata.file_description = Some(value.clone()); }
+                                        "ProductName" => { metadata.product_name = Some(value.clone()); }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                // Many PE files don't have version resources; just set a basic description
+                metadata.file_description = Some("Windows Application".to_string());
+            }
+        }
     }
 
     /// Extract imported modules (DLLs) from PE file
@@ -319,7 +360,7 @@ impl ApplicationScanner {
                     if let Ok(name) = descriptor.get_name(image) {
                         if let Ok(name_str) = name.as_str() {
                             metadata.imported_modules.push(name_str.to_string());
-                            println!("Found imported module: {}", name_str);
+                            // println!("Found imported module: {}", name_str);
                         }
                     }
                 }
@@ -383,7 +424,7 @@ impl ApplicationScanner {
 impl Scanner for ApplicationScanner {
     fn scan_prefix(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>> {
         let mut executables = Vec::new();
-        
+
         for app_dir in &self.app_dirs {
             let full_path = prefix_path.join(app_dir);
             if full_path.exists() && full_path.is_dir() {
@@ -397,11 +438,11 @@ impl Scanner for ApplicationScanner {
                 }
             }
         }
-        
+
         // Remove duplicates and sort using functional programming patterns
         executables.sort_by(|a, b| a.name.cmp(&b.name));
         executables.dedup_by(|a, b| a.name == b.name && a.executable_path == b.executable_path);
-        
+
         Ok(executables)
     }
 
@@ -429,12 +470,6 @@ impl Scanner for ApplicationScanner {
     }
 }
 
-impl Default for ApplicationScanner {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl std::fmt::Display for ApplicationScanner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "ApplicationScanner(app_dirs: {}, extensions: {})",
@@ -448,7 +483,7 @@ impl ApplicationScanner {
     pub async fn scan_prefix_async(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>> {
         let prefix_path = prefix_path.clone();
         let scanner = self.clone();
-        
+
         tokio::task::spawn_blocking(move || {
             scanner.scan_prefix(&prefix_path)
         }).await.map_err(|e| PrefixError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to spawn scanning task: {}", e))))?
@@ -458,11 +493,77 @@ impl ApplicationScanner {
     pub async fn scan_for_desktop_files_async(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>> {
         let prefix_path = prefix_path.clone();
         let scanner = self.clone();
-        
+
         tokio::task::spawn_blocking(move || {
             scanner.scan_for_desktop_files(&prefix_path)
         }).await.map_err(|e| PrefixError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to spawn scanning task: {}", e))))?
     }
+}
+
+/// Extract icon for a single .exe file using the cache. Can be called without a scanner.
+/// Used to retro-fill icons for executables loaded from existing configs.
+pub fn extract_icon_for_exe(exe_path: &Path, icon_cache: &IconCache) -> Option<PathBuf> {
+    let file_bytes = std::fs::read(exe_path).ok()?;
+    let sha256 = hex::encode(Sha256::digest(&file_bytes));
+
+    if let Some(cached_path) = icon_cache.icon_path(&sha256) {
+        return Some(cached_path);
+    }
+
+    let image = VecPE::from_disk_file(exe_path).ok()?;
+    let icon_data = icon_extract::extract_icon(&image)?;
+
+    icon_cache.put(&sha256, &icon_data).ok()?;
+    icon_cache.icon_path(&sha256)
+}
+
+/// Extract metadata (version info, imports) for a single .exe file.
+/// Used to retro-fill metadata for executables loaded from existing configs.
+pub fn extract_metadata_for_exe(exe_path: &Path) -> ExecutableMetadata {
+    catch_unwind(AssertUnwindSafe(|| {
+        let image = VecPE::from_disk_file(exe_path).ok()?;
+        let mut meta = ExecutableMetadata::default();
+        // Version info
+        if let Ok(version_info) = VSVersionInfo::parse(&image) {
+            if let Some(fixed) = version_info.value {
+                let major = fixed.file_version_ms >> 16;
+                let minor = fixed.file_version_ms & 0xFFFF;
+                let patch = fixed.file_version_ls >> 16;
+                let build = fixed.file_version_ls & 0xFFFF;
+                meta.file_version = Some(format!("{}.{}.{}.{}", major, minor, patch, build));
+                let prod_major = fixed.product_version_ms >> 16;
+                let prod_minor = fixed.product_version_ms & 0xFFFF;
+                let prod_patch = fixed.product_version_ls >> 16;
+                let prod_build = fixed.product_version_ls & 0xFFFF;
+                meta.product_version = Some(format!("{}.{}.{}.{}", prod_major, prod_minor, prod_patch, prod_build));
+            }
+            if let Some(string_info) = version_info.string_file_info {
+                for table in &string_info.children {
+                    if let Ok(map) = table.string_map() {
+                        for (key, value) in &map {
+                            match key.as_str() {
+                                "CompanyName" => { meta.company_name = Some(value.clone()); }
+                                "FileDescription" => { meta.file_description = Some(value.clone()); }
+                                "ProductName" => { meta.product_name = Some(value.clone()); }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Imported modules
+        if let Ok(import_dir) = ImportDirectory::parse(&image) {
+            for descriptor in import_dir.descriptors {
+                if let Ok(name) = descriptor.get_name(&image) {
+                    if let Ok(name_str) = name.as_str() {
+                        meta.imported_modules.push(name_str.to_string());
+                    }
+                }
+            }
+        }
+        Some(meta)
+    })).unwrap_or_else(|_| None).unwrap_or_default()
 }
 
 // Clone implementation for ApplicationScanner
@@ -472,6 +573,16 @@ impl Clone for ApplicationScanner {
             app_dirs: self.app_dirs.clone(),
             executable_extensions: self.executable_extensions.clone(),
             icon_extensions: self.icon_extensions.clone(),
+            icon_cache: Arc::clone(&self.icon_cache),
         }
+    }
+}
+
+// PartialEq ignores the icon cache (Arc doesn't implement PartialEq)
+impl PartialEq for ApplicationScanner {
+    fn eq(&self, other: &Self) -> bool {
+        self.app_dirs == other.app_dirs
+            && self.executable_extensions == other.executable_extensions
+            && self.icon_extensions == other.icon_extensions
     }
 }

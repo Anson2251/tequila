@@ -1,8 +1,10 @@
 use crate::prefix::config::{PrefixConfig, RegisteredExecutable};
 use crate::prefix::scanner::ApplicationScanner;
+use crate::prefix::IconCache;
 use crate::prefix::error::{Result, PrefixError};
 use crate::prefix::traits::{PrefixManager as PrefixManagerTrait, WinePrefix, PrefixInfo};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::fs;
 use std::process::Command;
 
@@ -13,19 +15,11 @@ pub struct Manager {
 }
 
 impl Manager {
-    /// Create a new PrefixManager with the specified wine directory
-    ///
-    /// # Arguments
-    ///
-    /// * `wine_dir` - Directory containing Wine prefixes
-    ///
-    /// # Returns
-    ///
-    /// Returns a new PrefixManager instance
-    pub fn new(wine_dir: PathBuf) -> Self {
+    /// Create a new PrefixManager with the specified wine directory and icon cache.
+    pub fn new(wine_dir: PathBuf, icon_cache: Arc<IconCache>) -> Self {
         Self {
             wine_dir,
-            scanner: ApplicationScanner::new(),
+            scanner: ApplicationScanner::new(icon_cache),
         }
     }
 
@@ -150,37 +144,27 @@ impl Manager {
 
     pub fn create_prefix(&self, name: &str, architecture: &str) -> Result<PathBuf> {
         let prefix_path = self.wine_dir.join(name);
-        
+
         // Check if prefix already exists
         if prefix_path.exists() {
             return Err(PrefixError::AlreadyExists(format!("Prefix '{}' already exists", name)));
         }
-        
+
         // Create prefix directory
         fs::create_dir_all(&prefix_path)?;
-        
+
         // Create initial config
         let config = PrefixConfig::new(name.to_string(), architecture.to_string());
         config.save_to_file(&prefix_path)?;
-        
-        // Initialize Wine prefix using winecfg
+
+        // Initialize Wine prefix using winecfg (non-blocking)
         let wine_arch = if architecture == "win32" { "win32" } else { "win64" };
-        let output = Command::new("winecfg")
-            .args(&["--arch", wine_arch, "--prefix", &prefix_path.to_string_lossy()])
-            .output();
-            
-        match output {
-            Ok(result) => {
-                if !result.status.success() {
-                    let error = String::from_utf8_lossy(&result.stderr);
-                    return Err(PrefixError::Process(format!("Failed to create Wine prefix: {}", error)));
-                }
-            }
-            Err(e) => {
-                return Err(PrefixError::Process(format!("Failed to run winecfg: {}", e)));
-            }
-        }
-        
+        Command::new("winecfg")
+            .env("WINEPREFIX", prefix_path.to_string_lossy().as_ref())
+            .env("WINEARCH", wine_arch)
+            .spawn()
+            .map_err(|e| PrefixError::Process(format!("Failed to run winecfg: {}", e)))?;
+
         Ok(prefix_path)
     }
 
@@ -270,46 +254,23 @@ impl Manager {
             return Err(PrefixError::NotFound("Executable file does not exist".to_string()));
         }
 
-        // Set WINEPREFIX environment variable
-        let output = Command::new("wine")
+        Command::new("wine")
             .current_dir(&prefix_path)
             .env("WINEPREFIX", prefix_path.to_string_lossy().as_ref())
             .arg(&executable.executable_path)
-            .output();
-        
-        match output {
-            Ok(result) => {
-                if !result.status.success() {
-                    let error = String::from_utf8_lossy(&result.stderr);
-                    return Err(PrefixError::Process(format!("Failed to launch executable: {}", error)));
-                }
-            }
-            Err(e) => {
-                return Err(PrefixError::Process(format!("Failed to run wine: {}", e)));
-            }
-        }
-        
+            .spawn()
+            .map_err(|e| PrefixError::Process(format!("Failed to launch executable: {}", e)))?;
+
         Ok(())
     }
 
     pub fn run_winecfg(&self, prefix_path: &PathBuf) -> Result<()> {
-        let output = Command::new("winecfg")
+        Command::new("winecfg")
             .current_dir(&prefix_path)
             .env("WINEPREFIX", prefix_path.to_string_lossy().as_ref())
-            .output();
-            
-        match output {
-            Ok(result) => {
-                if !result.status.success() {
-                    let error = String::from_utf8_lossy(&result.stderr);
-                    return Err(PrefixError::Process(format!("Failed to run winecfg: {}", error)));
-                }
-            }
-            Err(e) => {
-                return Err(PrefixError::Process(format!("Failed to run winecfg: {}", e)));
-            }
-        }
-        
+            .spawn()
+            .map_err(|e| PrefixError::Process(format!("Failed to run winecfg: {}", e)))?;
+
         Ok(())
     }
 
