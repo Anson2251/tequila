@@ -55,6 +55,10 @@ impl ApplicationScanner {
         }
     }
 
+    pub fn icon_cache(&self) -> &Arc<IconCache> {
+        &self.icon_cache
+    }
+
     pub fn scan_prefix(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>> {
         let mut executables = Vec::new();
 

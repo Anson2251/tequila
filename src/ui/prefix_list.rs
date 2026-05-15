@@ -6,12 +6,14 @@ use crate::prefix::WinePrefix;
 pub struct PrefixListModel {
     prefixes: Vec<WinePrefix>,
     selected_prefix: Option<usize>,
+    list_box: gtk::ListBox,
 }
 
 #[derive(Debug)]
 pub enum PrefixListMsg {
     SelectPrefix(usize),
     ShowPrefixDetails(usize),
+    SetPrefixes(Vec<WinePrefix>),
 }
 
 #[derive(Debug)]
@@ -45,11 +47,6 @@ impl SimpleComponent for PrefixListModel {
     ) -> ComponentParts<Self> {
         let (prefixes, selected_prefix) = init;
 
-        let model = PrefixListModel {
-            prefixes: prefixes.clone(),
-            selected_prefix,
-        };
-
         let widgets = view_output!();
 
         let sender_clone = sender.clone();
@@ -61,13 +58,24 @@ impl SimpleComponent for PrefixListModel {
             }
         });
 
-        populate(&model.prefixes, &widgets.prefix_list_box, &sender);
+        let model = PrefixListModel {
+            prefixes: prefixes.clone(),
+            selected_prefix,
+            list_box: widgets.prefix_list_box.clone(),
+        };
+
+        populate(&model.prefixes, &model.list_box, &sender);
 
         ComponentParts { model, widgets }
     }
 
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
         match msg {
+            PrefixListMsg::SetPrefixes(prefixes) => {
+                println!("SetPrefixes received: {} items", prefixes.len());
+                self.prefixes = prefixes.clone();
+                populate(&self.prefixes, &self.list_box, &sender);
+            }
             PrefixListMsg::SelectPrefix(index) => {
                 self.selected_prefix = Some(index);
                 let _ = sender.output(PrefixListOutput::SelectPrefix(index));
@@ -88,6 +96,7 @@ fn populate(
         list_box.remove(&row);
     }
 
+    println!("populate: {} prefixes", prefixes.len());
     if prefixes.is_empty() {
         let label = gtk::Label::builder()
             .label("No Wine prefixes found")

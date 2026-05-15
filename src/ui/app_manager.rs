@@ -22,8 +22,6 @@ pub struct AppManagerModel {
     selected_executable: Option<usize>,
     available_executables: Vec<RegisteredExecutable>,
     #[tracker::do_not_track]
-    show_popover_after_scan: bool,
-    #[tracker::do_not_track]
     registered_apps_list: AsyncController<RegisteredAppsListModel>,
     #[tracker::do_not_track]
     app_actions: AsyncController<AppActionsModel>,
@@ -33,6 +31,8 @@ pub struct AppManagerModel {
     executable_info_dialog: AsyncController<ExecutableInfoDialogModel>,
     #[tracker::do_not_track]
     icon_cache: Arc<IconCache>,
+    #[tracker::do_not_track]
+    prefix_store: Arc<crate::prefix::PrefixStore>,
 }
 
 #[derive(Debug)]
@@ -55,7 +55,7 @@ pub enum AppManagerMsg {
 
 #[relm4::component(pub, async)]
 impl AsyncComponent for AppManagerModel {
-    type Init = (PathBuf, PrefixConfig, Arc<IconCache>);
+    type Init = (PathBuf, PrefixConfig, Arc<IconCache>, Arc<crate::prefix::PrefixStore>);
     type Input = AppManagerMsg;
     type Output = AppManagerMsg;
     type CommandOutput = ();
@@ -107,7 +107,7 @@ impl AsyncComponent for AppManagerModel {
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
-        let (prefix_path, config, icon_cache) = init;
+        let (prefix_path, config, icon_cache, prefix_store) = init;
 
         // Initialize registered apps list component with the current registered executables
         let registered_apps_list = RegisteredAppsListModel::builder()
@@ -135,12 +135,12 @@ impl AsyncComponent for AppManagerModel {
             scanning: false,
             selected_executable: None,
             available_executables: Vec::new(),
-            show_popover_after_scan: false,
             registered_apps_list,
             app_actions,
             add_app_popover,
             executable_info_dialog,
             icon_cache,
+            prefix_store,
             tracker: 0
         };
 
@@ -162,7 +162,6 @@ impl AsyncComponent for AppManagerModel {
         self.reset();
         match msg {
             AppManagerMsg::ScanForApplications => {
-                // Guard against scanning with no prefix path set
                 if self.prefix_path.as_os_str().is_empty() {
                     println!("Skipping scan: no prefix path set");
                     return;
@@ -174,7 +173,6 @@ impl AsyncComponent for AppManagerModel {
 
                 println!("Scanning for applications... {}", &self.prefix_path.display());
 
-                // Async scanning
                 let prefix_manager = crate::prefix::Manager::new(
                     self.prefix_path.parent().unwrap_or(&self.prefix_path).to_path_buf(),
                     Arc::clone(&self.icon_cache),
@@ -184,30 +182,7 @@ impl AsyncComponent for AppManagerModel {
                 match prefix_manager.scan_for_applications_async(&prefix_path).await {
                     Ok(executables) => {
                         println!("Scanning complete, found {} executables", executables.len());
-                        self.available_executables = executables.clone();
-                        self.set_selected_executable(None);
-
-                        // Check if we should show popover after scan (triggered by Add button)
-                        if self.show_popover_after_scan && !executables.is_empty() {
-                            // Update available apps in popover before showing
-                            self.add_app_popover.emit(AddAppPopoverMsg::UpdateAvailableApps(self.available_executables.clone()));
-
-                            // Get the add button from the app_actions component
-                            let app_actions_widget = self.app_actions.widget();
-                            if let Some(box_widget) = app_actions_widget.downcast_ref::<gtk::Box>() {
-                                if let Some(first_child) = box_widget.first_child() {
-                                    if let Some(add_button) = first_child.downcast_ref::<gtk::Button>() {
-                                        // Set the popover's parent to the add button directly
-                                        self.add_app_popover.widget().set_parent(add_button);
-                                    }
-                                }
-                            }
-
-                            self.add_app_popover.emit(AddAppPopoverMsg::Show);
-
-                            // Reset the flag
-                            self.show_popover_after_scan = false;
-                        }
+                        self.available_executables = executables;
                     }
                     Err(e) => {
                         eprintln!("Scan failed: {}", e);
@@ -302,46 +277,20 @@ impl AsyncComponent for AppManagerModel {
             AppManagerMsg::ConfigUpdated(config) => {
                 self.set_config(config);
 
-                // Retro-fill icons and metadata for executables
-                {
-                    let mut changed = false;
-                    for exe in &mut self.config.registered_executables {
-                        // Always refresh icon (converts old .ico paths to .png)
-                        if let Some(icon_path) = crate::prefix::extract_icon_for_exe(
-                            &exe.executable_path,
-                            &self.icon_cache,
-                        ) {
-                            if exe.icon_path.as_ref() != Some(&icon_path) {
-                                exe.icon_path = Some(icon_path);
-                                changed = true;
-                            }
+                // Load available executables from DB (populated during refresh/sync)
+                if !self.prefix_path.as_os_str().is_empty() {
+                    match self.prefix_store.list_scanned_executables(&self.prefix_path.to_string_lossy()) {
+                        Ok(exes) => {
+                            self.available_executables = exes;
                         }
-                        // Fill metadata
-                        if exe.file_description.is_none() {
-                            let meta = crate::prefix::extract_metadata_for_exe(&exe.executable_path);
-                            if meta.file_version.is_some() || meta.file_description.is_some() {
-                                exe.file_version = meta.file_version;
-                                exe.product_version = meta.product_version;
-                                exe.company_name = meta.company_name;
-                                exe.file_description = meta.file_description;
-                                exe.product_name = meta.product_name;
-                                exe.imported_modules = meta.imported_modules;
-                                changed = true;
-                            }
-                        }
-                    }
-                    if changed {
-                        if let Err(e) = self.config.save_to_file(&self.prefix_path) {
-                            eprintln!("Failed to save config after retro-fill: {}", e);
+                        Err(e) => {
+                            eprintln!("Failed to load scanned executables: {}", e);
                         }
                     }
                 }
 
-                // Update the registered apps list
+                // Update the registered apps list from cached config
                 self.registered_apps_list.emit(RegisteredAppsListMsg::UpdateExecutables(self.config.registered_executables.clone()));
-
-                // Also update available executables by scanning
-                sender.input(AppManagerMsg::ScanForApplications);
             }
             AppManagerMsg::PrefixPathUpdated(path) => {
                 self.set_prefix_path(path);
@@ -380,14 +329,19 @@ impl AsyncComponent for AppManagerModel {
                         }
                     }
                     AppActionsOutput::Add => {
-                        // Set flag to show popover after scan completes
-                        self.show_popover_after_scan = true;
+                        // Show popover with available executables (loaded from DB during sync)
+                        self.add_app_popover.emit(AddAppPopoverMsg::UpdateAvailableApps(self.available_executables.clone()));
 
-                        // First, scan for applications to populate available_executables
-                        sender.input(AppManagerMsg::ScanForApplications);
+                        let app_actions_widget = self.app_actions.widget();
+                        if let Some(box_widget) = app_actions_widget.downcast_ref::<gtk::Box>() {
+                            if let Some(first_child) = box_widget.first_child() {
+                                if let Some(add_button) = first_child.downcast_ref::<gtk::Button>() {
+                                    self.add_app_popover.widget().set_parent(add_button);
+                                }
+                            }
+                        }
 
-                        // We'll show the popover after the scan completes
-                        // The scan will update available_executables, then we can show the popover
+                        self.add_app_popover.emit(AddAppPopoverMsg::Show);
                     }
                     AppActionsOutput::Remove => {
                         if let Some(index) = self.selected_executable {

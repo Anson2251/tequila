@@ -1,5 +1,6 @@
 use gtk::prelude::*;
 use gtk4::gio;
+use gtk::glib;
 use relm4::view;
 use relm4::{ComponentController, ComponentParts, ComponentSender, Controller, RelmWidgetExt, SimpleComponent, Component, gtk, adw, component::AsyncComponentController};
 use relm4::prelude::{AsyncController, AsyncComponent};
@@ -32,7 +33,16 @@ pub struct AppModel {
     pub info_btn: gtk::Button,
     #[tracker::do_not_track]
     pub switcher: adw::ViewSwitcherTitle,
+    #[tracker::do_not_track]
+    pub prefix_store: Arc<crate::prefix::PrefixStore>,
+    pub syncing: bool,
     pub sidebar_visible: bool,
+    #[tracker::do_not_track]
+    sync_overlay: gtk::CenterBox,
+    #[tracker::do_not_track]
+    sync_progress_bar: gtk::ProgressBar,
+    #[tracker::do_not_track]
+    sync_progress_label: gtk::Label,
 }
 
 #[derive(Debug)]
@@ -51,6 +61,9 @@ pub enum AppMsg {
     ShowCreatePrefixDialog,
     CreatePrefixComplete(String, String), // name, architecture
     ShowPrefixInfo,
+    SyncComplete(Vec<WinePrefix>),
+    SyncPrefixes,
+    SyncProgress(usize, usize),
     ToggleSidebar,
 }
 
@@ -79,8 +92,10 @@ impl SimpleComponent for AppModel {
             set_default_width: 800,
             set_default_height: 600,
 
+            set_titlebar: Some(&header_bar),
+
             #[local_ref]
-            flap_widget -> gtk::Widget {}
+            overlay_widget -> gtk::Widget {}
         }
     }
 
@@ -104,6 +119,14 @@ impl SimpleComponent for AppModel {
         sidebar_btn.connect_clicked(move |_| { sb_sender.input(AppMsg::ToggleSidebar); });
         header_bar.pack_start(&sidebar_btn);
 
+        let refresh_btn = gtk::Button::builder()
+            .icon_name("view-refresh-symbolic")
+            .tooltip_text("Sync prefixes from disk")
+            .build();
+        let rf_sender = sender.clone();
+        refresh_btn.connect_clicked(move |_| { rf_sender.input(AppMsg::SyncPrefixes); });
+        header_bar.pack_start(&refresh_btn);
+
         let info_btn = gtk::Button::builder()
             .icon_name("dialog-information-symbolic")
             .tooltip_text("Prefix Info")
@@ -118,8 +141,6 @@ impl SimpleComponent for AppModel {
         switcher.set_sensitive(false);
         header_bar.set_title_widget(Some(&switcher));
 
-        root.set_titlebar(Some(&header_bar));
-
         let wine_dir = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("~"))
             .join("Wine");
@@ -132,8 +153,82 @@ impl SimpleComponent for AppModel {
             ).expect("Failed to open icon cache"),
         );
 
+        // Persistent state store
+        let state_path = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join("tequila/state.db");
+        let prefix_store = Arc::new(
+            crate::prefix::PrefixStore::open(&state_path)
+                .expect("Failed to open state store"),
+        );
+
         let prefix_manager = PrefixManager::new(wine_dir.clone(), Arc::clone(&icon_cache));
-        let prefixes = Self::scan_wine_prefixes(&prefix_manager);
+
+        // Load prefixes from cache (instant)
+        let cached: Vec<WinePrefix> = prefix_store.list_prefixes()
+            .map_err(|e| eprintln!("Failed to load from cache: {}", e))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(path, config)| WinePrefix {
+                name: config.name.clone(),
+                path: PathBuf::from(path),
+                config,
+            })
+            .collect();
+
+        let needs_sync = cached.is_empty();
+        let prefixes = cached;
+        println!("Loaded {} prefixes from cache", prefixes.len());
+
+        // If cache is empty, trigger background scan
+        if needs_sync {
+            let ss = sender.clone();
+            let sp = sender.clone();
+            let sm = prefix_manager.clone();
+            let st = Arc::clone(&prefix_store);
+            let ic = Arc::clone(&icon_cache);
+            glib::spawn_future_local(async move {
+                let result = tokio::task::spawn_blocking(move || {
+                    let mut fresh = AppModel::scan_wine_prefixes(&sm);
+                    let total = fresh.len();
+                    for (i, p) in fresh.iter_mut().enumerate() {
+                        let _ = st.save_prefix(&p.path.to_string_lossy(), &p.config);
+                        if let Ok(exes) = sm.scan_for_applications(&p.path) {
+                            let _ = st.save_scanned_executables(&p.path.to_string_lossy(), &exes);
+                        }
+                        let mut changed = false;
+                        for exe in &mut p.config.registered_executables {
+                            if let Some(icon_path) = crate::prefix::scanner::extract_icon_for_exe(&exe.executable_path, &ic) {
+                                if exe.icon_path.as_ref() != Some(&icon_path) {
+                                    exe.icon_path = Some(icon_path);
+                                    changed = true;
+                                }
+                            }
+                            if exe.file_description.is_none() {
+                                let meta = crate::prefix::scanner::extract_metadata_for_exe(&exe.executable_path);
+                                if meta.file_version.is_some() || meta.file_description.is_some() {
+                                    exe.file_version = meta.file_version;
+                                    exe.product_version = meta.product_version;
+                                    exe.company_name = meta.company_name;
+                                    exe.file_description = meta.file_description;
+                                    exe.product_name = meta.product_name;
+                                    exe.imported_modules = meta.imported_modules;
+                                    changed = true;
+                                }
+                            }
+                        }
+                        if changed {
+                            let _ = st.save_prefix(&p.path.to_string_lossy(), &p.config);
+                        }
+                        let _ = sp.input(AppMsg::SyncProgress(i + 1, total));
+                    }
+                    fresh
+                }).await;
+                if let Ok(fresh) = result {
+                    let _ = ss.input(AppMsg::SyncComplete(fresh));
+                }
+            });
+        }
 
         let prefix_list = PrefixListModel::builder()
             .launch((prefixes.clone(), None))
@@ -152,7 +247,7 @@ impl SimpleComponent for AppModel {
             });
 
         let app_manager = AppManagerModel::builder()
-            .launch((PathBuf::new(), crate::prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()), Arc::clone(&icon_cache)))
+            .launch((PathBuf::new(), crate::prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()), Arc::clone(&icon_cache), Arc::clone(&prefix_store)))
             .forward(sender.input_sender(), |msg| match msg {
                 crate::ui::app_manager::AppManagerMsg::ConfigUpdated(config) => {
                     AppMsg::ConfigUpdated(0, config)
@@ -181,8 +276,17 @@ impl SimpleComponent for AppModel {
                 .icon_name("brand-winehq-symbolic").css_classes(["dim-label"]).build());
             empty_page.append(&gtk::Label::builder().label("No prefix selected")
                 .css_classes(["title-4", "dim-label"]).margin_top(10).build());
-            empty_page.append(&gtk::Label::builder().label("Select a prefix from the list to view details")
-                .css_classes(["body", "dim-label"]).build());
+
+            let sync_spinner = gtk::Spinner::new();
+            sync_spinner.set_margin_top(20);
+            empty_page.append(&sync_spinner);
+            if needs_sync {
+                sync_spinner.start();
+            }
+            let sync_label = gtk::Label::builder()
+                .label(if needs_sync { "Scanning Wine prefixes..." } else { "Select a prefix from the list to view details" })
+                .css_classes(["body", "dim-label"]).build();
+            empty_page.append(&sync_label);
             content_stack.add(&empty_page);
         }
         content_stack.add_titled(app_manager.widget(), Some("apps"), "Apps")
@@ -213,6 +317,58 @@ impl SimpleComponent for AppModel {
 
         let flap_widget = flap.clone().upcast::<gtk::Widget>();
 
+        // Sync progress overlay
+        let sync_progress_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .spacing(10)
+            .css_classes(["sync-progress-box"])
+            .build();
+        let sync_spinner = gtk::Spinner::builder()
+            .spinning(true)
+            .width_request(36)
+            .height_request(36)
+            .build();
+        sync_progress_box.append(&sync_spinner);
+        let sync_progress_bar = gtk::ProgressBar::builder()
+            .width_request(260)
+            .build();
+        sync_progress_box.append(&sync_progress_bar);
+        let sync_progress_label = gtk::Label::builder()
+            .css_classes(["caption", "dim-label"])
+            .label("")
+            .build();
+        sync_progress_box.append(&sync_progress_label);
+
+        let sync_overlay_box = gtk::CenterBox::builder()
+            .hexpand(true)
+            .vexpand(true)
+            .css_classes(["sync-overlay-bg"])
+            .visible(false)
+            .build();
+        sync_overlay_box.set_center_widget(Some(&sync_progress_box));
+
+        let sync_overlay = gtk::Overlay::new();
+        sync_overlay.set_child(Some(&flap_widget));
+        sync_overlay.add_overlay(&sync_overlay_box);
+        if needs_sync {
+            sync_overlay_box.set_visible(true);
+            sync_progress_label.set_label("Scanning...");
+        }
+        // Apply sync overlay CSS
+        {
+            let provider = gtk::CssProvider::new();
+            provider.load_from_data(".sync-overlay-bg { background: rgba(0, 0, 0, 0.45); } \
+                                     .sync-progress-box { background: @view_bg_color; border: 1px solid @borders; border-radius: 12px; padding: 24px; }");
+            gtk::style_context_add_provider_for_display(
+                &gdk::Display::default().unwrap(),
+                &provider,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+        }
+        let overlay_widget = sync_overlay.clone().upcast::<gtk::Widget>();
+
         let model = AppModel {
             prefixes,
             prefix_manager,
@@ -225,11 +381,21 @@ impl SimpleComponent for AppModel {
             flap,
             info_btn,
             switcher,
+            prefix_store,
+            syncing: needs_sync,
             sidebar_visible: true,
+            sync_overlay: sync_overlay_box,
+            sync_progress_bar,
+            sync_progress_label,
             tracker: 0,
         };
 
         let widgets = view_output!();
+
+        // Auto-select first prefix
+        if !model.prefixes.is_empty() {
+            sender_clone.input(AppMsg::ShowPrefixDetails(0));
+        }
 
         ComponentParts { model, widgets }
     }
@@ -397,14 +563,7 @@ impl SimpleComponent for AppModel {
                 }
             }
             AppMsg::RefreshPrefixes => {
-                println!("Refreshing prefix list");
-                self.prefixes = Self::scan_wine_prefixes(&self.prefix_manager);
-                self.selected_prefix = None;
-                self.switcher.set_sensitive(false);
-                self.info_btn.set_sensitive(false);
-
-                // Update the prefix list component
-                self.prefix_list.emit(crate::ui::prefix_list::PrefixListMsg::SelectPrefix(0));
+                sender.input(AppMsg::SyncPrefixes);
             }
             AppMsg::SelectPrefix(index) => {
                 if index < self.prefixes.len() {
@@ -449,11 +608,11 @@ impl SimpleComponent for AppModel {
                     if actual_index < self.prefixes.len() {
                         let prefix_path = &self.prefixes[actual_index].path;
 
-                        // Save config to file
+                        // Save config to file and state store
                         if let Err(e) = self.prefix_manager.update_config(prefix_path, &config) {
                             eprintln!("Failed to update config: {}", e);
                         } else {
-                            println!("Config saved successfully for prefix: {}", self.prefixes[actual_index].name);
+                            let _ = self.prefix_store.save_prefix(&prefix_path.to_string_lossy(), &config);
                             self.prefixes[actual_index].config = config.clone();
 
                             // Update other components with the new config but don't refresh the entire list
@@ -531,6 +690,73 @@ impl SimpleComponent for AppModel {
                         dialog.present();
                     }
                 }
+            }
+            AppMsg::SyncComplete(fresh) => {
+                self.set_syncing(false);
+                self.sync_overlay.set_visible(false);
+                self.prefixes = fresh.clone();
+                self.prefix_list.emit(crate::ui::prefix_list::PrefixListMsg::SetPrefixes(fresh));
+                if !self.prefixes.is_empty() {
+                    sender.input(AppMsg::ShowPrefixDetails(0));
+                }
+            }
+            AppMsg::SyncPrefixes => {
+                if !self.syncing {
+                    self.set_syncing(true);
+                    self.sync_overlay.set_visible(true);
+                    self.sync_progress_bar.set_fraction(0.0);
+                    self.sync_progress_label.set_label("Scanning...");
+                    let ss = sender.clone();
+                    let sp = sender.clone();
+                    let sm = self.prefix_manager.clone();
+                    let st = Arc::clone(&self.prefix_store);
+                    glib::spawn_future_local(async move {
+                        let result = tokio::task::spawn_blocking(move || {
+                            let mut fresh = AppModel::scan_wine_prefixes(&sm);
+                            let total = fresh.len();
+                            let ic = sm.scanner().icon_cache();
+                            for (i, p) in fresh.iter_mut().enumerate() {
+                                let _ = st.save_prefix(&p.path.to_string_lossy(), &p.config);
+                                if let Ok(exes) = sm.scan_for_applications(&p.path) {
+                                    let _ = st.save_scanned_executables(&p.path.to_string_lossy(), &exes);
+                                }
+                                let mut changed = false;
+                                for exe in &mut p.config.registered_executables {
+                                    if let Some(icon_path) = crate::prefix::scanner::extract_icon_for_exe(&exe.executable_path, &ic) {
+                                        if exe.icon_path.as_ref() != Some(&icon_path) {
+                                            exe.icon_path = Some(icon_path);
+                                            changed = true;
+                                        }
+                                    }
+                                    if exe.file_description.is_none() {
+                                        let meta = crate::prefix::scanner::extract_metadata_for_exe(&exe.executable_path);
+                                        if meta.file_version.is_some() || meta.file_description.is_some() {
+                                            exe.file_version = meta.file_version;
+                                            exe.product_version = meta.product_version;
+                                            exe.company_name = meta.company_name;
+                                            exe.file_description = meta.file_description;
+                                            exe.product_name = meta.product_name;
+                                            exe.imported_modules = meta.imported_modules;
+                                            changed = true;
+                                        }
+                                    }
+                                }
+                                if changed {
+                                    let _ = st.save_prefix(&p.path.to_string_lossy(), &p.config);
+                                }
+                                let _ = sp.input(AppMsg::SyncProgress(i + 1, total));
+                            }
+                            fresh
+                        }).await;
+                        if let Ok(fresh) = result {
+                            let _ = ss.input(AppMsg::SyncComplete(fresh));
+                        }
+                    });
+                }
+            }
+            AppMsg::SyncProgress(completed, total) => {
+                self.sync_progress_bar.set_fraction(if total > 0 { completed as f64 / total as f64 } else { 0.0 });
+                self.sync_progress_label.set_label(&format!("{} / {} prefixes", completed, total));
             }
             AppMsg::ToggleSidebar => {
                 let visible = !self.sidebar_visible;

@@ -7,6 +7,7 @@ pub mod wine_processes;
 pub mod regeditor;
 pub mod icon_cache;
 pub mod icon_extract;
+pub mod state;
 
 #[allow(unused)]
 pub use config::{PrefixConfig, RegisteredExecutable};
@@ -19,3 +20,4 @@ pub use regeditor::{RegEditor, WineRegistry, RegistryEditor, RegistryCache};
 pub use icon_cache::IconCache;
 pub use icon_extract::extract_icon;
 pub use scanner::{extract_icon_for_exe, extract_metadata_for_exe};
+pub use state::PrefixStore;

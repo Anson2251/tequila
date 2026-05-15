@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::fs;
 use std::process::Command;
 
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Manager {
     wine_dir: PathBuf,
     scanner: ApplicationScanner,
