@@ -1,4 +1,4 @@
-use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, gtk, view};
+use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, gtk};
 use gtk::prelude::*;
 use tracker;
 
@@ -108,7 +108,7 @@ impl SimpleComponent for VirtualDesktopModel {
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let (enabled, width, height) = init;
-        
+
         let model = VirtualDesktopModel {
             editing: false,
             virtual_desktop_enabled: enabled,

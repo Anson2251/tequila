@@ -2,38 +2,37 @@ use relm4::{gtk, ComponentParts, ComponentSender, SimpleComponent};
 use gtk::prelude::*;
 use crate::prefix::WinePrefix;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct PrefixListModel {
     prefixes: Vec<WinePrefix>,
     selected_prefix: Option<usize>,
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum PrefixListMsg {
     SelectPrefix(usize),
     ShowPrefixDetails(usize),
-    // ShowAppManager(usize),
+}
+
+#[derive(Debug)]
+pub enum PrefixListOutput {
+    SelectPrefix(usize),
+    ShowPrefixDetails(usize),
 }
 
 #[relm4::component(pub)]
 impl SimpleComponent for PrefixListModel {
     type Init = (Vec<WinePrefix>, Option<usize>);
     type Input = PrefixListMsg;
-    type Output = PrefixListMsg;
-    // type Root = gtk::ScrolledWindow;
+    type Output = PrefixListOutput;
     type Widgets = PrefixListWidgets;
 
     view! {
         gtk::ScrolledWindow {
             set_vexpand: true,
-            set_hexpand: true,
-            set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
-            set_width_request: 128,
 
             #[name = "prefix_list_box"]
             gtk::ListBox {
-                set_css_classes: &["boxed-list"],
                 set_selection_mode: gtk::SelectionMode::Single,
             }
         }
@@ -45,23 +44,24 @@ impl SimpleComponent for PrefixListModel {
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let (prefixes, selected_prefix) = init;
-        
+
         let model = PrefixListModel {
             prefixes: prefixes.clone(),
             selected_prefix,
         };
 
         let widgets = view_output!();
+
         let sender_clone = sender.clone();
-        widgets.prefix_list_box.connect_row_activated(move |_, row| {
-            let index = row.index();
-            if index >= 0 {
-                sender_clone.input(PrefixListMsg::SelectPrefix(index as usize));
+        widgets.prefix_list_box.connect_row_activated(move |list_box, row| {
+            if let Some(idx) = row.index().checked_sub(0) {
+                if idx >= 0 {
+                    sender_clone.input(PrefixListMsg::SelectPrefix(idx as usize));
+                }
             }
         });
 
-        // Populate the prefix list with enhanced information
-        Self::populate_prefix_list(&model, &widgets.prefix_list_box, &sender);
+        populate(&model.prefixes, &widgets.prefix_list_box, &sender);
 
         ComponentParts { model, widgets }
     }
@@ -70,162 +70,65 @@ impl SimpleComponent for PrefixListModel {
         match msg {
             PrefixListMsg::SelectPrefix(index) => {
                 self.selected_prefix = Some(index);
-                println!("Selected prefix: {}", self.prefixes[index].name);
-                let _ = sender.output(PrefixListMsg::SelectPrefix(index));
+                let _ = sender.output(PrefixListOutput::SelectPrefix(index));
             }
             PrefixListMsg::ShowPrefixDetails(index) => {
-                let _ = sender.output(PrefixListMsg::ShowPrefixDetails(index));
+                let _ = sender.output(PrefixListOutput::ShowPrefixDetails(index));
             }
-            // PrefixListMsg::ShowAppManager(index) => {
-            //     let _ = sender.output(PrefixListMsg::ShowAppManager(index));
-            // }
         }
     }
 }
 
-impl PrefixListModel {
-    fn populate_prefix_list(
-        model: &PrefixListModel,
-        list_box: &gtk::ListBox,
-        sender: &ComponentSender<PrefixListModel>,
-    ) {
-        // Clear existing items
-        while let Some(row) = list_box.first_child() {
-            list_box.remove(&row);
-        }
+fn populate(
+    prefixes: &[WinePrefix],
+    list_box: &gtk::ListBox,
+    sender: &ComponentSender<PrefixListModel>,
+) {
+    while let Some(row) = list_box.first_child() {
+        list_box.remove(&row);
+    }
 
-        // Add prefixes to the list with enhanced information
-        for (index, prefix) in model.prefixes.iter().enumerate() {
-            let row = gtk::ListBoxRow::builder()
-                .selectable(true)
-                .build();
+    if prefixes.is_empty() {
+        let label = gtk::Label::builder()
+            .label("No Wine prefixes found")
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .margin_top(40)
+            .wrap(true)
+            .css_classes(["dim-label", "body"])
+            .build();
+        list_box.append(
+            &gtk::ListBoxRow::builder().selectable(false).child(&label).build(),
+        );
+        return;
+    }
 
-            let main_box = gtk::Box::builder()
-                .orientation(gtk::Orientation::Horizontal)
-                .spacing(10)
-                .margin_top(8)
-                .margin_bottom(8)
-                .margin_start(10)
-                .margin_end(10)
-                .build();
+    for (i, prefix) in prefixes.iter().enumerate() {
+        let name = gtk::Label::builder()
+            .label(&prefix.name).halign(gtk::Align::Start)
+            .css_classes(["heading"]).build();
 
-            // Left side - prefix information
-            let info_box = gtk::Box::builder()
-                .orientation(gtk::Orientation::Vertical)
-                .spacing(4)
-                .hexpand(true)
-                .build();
+        let detail = gtk::Label::builder()
+            .label(&format!("{} · {} apps",
+                prefix.config.architecture,
+                prefix.config.registered_executables.len()))
+            .halign(gtk::Align::Start)
+            .css_classes(["caption", "dim-label"]).build();
 
-            // Name and architecture badge
-            let name_box = gtk::Box::builder()
-                .orientation(gtk::Orientation::Horizontal)
-                .spacing(6)
-                .build();
+        let box_ = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical).spacing(1)
+            .hexpand(true)
+            .margin_top(3).margin_bottom(3)
+            .margin_start(8).margin_end(8)
+            .build();
+        box_.append(&name);
+        box_.append(&detail);
 
-            let name_label = gtk::Label::builder()
-                .label(&prefix.name)
-                .halign(gtk::Align::Start)
-                .build();
-            name_label.add_css_class("heading");
+        let row = gtk::ListBoxRow::builder()
+            .selectable(true).activatable(true).child(&box_).build();
 
-            let arch_badge = gtk::Label::builder()
-                .label(&prefix.config.architecture)
-                .halign(gtk::Align::Start)
-                .build();
-            arch_badge.add_css_class("badge");
-            arch_badge.add_css_class("dim-label");
-
-            name_box.append(&name_label);
-            name_box.append(&arch_badge);
-
-            info_box.append(&name_box);
-
-            // Wine version and app count
-            let details_box = gtk::Box::builder()
-                .orientation(gtk::Orientation::Horizontal)
-                .spacing(10)
-                .build();
-
-            let wine_version = prefix.config.wine_version.as_deref().unwrap_or("Unknown");
-            let version_label = gtk::Label::builder()
-                .label(&format!("Wine: {}", wine_version))
-                .halign(gtk::Align::Start)
-                .build();
-            version_label.add_css_class("caption");
-
-            let app_count = prefix.config.registered_executables.len();
-            let count_label = gtk::Label::builder()
-                .label(&format!("Apps: {}", app_count))
-                .halign(gtk::Align::Start)
-                .build();
-            count_label.add_css_class("caption");
-
-            details_box.append(&version_label);
-            details_box.append(&count_label);
-
-            info_box.append(&details_box);
-
-            // Path
-            let path_label = gtk::Label::builder()
-                .label(&prefix.path.display().to_string())
-                .halign(gtk::Align::Start)
-                .ellipsize(gtk::pango::EllipsizeMode::Start)
-                .build();
-            path_label.add_css_class("caption");
-            path_label.add_css_class("dim-label");
-
-            info_box.append(&path_label);
-
-            main_box.append(&info_box);
-
-            // Right side - action buttons
-            // let actions_box = gtk::Box::builder()
-            //     .orientation(gtk::Orientation::Vertical)
-            //     .spacing(4)
-            //     .halign(gtk::Align::End)
-            //     .build();
-
-            // Details button
-            let details_btn = gtk::Button::builder()
-                .label("Details")
-                .build();
-            details_btn.add_css_class("flat");
-            details_btn.set_tooltip_text(Some("View prefix details"));
-
-            let sender_clone = sender.clone();
-            let details_index = index;
-            details_btn.connect_clicked(move |_| {
-                sender_clone.input(PrefixListMsg::ShowPrefixDetails(details_index));
-            });
-
-            row.set_child(Some(&main_box));
-
-            // Handle row selection
-            let sender_clone = sender.clone();
-            row.connect_activate(move |_| {
-                sender_clone.input(PrefixListMsg::SelectPrefix(index));
-            });
-
-            list_box.append(&row);
-        }
-
-        if model.prefixes.is_empty() {
-            let empty_label = gtk::Label::builder()
-                .label("No Wine prefixes found\nClick 'Create New Prefix' to get started")
-                .halign(gtk::Align::Center)
-                .valign(gtk::Align::Center)
-                .margin_top(40)
-                .wrap(true)
-                .build();
-            empty_label.add_css_class("dim-label");
-            empty_label.add_css_class("body");
-
-            let row = gtk::ListBoxRow::builder()
-                .selectable(false)
-                .child(&empty_label)
-                .build();
-
-            list_box.append(&row);
-        }
+        let s = sender.clone();
+        row.connect_activate(move |_| s.input(PrefixListMsg::SelectPrefix(i)));
+        list_box.append(&row);
     }
 }

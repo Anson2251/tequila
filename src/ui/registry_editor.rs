@@ -94,80 +94,93 @@ impl SimpleComponent for RegistryEditorModel {
     type Widgets = RegistryEditorWidgets;
 
     view! {
-        gtk::ScrolledWindow {
+        gtk::Box {
+            set_orientation: gtk::Orientation::Vertical,
+            set_spacing: 0,
+            set_hexpand: true,
+            set_vexpand: true,
+
             #[transition = "Crossfade"]
             if !model.loading {
                 gtk::Box {
                     set_orientation: gtk::Orientation::Vertical,
-                    set_spacing: 10,
-                    set_margin_all: 10,
+                    set_spacing: 0,
+                    set_hexpand: true,
+                    set_vexpand: true,
 
-                    #[name = "notebook"]
-                    gtk::Notebook {
-                        set_hexpand: true,
+                    gtk::ScrolledWindow {
                         set_vexpand: true,
-                        set_show_border: false,
+                        set_hexpand: true,
+                        set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
 
-                        append_page: (
-                            &{
-                                let b = gtk::Box::builder()
-                                    .orientation(gtk::Orientation::Vertical)
-                                    .spacing(0)
-                                    .hexpand(true)
-                                    .vexpand(true)
-                                    .build();
-                                let w1 = model.windows_version_controller.widget().clone();
-                                let w2 = model.audio_controller.widget().clone();
-                                let w3 = model.dpi_controller.widget().clone();
-                                b.append(&w1);
-                                b.append(&w2);
-                                b.append(&w3);
-                                b.upcast::<gtk::Widget>()
-                            },
-                            Some(&gtk::Label::builder().label("General").build())
-                        ),
+                        #[name = "notebook"]
+                        gtk::Notebook {
+                            set_hexpand: true,
+                            set_vexpand: true,
+                            set_show_border: false,
 
-                        append_page: (
-                            &{
-                                let b = gtk::Box::builder()
-                                    .orientation(gtk::Orientation::Vertical)
-                                    .spacing(0)
-                                    .hexpand(true)
-                                    .vexpand(true)
-                                    .build();
-                                let w1 = model.d3d_controller.widget().clone();
-                                let w2 = model.virtual_desktop_controller.widget().clone();
-                                b.append(&w1);
-                                b.append(&w2);
-                                b.upcast::<gtk::Widget>()
-                            },
-                            Some(&gtk::Label::builder().label("Graphics").build())
-                        ),
+                            append_page: (
+                                &{
+                                    let b = gtk::Box::builder()
+                                        .orientation(gtk::Orientation::Vertical)
+                                        .spacing(0)
+                                        .hexpand(true)
+                                        .vexpand(true)
+                                        .build();
+                                    let w1 = model.windows_version_controller.widget().clone();
+                                    let w2 = model.audio_controller.widget().clone();
+                                    let w3 = model.dpi_controller.widget().clone();
+                                    b.append(&w1);
+                                    b.append(&w2);
+                                    b.append(&w3);
+                                    b.upcast::<gtk::Widget>()
+                                },
+                                Some(&gtk::Label::builder().label("General").build())
+                            ),
 
-                        append_page: (
-                            &{
-                                let b = gtk::Box::builder()
-                                    .orientation(gtk::Orientation::Vertical)
-                                    .spacing(0)
-                                    .hexpand(true)
-                                    .vexpand(true)
-                                    .build();
-                                let w1 = model.mac_driver_controller.widget().clone();
-                                let w2 = model.x11_driver_controller.widget().clone();
-                                b.append(&w1);
-                                b.append(&w2);
-                                b.upcast::<gtk::Widget>()
-                            },
-                            Some(&gtk::Label::builder().label("Platform").build())
-                        ),
+                            append_page: (
+                                &{
+                                    let b = gtk::Box::builder()
+                                        .orientation(gtk::Orientation::Vertical)
+                                        .spacing(0)
+                                        .hexpand(true)
+                                        .vexpand(true)
+                                        .build();
+                                    let w1 = model.d3d_controller.widget().clone();
+                                    let w2 = model.virtual_desktop_controller.widget().clone();
+                                    b.append(&w1);
+                                    b.append(&w2);
+                                    b.upcast::<gtk::Widget>()
+                                },
+                                Some(&gtk::Label::builder().label("Graphics").build())
+                            ),
+
+                            append_page: (
+                                &{
+                                    let b = gtk::Box::builder()
+                                        .orientation(gtk::Orientation::Vertical)
+                                        .spacing(0)
+                                        .hexpand(true)
+                                        .vexpand(true)
+                                        .build();
+                                    let w1 = model.mac_driver_controller.widget().clone();
+                                    let w2 = model.x11_driver_controller.widget().clone();
+                                    w2.set_vexpand(true);
+                                    b.append(&w1);
+                                    b.append(&w2);
+                                    b.upcast::<gtk::Widget>()
+                                },
+                                Some(&gtk::Label::builder().label("Platform").build())
+                            ),
+                        },
                     },
 
-                    // Control buttons
+                    // Control buttons — fixed at bottom
                     gtk::Box {
                         set_orientation: gtk::Orientation::Horizontal,
                         set_spacing: 10,
                         set_halign: gtk::Align::End,
-                        set_margin_top: 10,
+                        set_margin_all: 10,
 
                         gtk::Button {
                             #[track = "model.changed(RegistryEditorModel::editing())"]

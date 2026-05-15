@@ -15,10 +15,10 @@ pub mod mac_driver_tab;
 pub mod x11_driver_tab;
 pub mod dpi_tab;
 
-pub use main::{AppModel, AppMsg, ViewType, initialize_custom_icons};
+pub use main::{AppModel, AppMsg, initialize_custom_icons};
 pub use prefix_details::PrefixDetailsModel;
 pub use app_manager::AppManagerModel;
-pub use prefix_list::PrefixListModel;
+pub use prefix_list::{PrefixListModel, PrefixListOutput};
 pub use registered_apps_list::RegisteredAppsListModel;
 pub use app_actions::AppActionsModel;
 pub use add_app_popover::AddAppPopoverModel;

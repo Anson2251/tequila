@@ -11,6 +11,6 @@ fn main() {
 
     // Initialize custom icons
     initialize_custom_icons();
-    
+
     app.run::<AppModel>(());
 }
