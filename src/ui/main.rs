@@ -164,71 +164,13 @@ impl SimpleComponent for AppModel {
 
         let prefix_manager = PrefixManager::new(wine_dir.clone(), Arc::clone(&icon_cache));
 
-        // Load prefixes from cache (instant)
-        let cached: Vec<WinePrefix> = prefix_store.list_prefixes()
-            .map_err(|e| eprintln!("Failed to load from cache: {}", e))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(path, config)| WinePrefix {
-                name: config.name.clone(),
-                path: PathBuf::from(path),
-                config,
-            })
-            .collect();
-
-        let needs_sync = cached.is_empty();
-        let prefixes = cached;
-        println!("Loaded {} prefixes from cache", prefixes.len());
-
-        // If cache is empty, trigger background scan
-        if needs_sync {
-            let ss = sender.clone();
-            let sp = sender.clone();
-            let sm = prefix_manager.clone();
-            let st = Arc::clone(&prefix_store);
-            let ic = Arc::clone(&icon_cache);
-            glib::spawn_future_local(async move {
-                let result = tokio::task::spawn_blocking(move || {
-                    let mut fresh = AppModel::scan_wine_prefixes(&sm);
-                    let total = fresh.len();
-                    for (i, p) in fresh.iter_mut().enumerate() {
-                        let _ = st.save_prefix(&p.path.to_string_lossy(), &p.config);
-                        if let Ok(exes) = sm.scan_for_applications(&p.path) {
-                            let _ = st.save_scanned_executables(&p.path.to_string_lossy(), &exes);
-                        }
-                        let mut changed = false;
-                        for exe in &mut p.config.registered_executables {
-                            if let Some(icon_path) = crate::prefix::scanner::extract_icon_for_exe(&exe.executable_path, &ic) {
-                                if exe.icon_path.as_ref() != Some(&icon_path) {
-                                    exe.icon_path = Some(icon_path);
-                                    changed = true;
-                                }
-                            }
-                            if exe.file_description.is_none() {
-                                let meta = crate::prefix::scanner::extract_metadata_for_exe(&exe.executable_path);
-                                if meta.file_version.is_some() || meta.file_description.is_some() {
-                                    exe.file_version = meta.file_version;
-                                    exe.product_version = meta.product_version;
-                                    exe.company_name = meta.company_name;
-                                    exe.file_description = meta.file_description;
-                                    exe.product_name = meta.product_name;
-                                    exe.imported_modules = meta.imported_modules;
-                                    changed = true;
-                                }
-                            }
-                        }
-                        if changed {
-                            let _ = st.save_prefix(&p.path.to_string_lossy(), &p.config);
-                        }
-                        let _ = sp.input(AppMsg::SyncProgress(i + 1, total));
-                    }
-                    fresh
-                }).await;
-                if let Ok(fresh) = result {
-                    let _ = ss.input(AppMsg::SyncComplete(fresh));
-                }
-            });
-        }
+        // Load prefixes from filesystem + JSON config files (fast, user-editable)
+        let prefixes = AppModel::scan_wine_prefixes(&prefix_manager);
+        // Trigger background scan if no cached scan results exist yet
+        let needs_sync = !prefixes.is_empty() && prefixes.iter().all(|p| {
+            !prefix_store.has_scanned_prefix(&p.path.to_string_lossy())
+        });
+        println!("Loaded {} prefixes", prefixes.len());
 
         let prefix_list = PrefixListModel::builder()
             .launch((prefixes.clone(), None))
@@ -256,7 +198,7 @@ impl SimpleComponent for AppModel {
             });
 
         let registry_editor = RegistryEditorModel::builder()
-            .launch((PathBuf::new(), crate::prefix::config::PrefixConfig::new("".to_string(), "win64".to_string())))
+            .launch((PathBuf::new(), crate::prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()), Arc::clone(&prefix_store)))
             .forward(sender.input_sender(), |msg| match msg {
                 crate::ui::registry_editor::RegistryEditorMsg::ConfigUpdated(config) => {
                     AppMsg::ConfigUpdated(0, config)
@@ -360,7 +302,9 @@ impl SimpleComponent for AppModel {
         {
             let provider = gtk::CssProvider::new();
             provider.load_from_data(".sync-overlay-bg { background: rgba(0, 0, 0, 0.45); } \
-                                     .sync-progress-box { background: @view_bg_color; border: 1px solid @borders; border-radius: 12px; padding: 24px; }");
+                                     .sync-progress-box { background: @view_bg_color; border: 1px solid @borders; border-radius: 12px; padding: 24px; } \
+                                     .icon-bg { background: #eee; border-radius: 24px; padding: 12px; } \
+                                     .desc-text { padding: 8px; }");
             gtk::style_context_add_provider_for_display(
                 &gdk::Display::default().unwrap(),
                 &provider,
@@ -382,7 +326,7 @@ impl SimpleComponent for AppModel {
             info_btn,
             switcher,
             prefix_store,
-            syncing: needs_sync,
+            syncing: false,
             sidebar_visible: true,
             sync_overlay: sync_overlay_box,
             sync_progress_bar,
@@ -392,9 +336,15 @@ impl SimpleComponent for AppModel {
 
         let widgets = view_output!();
 
-        // Auto-select first prefix
+        // Auto-select first prefix and trigger background scan if cold start
         if !model.prefixes.is_empty() {
             sender_clone.input(AppMsg::ShowPrefixDetails(0));
+        }
+        if needs_sync {
+            let bg_sender = sender.clone();
+            glib::spawn_future_local(async move {
+                bg_sender.input(AppMsg::SyncPrefixes);
+            });
         }
 
         ComponentParts { model, widgets }
@@ -612,7 +562,6 @@ impl SimpleComponent for AppModel {
                         if let Err(e) = self.prefix_manager.update_config(prefix_path, &config) {
                             eprintln!("Failed to update config: {}", e);
                         } else {
-                            let _ = self.prefix_store.save_prefix(&prefix_path.to_string_lossy(), &config);
                             self.prefixes[actual_index].config = config.clone();
 
                             // Update other components with the new config but don't refresh the entire list
@@ -710,47 +659,20 @@ impl SimpleComponent for AppModel {
                     let sp = sender.clone();
                     let sm = self.prefix_manager.clone();
                     let st = Arc::clone(&self.prefix_store);
-                    glib::spawn_future_local(async move {
-                        let result = tokio::task::spawn_blocking(move || {
-                            let mut fresh = AppModel::scan_wine_prefixes(&sm);
-                            let total = fresh.len();
-                            let ic = sm.scanner().icon_cache();
-                            for (i, p) in fresh.iter_mut().enumerate() {
-                                let _ = st.save_prefix(&p.path.to_string_lossy(), &p.config);
-                                if let Ok(exes) = sm.scan_for_applications(&p.path) {
-                                    let _ = st.save_scanned_executables(&p.path.to_string_lossy(), &exes);
-                                }
-                                let mut changed = false;
-                                for exe in &mut p.config.registered_executables {
-                                    if let Some(icon_path) = crate::prefix::scanner::extract_icon_for_exe(&exe.executable_path, &ic) {
-                                        if exe.icon_path.as_ref() != Some(&icon_path) {
-                                            exe.icon_path = Some(icon_path);
-                                            changed = true;
-                                        }
-                                    }
-                                    if exe.file_description.is_none() {
-                                        let meta = crate::prefix::scanner::extract_metadata_for_exe(&exe.executable_path);
-                                        if meta.file_version.is_some() || meta.file_description.is_some() {
-                                            exe.file_version = meta.file_version;
-                                            exe.product_version = meta.product_version;
-                                            exe.company_name = meta.company_name;
-                                            exe.file_description = meta.file_description;
-                                            exe.product_name = meta.product_name;
-                                            exe.imported_modules = meta.imported_modules;
-                                            changed = true;
-                                        }
-                                    }
-                                }
-                                if changed {
-                                    let _ = st.save_prefix(&p.path.to_string_lossy(), &p.config);
-                                }
-                                let _ = sp.input(AppMsg::SyncProgress(i + 1, total));
+                    std::thread::spawn(move || {
+                        let mut fresh = AppModel::scan_wine_prefixes(&sm);
+                        let total = fresh.len();
+                        for (i, p) in fresh.iter_mut().enumerate() {
+                            if let Ok(exes) = sm.scan_for_applications(&p.path) {
+                                let _ = st.save_scanned_executables(&p.path.to_string_lossy(), &exes);
                             }
-                            fresh
-                        }).await;
-                        if let Ok(fresh) = result {
-                            let _ = ss.input(AppMsg::SyncComplete(fresh));
+                            let changed = sm.enrich_executables(&mut p.config);
+                            if changed {
+                                let _ = sm.update_config(&p.path, &p.config);
+                            }
+                            let _ = sp.input(AppMsg::SyncProgress(i + 1, total));
                         }
+                        let _ = ss.input(AppMsg::SyncComplete(fresh));
                     });
                 }
             }

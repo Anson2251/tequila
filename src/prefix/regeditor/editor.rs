@@ -865,19 +865,19 @@ impl RegEditor for RegistryEditor {
         let mut settings = MacDriverSettings::new();
 
         if let Some(sync_str) = allow_vertical_sync {
-            settings.allow_vertical_sync = Some(sync_str == "y");
+            settings.allow_vertical_sync = Some(sync_str == "Y" || sync_str == "y");
         }
 
         if let Some(capture_str) = capture_displays_for_fullscreen {
-            settings.capture_displays_for_fullscreen = Some(capture_str == "y");
+            settings.capture_displays_for_fullscreen = Some(capture_str == "Y" || capture_str == "y");
         }
 
         if let Some(scroll_str) = use_precise_scrolling {
-            settings.use_precise_scrolling = Some(scroll_str == "y");
+            settings.use_precise_scrolling = Some(scroll_str == "Y" || scroll_str == "y");
         }
 
         if let Some(retina_str) = retina_mode {
-            settings.retina_mode = Some(retina_str == "Y");
+            settings.retina_mode = Some(retina_str == "Y" || retina_str == "y");
         }
 
         if let Some(float_str) = windows_float_when_inactive {
@@ -896,28 +896,28 @@ impl RegEditor for RegistryEditor {
 
         // Set AllowVerticalSync
         if let Some(sync) = settings.allow_vertical_sync {
-            let sync_str = if sync { "y" } else { "n" };
+            let sync_str = if sync { "Y" } else { "N" };
             Self::validate_value_name("AllowVerticalSync")?;
             self.set_string_value(key_path, "AllowVerticalSync", sync_str).await?;
         }
 
         // Set CaptureDisplaysForFullscreen
         if let Some(capture) = settings.capture_displays_for_fullscreen {
-            let capture_str = if capture { "y" } else { "n" };
+            let capture_str = if capture { "Y" } else { "N" };
             Self::validate_value_name("CaptureDisplaysForFullscreen")?;
             self.set_string_value(key_path, "CaptureDisplaysForFullscreen", capture_str).await?;
         }
 
         // Set UsePreciseScrolling
         if let Some(scrolling) = settings.use_precise_scrolling {
-            let scroll_str = if scrolling { "y" } else { "n" };
+            let scroll_str = if scrolling { "Y" } else { "N" };
             Self::validate_value_name("UsePreciseScrolling")?;
             self.set_string_value(key_path, "UsePreciseScrolling", scroll_str).await?;
         }
 
         // Set RetinaMode
         if let Some(retina) = settings.retina_mode {
-            let retina_str = if retina { "Y" } else { "n" };
+            let retina_str = if retina { "Y" } else { "N" };
             Self::validate_value_name("RetinaMode")?;
             self.set_string_value(key_path, "RetinaMode", retina_str).await?;
         }

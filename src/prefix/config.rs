@@ -144,7 +144,7 @@ impl PrefixConfig {
         self.registered_executables.iter().find(|exe| exe.name == name)
     }
 
-    pub fn executables(&self) -> std::slice::Iter<RegisteredExecutable> {
+    pub fn executables(&self) -> std::slice::Iter<'_, RegisteredExecutable> {
         self.registered_executables.iter()
     }
 
@@ -249,7 +249,7 @@ impl ExecutableManager for PrefixConfig {
         self.registered_executables.iter().find(|exe| exe.name == name)
     }
 
-    fn executables(&self) -> std::slice::Iter<RegisteredExecutable> {
+    fn executables(&self) -> std::slice::Iter<'_, RegisteredExecutable> {
         self.registered_executables.iter()
     }
 }

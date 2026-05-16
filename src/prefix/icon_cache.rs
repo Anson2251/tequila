@@ -57,7 +57,7 @@ impl IconCache {
         stmt.query_row(params![sha256], |row| row.get::<_, Vec<u8>>(0)).ok()
     }
 
-    /// Store a PNG icon in the cache.
+    /// Store a PNG icon in the cache, or store empty bytes as a "no icon" sentinel.
     pub fn put(&self, sha256: &str, png_data: &[u8]) -> Result<(), String> {
         let db = self.db.lock().map_err(|e| format!("Lock error: {}", e))?;
         db.execute(
@@ -69,14 +69,30 @@ impl IconCache {
 
     /// Get the path to the cached .png file for a given SHA256.
     /// Writes the file from DB if it doesn't exist on disk yet.
+    /// Returns `None` if the stored blob is empty (a "no icon" sentinel).
     pub fn icon_path(&self, sha256: &str) -> Option<PathBuf> {
         let png_path = self.cache_dir.join(format!("{}.png", sha256));
         if png_path.exists() {
-            return Some(png_path);
+            if png_path.metadata().ok().map(|m| m.len()).unwrap_or(0) > 0 {
+                return Some(png_path);
+            }
+            // Empty sentinel file — clean up and return None
+            let _ = std::fs::remove_file(&png_path);
+            return None;
         }
 
         let data = self.get(sha256)?;
+        if data.is_empty() {
+            return None; // known no-icon sentinel
+        }
         std::fs::write(&png_path, &data).ok()?;
         Some(png_path)
+    }
+
+    /// Check whether a hash is in the cache and whether it has real icon data.
+    /// Returns `None` if not cached, `Some(true)` if icon data exists, `Some(false)` if sentinel.
+    pub fn has_icon(&self, sha256: &str) -> Option<bool> {
+        let data = self.get(sha256)?;
+        Some(!data.is_empty())
     }
 }

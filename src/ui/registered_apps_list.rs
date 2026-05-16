@@ -59,13 +59,32 @@ impl FactoryComponent for RegisteredExecutableItem {
             // Use FlowBox's built-in selection
             // add_css_class: "card",
 
-                gtk::Image {
-                    set_pixel_size: 48,
-                    #[watch]
-                    set_from_file: self.executable.icon_path.as_deref(),
+                // Icon from file, or fallback default
+                gtk::Box {
+                    set_width_request: 48,
+                    set_height_request: 48,
                     set_halign: gtk::Align::Center,
-                    set_valign: gtk::Align::Center,
-                    set_vexpand: true,
+                    add_css_class: "icon-bg",
+
+                    gtk::Image {
+                        set_pixel_size: 48,
+                        #[watch]
+                        set_from_file: self.executable.icon_path.as_deref(),
+                        #[watch]
+                        set_visible: self.executable.icon_path.is_some(),
+                        set_halign: gtk::Align::Center,
+                        set_valign: gtk::Align::Center,
+                        set_vexpand: true,
+                    },
+                    gtk::Image {
+                        set_pixel_size: 48,
+                        set_icon_name: Some("application-x-executable"),
+                        #[watch]
+                        set_visible: self.executable.icon_path.is_none(),
+                        set_halign: gtk::Align::Center,
+                        set_valign: gtk::Align::Center,
+                        set_vexpand: true,
+                    },
                 },
 
                 gtk::Label {

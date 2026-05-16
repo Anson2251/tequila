@@ -182,6 +182,7 @@ impl AsyncComponent for AppManagerModel {
                 match prefix_manager.scan_for_applications_async(&prefix_path).await {
                     Ok(executables) => {
                         println!("Scanning complete, found {} executables", executables.len());
+                        let _ = self.prefix_store.save_scanned_executables(&self.prefix_path.to_string_lossy(), &executables);
                         self.available_executables = executables;
                     }
                     Err(e) => {

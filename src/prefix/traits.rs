@@ -76,7 +76,7 @@ pub trait ExecutableManager {
     fn find_executable_by_name(&self, name: &str) -> Option<&RegisteredExecutable>;
     
     /// Get all executables as an iterator
-    fn executables(&self) -> std::slice::Iter<RegisteredExecutable>;
+    fn executables(&self) -> std::slice::Iter<'_, RegisteredExecutable>;
 }
 
 // Forward declaration of types used in traits

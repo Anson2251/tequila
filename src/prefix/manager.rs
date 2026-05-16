@@ -38,6 +38,9 @@ impl Manager {
 
         println!("Scanning Wine prefixes in directory: {:?}", self.wine_dir);
 
+        // Detect wine version once via `wine --version`; shared across all prefixes
+        let wine_version = detect_system_wine_version().ok();
+
         for entry in fs::read_dir(&self.wine_dir)? {
             let entry = entry?;
             let path = entry.path();
@@ -48,8 +51,15 @@ impl Manager {
                     println!("✅ Valid Wine prefix: {:?}", path);
                     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                         println!("🔧 Loading config for prefix: {}", name);
-                        match self.load_or_create_config(&path, name) {
-                            Ok(config) => {
+                        match self.load_or_create_config(&path, name, &wine_version) {
+                            Ok(mut config) => {
+                                // Always refresh wine version from system on scan
+                                if let Some(ref ver) = wine_version {
+                                    if config.wine_version.as_ref() != Some(ver) {
+                                        config.wine_version = Some(ver.clone());
+                                        let _ = config.save_to_file(&path);
+                                    }
+                                }
                                 println!("✅ Config loaded successfully for: {}", name);
                                 prefixes.push(WinePrefix {
                                     name: name.to_string(),
@@ -82,49 +92,27 @@ impl Manager {
         drive_c.exists() && system_reg.exists() && user_reg.exists()
     }
 
-    fn load_or_create_config(&self, prefix_path: &PathBuf, name: &str) -> Result<PrefixConfig> {
-        // Try to load existing config
-        if let Some(config) = PrefixConfig::load_from_file(prefix_path)? {
-            return Ok(config);
-        }
+    fn load_or_create_config(&self, prefix_path: &PathBuf, name: &str,
+                             system_wine_version: &Option<String>) -> Result<PrefixConfig> {
+        let mut config = if let Some(config) = PrefixConfig::load_from_file(prefix_path)? {
+            config
+        } else {
+            let mut config = PrefixConfig::new(name.to_string(), "win64".to_string());
+            if let Ok(architecture) = self.detect_architecture(prefix_path) {
+                config.architecture = architecture;
+            }
+            config
+        };
 
-        // Create a new config for existing prefix
-        let mut config = PrefixConfig::new(name.to_string(), "win64".to_string());
-        
-        // Try to detect wine version and architecture
-        if let Ok(wine_version) = self.detect_wine_version(prefix_path) {
-            config.wine_version = Some(wine_version);
-        }
-
-        if let Ok(architecture) = self.detect_architecture(prefix_path) {
-            config.architecture = architecture;
-        }
-
-        // Save new config
-        config.save_to_file(prefix_path)?;
-        Ok(config)
-    }
-
-    fn detect_wine_version(&self, prefix_path: &PathBuf) -> Result<String> {
-        // Try to detect wine version from prefix
-        let version_file = prefix_path.join(".update-timestamp");
-        if version_file.exists() {
-            let content = fs::read_to_string(version_file)?;
-            if let Ok(timestamp) = content.trim().parse::<u64>() {
-                // Convert timestamp to readable format (this is a simplified approach)
-                return Ok(format!("Wine (timestamp: {})", timestamp));
+        // Fill in wine version from cached system result if the prefix lacks one
+        if config.wine_version.is_none() {
+            if let Some(ver) = system_wine_version {
+                config.wine_version = Some(ver.clone());
+                config.save_to_file(prefix_path)?;
             }
         }
 
-        // Try to get wine version from system
-        let output = Command::new("wine").arg("--version").output()?;
-        if output.status.success() {
-            let version_str = String::from_utf8(output.stdout)
-                .map_err(|e| PrefixError::Wine(format!("Failed to parse wine version: {}", e)))?;
-            return Ok(version_str.trim().to_string());
-        }
-
-        Err(PrefixError::Wine("Failed to get wine version".to_string()))
+        Ok(config)
     }
 
     fn detect_architecture(&self, prefix_path: &PathBuf) -> Result<String> {
@@ -230,7 +218,7 @@ impl Manager {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        let mut config = self.load_or_create_config(prefix_path, name)?;
+        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
         
         config.add_executable(executable);
         self.update_config(prefix_path, &config)?;
@@ -242,7 +230,7 @@ impl Manager {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        let mut config = self.load_or_create_config(prefix_path, name)?;
+        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
         
         config.remove_executable(index);
         self.update_config(prefix_path, &config)?;
@@ -279,7 +267,7 @@ impl Manager {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        let config = self.load_or_create_config(prefix_path, name)?;
+        let config = self.load_or_create_config(prefix_path, name, &None)?;
         
         let size = self.calculate_prefix_size(prefix_path)?;
         let executable_count = config.get_executable_count();
@@ -296,6 +284,34 @@ impl Manager {
         })
     }
 
+    /// Enrich registered executables with PE icons and metadata extracted from the filesystem.
+    /// Returns true if any executable was modified.
+    pub fn enrich_executables(&self, config: &mut PrefixConfig) -> bool {
+        let ic = self.scanner.icon_cache();
+        let mut changed = false;
+        for exe in &mut config.registered_executables {
+            if let Some(icon_path) = crate::prefix::scanner::extract_icon_for_exe(&exe.executable_path, ic) {
+                if exe.icon_path.as_ref() != Some(&icon_path) {
+                    exe.icon_path = Some(icon_path);
+                    changed = true;
+                }
+            }
+            if exe.file_description.is_none() {
+                let meta = crate::prefix::scanner::extract_metadata_for_exe(&exe.executable_path);
+                if meta.file_version.is_some() || meta.file_description.is_some() {
+                    exe.file_version = meta.file_version;
+                    exe.product_version = meta.product_version;
+                    exe.company_name = meta.company_name;
+                    exe.file_description = meta.file_description;
+                    exe.product_name = meta.product_name;
+                    exe.imported_modules = meta.imported_modules;
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+
     fn calculate_prefix_size(&self, prefix_path: &PathBuf) -> Result<u64> {
         let total_size = walkdir::WalkDir::new(prefix_path)
             .into_iter()
@@ -304,7 +320,7 @@ impl Manager {
             .filter_map(|entry| entry.metadata().ok())
             .map(|metadata| metadata.len())
             .sum();
-        
+
         Ok(total_size)
     }
 }
@@ -354,5 +370,21 @@ impl PrefixManagerTrait for Manager {
 impl std::fmt::Display for Manager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "PrefixManager(wine_dir: {})", self.wine_dir.display())
+    }
+}
+
+/// Run `wine --version` once and return the formatted result (e.g. `"WINE 11.0"`).
+/// Cache this value and pass it to all prefixes to avoid redundant subprocess calls.
+fn detect_system_wine_version() -> Result<String> {
+    let output = Command::new("wine").arg("--version").output()
+        .map_err(|e| PrefixError::Process(format!("Failed to run wine --version: {}", e)))?;
+    if output.status.success() {
+        let raw = String::from_utf8(output.stdout)
+            .map_err(|e| PrefixError::Wine(format!("Failed to parse wine version: {}", e)))?;
+        // "wine-11.0" -> "WINE 11.0"
+        let formatted = raw.trim().split('-').collect::<Vec<_>>().join(" ").to_uppercase();
+        Ok(formatted)
+    } else {
+        Err(PrefixError::Wine("wine --version exited with non-zero status".to_string()))
     }
 }

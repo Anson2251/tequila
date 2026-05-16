@@ -88,10 +88,22 @@ impl FactoryComponent for AvailableExecutable {
                     },
                 },
 
-                // Icon or placeholder
-                gtk::Image {
-                    set_pixel_size: 24,
-                    set_from_file: self.executable.icon_path.as_deref(),
+                // Icon or fallback
+                gtk::Box {
+                    set_width_request: 24,
+                    set_height_request: 24,
+                    add_css_class: "icon-bg",
+
+                    gtk::Image {
+                        set_pixel_size: 24,
+                        set_from_file: self.executable.icon_path.as_deref(),
+                        set_visible: self.executable.icon_path.is_some(),
+                    },
+                    gtk::Image {
+                        set_pixel_size: 24,
+                        set_icon_name: Some("application-x-executable"),
+                        set_visible: self.executable.icon_path.is_none(),
+                    },
                 },
 
                 // Executable info

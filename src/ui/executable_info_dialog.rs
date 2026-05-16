@@ -48,12 +48,29 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                     set_spacing: 15,
                     set_margin_bottom: 15,
 
-                    gtk::Image {
-                        set_pixel_size: 64,
-                        #[watch]
-                        set_from_file: model.executable.as_ref().and_then(|e| e.icon_path.as_deref()),
-                        set_halign: gtk::Align::Center,
-                        set_valign: gtk::Align::Center,
+                    // Icon or fallback
+                    gtk::Box {
+                        set_width_request: 64,
+                        set_height_request: 64,
+                        add_css_class: "icon-bg",
+
+                        gtk::Image {
+                            set_pixel_size: 64,
+                            #[watch]
+                            set_from_file: model.executable.as_ref().and_then(|e| e.icon_path.as_deref()),
+                            #[watch]
+                            set_visible: model.executable.as_ref().and_then(|e| e.icon_path.as_ref()).is_some(),
+                            set_halign: gtk::Align::Center,
+                            set_valign: gtk::Align::Center,
+                        },
+                        gtk::Image {
+                            set_pixel_size: 64,
+                            set_icon_name: Some("application-x-executable"),
+                            #[watch]
+                            set_visible: model.executable.as_ref().and_then(|e| e.icon_path.as_ref()).is_none(),
+                            set_halign: gtk::Align::Center,
+                            set_valign: gtk::Align::Center,
+                        },
                     },
 
                     gtk::Box {

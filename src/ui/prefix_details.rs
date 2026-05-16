@@ -3,17 +3,19 @@ use gtk::prelude::*;
 use crate::prefix::config::PrefixConfig;
 use std::path::PathBuf;
 use tracker;
-use std::rc::Rc;
-use std::cell::RefCell;
 
 #[derive(Debug)]
 #[tracker::track]
 pub struct PrefixDetailsModel {
     prefix_path: PathBuf,
     config: PrefixConfig,
+    saved_config: PrefixConfig,
     editing: bool,
-    description_updated: bool,
     prefix_index: usize,
+    #[tracker::do_not_track]
+    description_buffer: gtk::TextBuffer,
+    #[tracker::do_not_track]
+    suppress_update: bool,
 }
 
 #[derive(Debug)]
@@ -23,8 +25,8 @@ pub enum PrefixDetailsMsg {
     SaveConfig,
     UpdateName(String),
     UpdateDescription(String),
-    UpdateArchitecture(String),
-    UpdateWineVersion(String),
+    // Architecture and Wine Version are auto-detected and read-only
+    CancelEdit,
     ConfigUpdated(PrefixConfig),
     PrefixPathUpdated(PathBuf),
     SetPrefixIndex(usize),
@@ -84,18 +86,13 @@ impl SimpleComponent for PrefixDetailsModel {
                             },
                         
 
-                            gtk::ComboBoxText {
-                                append_text: "win32",
-                                append_text: "win64",
+                            gtk::Entry {
                                 #[track = "model.changed(PrefixDetailsModel::config())"]
-                                set_active_id: Some(&model.config.architecture),
-                                #[track = "model.changed(PrefixDetailsModel::editing())"]
-                                set_sensitive: model.editing,
-                                connect_changed[sender] => move |combo| {
-                                    if let Some(arch) = combo.active_id() {
-                                        sender.input(PrefixDetailsMsg::UpdateArchitecture(arch.to_string()));
-                                    }
-                                },
+                                set_text: &model.config.architecture,
+                                set_hexpand: true,
+                                set_editable: false,
+                                set_sensitive: false,
+                                add_css_class: "monospace",
                             },
                         },
                         gtk::Box {
@@ -111,13 +108,9 @@ impl SimpleComponent for PrefixDetailsModel {
                                 #[track = "model.changed(PrefixDetailsModel::config())"]
                                 set_text: &model.config.wine_version.as_deref().unwrap_or(""),
                                 set_hexpand: true,
-                                #[track = "model.changed(PrefixDetailsModel::editing())"]
-                                set_editable: model.editing,
-                                #[track = "model.changed(PrefixDetailsModel::editing())"]
-                                set_sensitive: model.editing,
-                                connect_changed[sender] => move |entry| {
-                                    sender.input(PrefixDetailsMsg::UpdateWineVersion(entry.text().to_string()));
-                                },
+                                set_editable: false,
+                                set_sensitive: false,
+                                add_css_class: "monospace",
                             },
                         },
                     },
@@ -128,22 +121,19 @@ impl SimpleComponent for PrefixDetailsModel {
                     },
 
                     gtk::ScrolledWindow {
+                        set_hexpand: true,
                         set_vexpand: true,
                         set_min_content_height: 100,
 
-                        
-
                         #[name = "description_text"]
                         gtk::TextView {
-                            set_buffer: Some(&gtk::TextBuffer::new(None)),
                             set_hexpand: true,
                             set_vexpand: true,
-
                             #[track = "model.changed(PrefixDetailsModel::editing())"]
                             set_editable: model.editing,
-                            #[track = "model.changed(PrefixDetailsModel::editing())"]
-                            set_sensitive: model.editing,
                             set_wrap_mode: gtk::WrapMode::WordChar,
+                            add_css_class: "desc-text",
+                            set_css_classes: &["view", "card", "desc-text"],
                         },
                     },
 
@@ -222,8 +212,8 @@ impl SimpleComponent for PrefixDetailsModel {
                         set_label: "Cancel",
                         #[track = "model.changed(PrefixDetailsModel::editing())"]
                         set_visible: model.editing,
-                        connect_clicked[sender, config = model.config.clone()] => move |_| {
-                            sender.input(PrefixDetailsMsg::ConfigUpdated(config.clone()));
+                        connect_clicked[sender] => move |_| {
+                            sender.input(PrefixDetailsMsg::CancelEdit);
                         },
                     },
                 },
@@ -241,25 +231,30 @@ impl SimpleComponent for PrefixDetailsModel {
         let model = PrefixDetailsModel {
             prefix_path,
             config: config.clone(),
+            saved_config: config,
             editing: false,
-            description_updated: false,
             prefix_index: 0,
+            description_buffer: gtk::TextBuffer::new(None),
+            suppress_update: false,
             tracker: 0,
         };
 
-        let widgets = view_output!();
-
-        // Initialize description text
+        // Initialize description text from config into the model's buffer
         if let Some(description) = &model.config.description {
-            widgets.description_text.buffer().set_text(description);
+            model.description_buffer.set_text(description);
         }
 
-        // Set up buffer change handler for description
-        let buffer = widgets.description_text.buffer();
+        let widgets = view_output!();
+
+        // Connect the buffer to the widget (only set once, never replaced)
+        widgets.description_text.set_buffer(Some(&model.description_buffer));
+
+        // Track user edits
+        let buf = model.description_buffer.clone();
         let sender_clone = sender.clone();
-        buffer.connect_changed(move |buffer| {
-            let (start, end) = buffer.bounds();
-            let text = buffer.text(&start, &end, true);
+        buf.connect_changed(move |_buf| {
+            let (start, end) = _buf.bounds();
+            let text = _buf.text(&start, &end, true);
             sender_clone.input(PrefixDetailsMsg::UpdateDescription(text.to_string()));
         });
 
@@ -272,17 +267,20 @@ impl SimpleComponent for PrefixDetailsModel {
             PrefixDetailsMsg::ToggleEdit => {
                 if self.editing {
                     println!("Saving editing");
-                    // Save changes
                     sender.input(PrefixDetailsMsg::SaveConfig);
                 } else {
+                    self.saved_config = self.config.clone();
                     self.set_editing(true);
                     println!("Setting to editing true");
                 }
             }
             PrefixDetailsMsg::SaveConfig => {
-                self.set_editing(false);
+                // Capture description from buffer before saving
+                let (start, end) = self.description_buffer.bounds();
+                let text = self.description_buffer.text(&start, &end, true);
+                self.config.description = if text.is_empty() { None } else { Some(text.to_string()) };
 
-                // Update last modified timestamp before saving
+                self.set_editing(false);
                 self.config.update_last_modified();
 
                 // Save config to file
@@ -297,19 +295,24 @@ impl SimpleComponent for PrefixDetailsModel {
             PrefixDetailsMsg::UpdateName(name) => {
                 self.config.name = name;
             }
-            PrefixDetailsMsg::UpdateDescription(description) => {
-                self.config.description = if description.is_empty() { None } else { Some(description) };
+            PrefixDetailsMsg::UpdateDescription(desc) => {
+                self.config.description = if desc.is_empty() { None } else { Some(desc) };
             }
-            PrefixDetailsMsg::UpdateArchitecture(architecture) => {
-                self.config.architecture = architecture;
-            }
-            PrefixDetailsMsg::UpdateWineVersion(version) => {
-                self.config.wine_version = if version.is_empty() { None } else { Some(version) };
+            PrefixDetailsMsg::CancelEdit => {
+                let text = self.saved_config.description.as_deref().unwrap_or("");
+                self.description_buffer.set_text(text);
+                self.set_config(self.saved_config.clone());
+                self.set_editing(false);
             }
             PrefixDetailsMsg::ConfigUpdated(config) => {
+                if let Some(ref desc) = config.description {
+                    self.description_buffer.set_text(desc);
+                } else {
+                    self.description_buffer.set_text("");
+                }
                 self.set_config(config.clone());
+                self.saved_config = config;
                 self.set_editing(false);
-                self.set_description_updated(true);
             }
             PrefixDetailsMsg::PrefixPathUpdated(path) => {
                 self.set_prefix_path(path);

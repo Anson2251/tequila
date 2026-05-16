@@ -506,19 +506,30 @@ impl ApplicationScanner {
 
 /// Extract icon for a single .exe file using the cache. Can be called without a scanner.
 /// Used to retro-fill icons for executables loaded from existing configs.
+/// Stores an empty sentinel on failure so the extraction is not retried on every scan.
 pub fn extract_icon_for_exe(exe_path: &Path, icon_cache: &IconCache) -> Option<PathBuf> {
     let file_bytes = std::fs::read(exe_path).ok()?;
     let sha256 = hex::encode(Sha256::digest(&file_bytes));
 
-    if let Some(cached_path) = icon_cache.icon_path(&sha256) {
-        return Some(cached_path);
+    // Check cache status: Some(true)=has icon, Some(false)=no-icon sentinel, None=not cached
+    match icon_cache.has_icon(&sha256) {
+        Some(true) => return icon_cache.icon_path(&sha256),
+        Some(false) => return None,
+        None => { /* proceed to extract */ }
     }
 
     let image = VecPE::from_disk_file(exe_path).ok()?;
-    let icon_data = icon_extract::extract_icon(&image)?;
-
-    icon_cache.put(&sha256, &icon_data).ok()?;
-    icon_cache.icon_path(&sha256)
+    match icon_extract::extract_icon(&image) {
+        Some(icon_data) => {
+            let _ = icon_cache.put(&sha256, &icon_data);
+            icon_cache.icon_path(&sha256)
+        }
+        None => {
+            // Store sentinel to avoid re-extraction on future scans
+            let _ = icon_cache.put(&sha256, &[]);
+            None
+        }
+    }
 }
 
 /// Extract metadata (version info, imports) for a single .exe file.
