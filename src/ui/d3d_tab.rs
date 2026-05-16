@@ -62,16 +62,17 @@ impl SimpleComponent for D3DModel {
                 },
 
                 gtk::ComboBoxText {
+                    append_text: "Default",
                     append_text: "OpenGL",
                     append_text: "Vulkan",
                     append_text: "GDI",
                     #[track = "model.changed(D3DModel::d3d_renderer())"]
-                    set_active_id: model.d3d_renderer.as_deref(),
+                    set_active: d3d_renderer_code_to_index(model.d3d_renderer.as_deref().unwrap_or("")),
                     #[track = "model.changed(D3DModel::editing())"]
                     set_sensitive: model.editing,
                     connect_changed[sender] => move |combo| {
-                        if let Some(renderer) = combo.active_id() {
-                            sender.input(D3DMsg::UpdateD3DRenderer(renderer.to_string()));
+                        if let Some(idx) = combo.active() {
+                            sender.input(D3DMsg::UpdateD3DRenderer(d3d_renderer_index_to_code(idx as u32).to_string()));
                         }
                     },
                 },
@@ -102,15 +103,16 @@ impl SimpleComponent for D3DModel {
                 },
 
                 gtk::ComboBoxText {
+                    append_text: "Default",
                     append_text: "FBO",
                     append_text: "Backbuffer",
                     #[track = "model.changed(D3DModel::offscreen_rendering_mode())"]
-                    set_active_id: model.offscreen_rendering_mode.as_deref(),
+                    set_active: offscreen_code_to_index(model.offscreen_rendering_mode.as_deref().unwrap_or("")),
                     #[track = "model.changed(D3DModel::editing())"]
                     set_sensitive: model.editing,
                     connect_changed[sender] => move |combo| {
-                        if let Some(mode) = combo.active_id() {
-                            sender.input(D3DMsg::UpdateOffscreenRenderingMode(mode.to_string()));
+                        if let Some(idx) = combo.active() {
+                            sender.input(D3DMsg::UpdateOffscreenRenderingMode(offscreen_index_to_code(idx as u32).to_string()));
                         }
                     },
                 },
@@ -143,7 +145,7 @@ impl SimpleComponent for D3DModel {
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let (renderer, csmt, offscreen_mode, video_memory) = init;
-        
+
         let model = D3DModel {
             editing: false,
             d3d_renderer: renderer,
@@ -189,5 +191,43 @@ impl SimpleComponent for D3DModel {
                 }
             }
         }
+    }
+}
+
+fn d3d_renderer_code_to_index(code: &str) -> Option<u32> {
+    match code {
+        "" => Some(0),
+        "gl" => Some(1),
+        "vulkan" => Some(2),
+        "gdi" => Some(3),
+        _ => None,
+    }
+}
+
+fn d3d_renderer_index_to_code(idx: u32) -> &'static str {
+    match idx {
+        0 => "",
+        1 => "gl",
+        2 => "vulkan",
+        3 => "gdi",
+        _ => "",
+    }
+}
+
+fn offscreen_code_to_index(code: &str) -> Option<u32> {
+    match code {
+        "" => Some(0),
+        "fbo" => Some(1),
+        "backbuffer" => Some(2),
+        _ => None,
+    }
+}
+
+fn offscreen_index_to_code(idx: u32) -> &'static str {
+    match idx {
+        0 => "",
+        1 => "fbo",
+        2 => "backbuffer",
+        _ => "",
     }
 }

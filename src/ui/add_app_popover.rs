@@ -23,7 +23,7 @@ pub struct AddAppPopoverModel {
 pub enum AddAppPopoverMsg {
     Show,
     Hide,
-    UpdateAvailableApps(Vec<RegisteredExecutable>),
+    UpdateAvailableApps(Vec<RegisteredExecutable>, String), // exes, prefix_arch
     SelectApp(usize),
     AddSelected,
     ResetProcessingFlag,
@@ -41,6 +41,7 @@ struct AvailableExecutable {
     executable: RegisteredExecutable,
     index: usize,
     selected: bool,
+    arch_label: String,
 }
 
 #[derive(Debug)]
@@ -55,7 +56,7 @@ enum AvailableExecutableOutput {
 
 #[relm4::factory]
 impl FactoryComponent for AvailableExecutable {
-    type Init = (RegisteredExecutable, usize);
+    type Init = (RegisteredExecutable, usize, String); // exe, index, arch_label
     type Input = AvailableExecutableMsg;
     type Output = AvailableExecutableOutput;
     type CommandOutput = ();
@@ -112,11 +113,23 @@ impl FactoryComponent for AvailableExecutable {
                     set_spacing: 2,
                     set_hexpand: true,
 
-                    gtk::Label {
-                        #[watch]
-                        set_label: &self.executable.name,
-                        set_halign: gtk::Align::Start,
-                        set_ellipsize: gtk::pango::EllipsizeMode::End,
+                    gtk::Box {
+                        set_orientation: gtk::Orientation::Horizontal,
+                        set_spacing: 6,
+
+                        gtk::Label {
+                            #[watch]
+                            set_label: &self.executable.name,
+                            set_halign: gtk::Align::Start,
+                            set_ellipsize: gtk::pango::EllipsizeMode::End,
+                        },
+
+                        gtk::Label {
+                            #[watch]
+                            set_label: &self.arch_label,
+                            set_halign: gtk::Align::Start,
+                            add_css_class: "caption",
+                        },
                     },
 
                     gtk::Label {
@@ -138,11 +151,12 @@ impl FactoryComponent for AvailableExecutable {
         _index: &DynamicIndex,
         _sender: FactorySender<Self>,
     ) -> Self {
-        let (executable, index) = init;
+        let (executable, index, arch_label) = init;
         Self {
             executable,
             index,
             selected: false,
+            arch_label,
         }
     }
 
@@ -271,7 +285,7 @@ impl AsyncComponent for AddAppPopoverModel {
         let widgets = view_output!();
 
         // Initialize the popover with available apps if any
-        sender.input(AddAppPopoverMsg::UpdateAvailableApps(Vec::new()));
+        sender.input(AddAppPopoverMsg::UpdateAvailableApps(Vec::new(), "win64".to_string()));
 
         AsyncComponentParts { model, widgets }
     }
@@ -297,15 +311,20 @@ impl AsyncComponent for AddAppPopoverModel {
                 widgets.popdown();
                 let _ = sender.output(AddAppPopoverOutput::Close);
             }
-            AddAppPopoverMsg::UpdateAvailableApps(apps) => {
+            AddAppPopoverMsg::UpdateAvailableApps(apps, prefix_arch) => {
                 self.available_apps = apps.clone();
+
+                // Compute arch label for each executable
+                let arch_labels: Vec<String> = apps.iter().map(|exe| {
+                    compute_arch_label(&exe.executable_path, &prefix_arch)
+                }).collect();
 
                 // Update factory
                 {
                     let mut guard = self.available_executables.guard();
                     guard.clear();
                     for (index, executable) in apps.iter().enumerate() {
-                        guard.push_back((executable.clone(), index));
+                        guard.push_back((executable.clone(), index, arch_labels[index].clone()));
                     }
                 }
             }
@@ -394,5 +413,19 @@ impl AsyncComponent for AddAppPopoverModel {
                 }
             }
         }
+    }
+}
+
+/// Determine x86/x64 label for an executable based on its path and prefix architecture.
+fn compute_arch_label(path: &std::path::Path, prefix_arch: &str) -> String {
+    let path_lower = path.to_string_lossy().to_lowercase();
+    if path_lower.contains("program files (x86)") {
+        "x86".to_string()
+    } else if path_lower.contains("program files") && prefix_arch == "win64" {
+        "x64".to_string()
+    } else if prefix_arch == "win64" {
+        "x64".to_string()
+    } else {
+        "x86".to_string()
     }
 }

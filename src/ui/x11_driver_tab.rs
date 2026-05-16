@@ -65,8 +65,7 @@ impl SimpleComponent for X11DriverModel {
 
     view! {
         #[root]
-        gtk::ScrolledWindow {
-            gtk::Box {
+        gtk::Box {
                 set_orientation: gtk::Orientation::Vertical,
                 set_spacing: 15,
                 set_margin_all: 15,
@@ -219,7 +218,6 @@ impl SimpleComponent for X11DriverModel {
                         },
                     }
                 },
-            }
         }
     }
 

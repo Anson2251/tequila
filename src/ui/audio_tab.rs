@@ -45,18 +45,18 @@ impl SimpleComponent for AudioModel {
                 },
 
                 gtk::ComboBoxText {
+                    append_text: "Default",
                     append_text: "PulseAudio",
                     append_text: "ALSA",
                     append_text: "OSS",
                     append_text: "CoreAudio",
-                    append_text: "Disabled",
                     #[track = "model.changed(AudioModel::audio_driver())"]
-                    set_active_id: model.audio_driver.as_deref(),
+                    set_active: aud_code_to_index(model.audio_driver.as_deref().unwrap_or("")),
                     #[track = "model.changed(AudioModel::editing())"]
                     set_sensitive: model.editing,
                     connect_changed[sender] => move |combo| {
-                        if let Some(driver) = combo.active_id() {
-                            sender.input(AudioMsg::UpdateAudioDriver(driver.to_string()));
+                        if let Some(idx) = combo.active() {
+                            sender.input(AudioMsg::UpdateAudioDriver(aud_index_to_code(idx as u32).to_string()));
                         }
                     },
                 },
@@ -94,5 +94,27 @@ impl SimpleComponent for AudioModel {
                 let _ = sender.output(AudioMsg::UpdateAudioDriver(driver));
             }
         }
+    }
+}
+
+fn aud_code_to_index(code: &str) -> Option<u32> {
+    match code {
+        "" => Some(0),
+        "pulse" => Some(1),
+        "alsa" => Some(2),
+        "oss" => Some(3),
+        "coreaudio" => Some(4),
+        _ => None,
+    }
+}
+
+fn aud_index_to_code(idx: u32) -> &'static str {
+    match idx {
+        0 => "",
+        1 => "pulse",
+        2 => "alsa",
+        3 => "oss",
+        4 => "coreaudio",
+        _ => "",
     }
 }

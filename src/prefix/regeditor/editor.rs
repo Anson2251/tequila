@@ -18,8 +18,8 @@ use std::sync::Arc;
 /// This struct provides a high-level interface for editing Wine registry files,
 /// with built-in validation and caching support.
 pub struct RegistryEditor {
-    /// The underlying registry
-    registry: WineRegistry,
+    /// The underlying registry (exposed for delete/unset operations)
+    pub registry: WineRegistry,
     /// Cache for registry operations
     cache: Arc<dyn RegistryCache>,
     /// Path to the current prefix

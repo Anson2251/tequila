@@ -20,6 +20,8 @@ pub struct RegistryEditorModel {
     editing: bool,
     loading: bool,
     #[tracker::do_not_track]
+    pending_edit: bool,
+    #[tracker::do_not_track]
     registry_editor: Option<Arc<Mutex<RegistryEditor>>>,
     // Tab component controllers
     #[tracker::do_not_track]
@@ -45,6 +47,7 @@ pub enum RegistryEditorMsg {
     ToggleEdit,
     SaveRegistry,
     LoadRegistry,
+    LoadForEdit, // load .reg for editing (skip cache)
     RegistryEditorLoaded(Arc<Mutex<RegistryEditor>>),
     RegistryEditorUpdateTabs(Option<String>, Option<String>, Option<u32>, Option<String>, Option<u32>, Option<String>, Option<VirtualDesktopSettings>, Option<DpiSettings>, Option<X11DriverSettings>, Option<MacDriverSettings>),
     RegistrySaveComplete,
@@ -111,11 +114,6 @@ impl SimpleComponent for RegistryEditorModel {
                     set_hexpand: true,
                     set_vexpand: true,
 
-                    gtk::ScrolledWindow {
-                        set_vexpand: true,
-                        set_hexpand: true,
-                        set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
-
                         #[name = "notebook"]
                         gtk::Notebook {
                             set_hexpand: true,
@@ -124,59 +122,59 @@ impl SimpleComponent for RegistryEditorModel {
 
                             append_page: (
                                 &{
+                                    let s = gtk::ScrolledWindow::builder()
+                                        .vexpand(true).hexpand(true).build();
+                                    s.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
                                     let b = gtk::Box::builder()
                                         .orientation(gtk::Orientation::Vertical)
                                         .spacing(0)
                                         .hexpand(true)
-                                        .vexpand(true)
                                         .build();
-                                    let w1 = model.windows_version_controller.widget().clone();
-                                    let w2 = model.audio_controller.widget().clone();
-                                    let w3 = model.dpi_controller.widget().clone();
-                                    b.append(&w1);
-                                    b.append(&w2);
-                                    b.append(&w3);
-                                    b.upcast::<gtk::Widget>()
+                                    b.append(&model.windows_version_controller.widget().clone());
+                                    b.append(&model.audio_controller.widget().clone());
+                                    b.append(&model.dpi_controller.widget().clone());
+                                    s.set_child(Some(&b));
+                                    s.upcast::<gtk::Widget>()
                                 },
                                 Some(&gtk::Label::builder().label("General").build())
                             ),
 
                             append_page: (
                                 &{
+                                    let s = gtk::ScrolledWindow::builder()
+                                        .vexpand(true).hexpand(true).build();
+                                    s.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
                                     let b = gtk::Box::builder()
                                         .orientation(gtk::Orientation::Vertical)
                                         .spacing(0)
                                         .hexpand(true)
-                                        .vexpand(true)
                                         .build();
-                                    let w1 = model.d3d_controller.widget().clone();
-                                    let w2 = model.virtual_desktop_controller.widget().clone();
-                                    b.append(&w1);
-                                    b.append(&w2);
-                                    b.upcast::<gtk::Widget>()
+                                    b.append(&model.d3d_controller.widget().clone());
+                                    b.append(&model.virtual_desktop_controller.widget().clone());
+                                    s.set_child(Some(&b));
+                                    s.upcast::<gtk::Widget>()
                                 },
                                 Some(&gtk::Label::builder().label("Graphics").build())
                             ),
 
                             append_page: (
                                 &{
+                                    let s = gtk::ScrolledWindow::builder()
+                                        .vexpand(true).hexpand(true).build();
+                                    s.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
                                     let b = gtk::Box::builder()
                                         .orientation(gtk::Orientation::Vertical)
                                         .spacing(0)
                                         .hexpand(true)
-                                        .vexpand(true)
                                         .build();
-                                    let w1 = model.mac_driver_controller.widget().clone();
-                                    let w2 = model.x11_driver_controller.widget().clone();
-                                    w2.set_vexpand(true);
-                                    b.append(&w1);
-                                    b.append(&w2);
-                                    b.upcast::<gtk::Widget>()
+                                    b.append(&model.mac_driver_controller.widget().clone());
+                                    b.append(&model.x11_driver_controller.widget().clone());
+                                    s.set_child(Some(&b));
+                                    s.upcast::<gtk::Widget>()
                                 },
                                 Some(&gtk::Label::builder().label("Platform").build())
                             ),
                         },
-                    },
 
                     // Control buttons — fixed at bottom
                     gtk::Box {
@@ -186,16 +184,16 @@ impl SimpleComponent for RegistryEditorModel {
                         set_margin_all: 10,
 
                         gtk::Button {
-                            #[track = "model.changed(RegistryEditorModel::editing())"]
+                            #[watch]
                             set_label: if model.editing { "Save" } else { "Edit" },
-                            #[track = "model.changed(RegistryEditorModel::editing())"]
+                            #[watch]
                             add_css_class: if model.editing { "suggested-action" } else { "" },
                             connect_clicked => RegistryEditorMsg::ToggleEdit,
                         },
 
                         gtk::Button {
                             set_label: "Cancel",
-                            #[track = "model.changed(RegistryEditorModel::editing())"]
+                            #[watch]
                             set_visible: model.editing,
                             connect_clicked[sender] => move |_| {
                                 sender.input(RegistryEditorMsg::CancelEdit);
@@ -570,6 +568,7 @@ impl SimpleComponent for RegistryEditorModel {
             registry_editor: None,
             editing: false,
             loading: false,
+            pending_edit: false,
             windows_version_controller,
             d3d_controller,
             audio_controller,
@@ -595,13 +594,15 @@ impl SimpleComponent for RegistryEditorModel {
             RegistryEditorMsg::ToggleEdit => {
                 if self.editing {
                     println!("Saving editing");
-                    // Save changes
                     sender.input(RegistryEditorMsg::SaveRegistry);
+                } else if self.registry_editor.is_none() {
+                    // Load .reg first, then enter edit mode
+                    println!("Need to load registry for editing...");
+                    self.pending_edit = true;
+                    sender.input(RegistryEditorMsg::LoadForEdit);
                 } else {
                     self.set_editing(true);
                     println!("Setting to editing true");
-                    
-                    // Enable editing on all tab components
                     self.windows_version_controller.emit(super::windows_version_tab::WindowsVersionMsg::SetEditing(true));
                     self.d3d_controller.emit(super::d3d_tab::D3DMsg::SetEditing(true));
                     self.audio_controller.emit(super::audio_tab::AudioMsg::SetEditing(true));
@@ -674,90 +675,20 @@ impl SimpleComponent for RegistryEditorModel {
                         self.set_loading(true);
                     }
 
-                    // Always load .reg in background for the editor (needed for writes)
-                    self.registry_editor = None;
-                    let cache = Arc::new(InMemoryRegistryCache::with_default_ttl());
-
-                    let (tx, rx) = oneshot::channel();
-                    tokio::spawn(async move {
-                        let result = async move {
-                            let editor = RegistryEditor::with_prefix(cache, &prefix_path).await?;
-                            let windows_version = editor.get_windows_version().await?;
-                            let d3d_renderer = editor.get_d3d_renderer().await?;
-                            let d3d_csmt = editor.get_d3d_csmt().await?;
-                            let offscreen_rendering_mode = editor.get_offscreen_rendering_mode().await?;
-                            let video_memory_size = editor.get_video_memory_size().await?;
-                            let audio_driver = editor.get_audio_driver().await?;
-                            let virtual_desktop = editor.get_virtual_desktop().await?;
-                            let dpi_settings = editor.get_dpi_settings().await?;
-                            let x11_driver_settings = editor.get_x11_driver_settings().await?;
-                            #[cfg(target_os = "macos")]
-                            let mac_driver_settings = editor.get_mac_driver_settings().await?;
-                            let data = (
-                                windows_version, d3d_renderer, d3d_csmt, offscreen_rendering_mode,
-                                video_memory_size, audio_driver, virtual_desktop, dpi_settings,
-                                x11_driver_settings,
-                                #[cfg(target_os = "macos")] mac_driver_settings,
-                                #[cfg(not(target_os = "macos"))] None::<MacDriverSettings>,
-                            );
-                            Ok::<_, PrefixError>((editor, data))
-                        }.await;
-                        let _ = tx.send(result);
-                    });
-
-                    let sender_clone = sender.clone();
-                    let prefix_path_str2 = prefix_path_str.clone();
-                    tokio::spawn(async move {
-                        match rx.await {
-                            Ok(Ok((editor, (windows_version, d3d_renderer, d3d_csmt, offscreen_rendering_mode, video_memory_size, audio_driver, virtual_desktop, dpi_settings, x11_driver_settings, mac_driver_settings)))) => {
-                                // Populate SQLite cache from loaded values
-                                if !warm {
-                                    let pp = &prefix_path_str2;
-                                    let _ = store.save_setting(pp, "Software\\Wine", "Version", windows_version.as_deref());
-                                    let _ = store.save_setting(pp, "Software\\Wine\\Direct3D", "renderer", d3d_renderer.as_deref());
-                                    let _ = store.save_setting(pp, "Software\\Wine\\Direct3D", "csmt", d3d_csmt.map(|v| v.to_string()).as_deref());
-                                    let _ = store.save_setting(pp, "Software\\Wine\\Direct3D", "OffscreenRenderingMode", offscreen_rendering_mode.as_deref());
-                                    let _ = store.save_setting(pp, "Software\\Wine\\Direct3D", "VideoMemorySize", video_memory_size.map(|v| v.to_string()).as_deref());
-                                    let _ = store.save_setting(pp, "Software\\Wine\\Drivers\\Audio", "", audio_driver.as_deref());
-                                    if let Some(ref vd) = virtual_desktop {
-                                        let _ = store.save_setting(pp, "Software\\Wine\\Explorer", "Desktop", Some(if vd.enabled { "Default" } else { "" }));
-                                        let _ = store.save_setting(pp, "Software\\Wine\\Explorer\\Desktops", "Default_w", Some(&vd.width.to_string()));
-                                        let _ = store.save_setting(pp, "Software\\Wine\\Explorer\\Desktops", "Default_h", Some(&vd.height.to_string()));
-                                    }
-                                    if let Some(ref dpi) = dpi_settings {
-                                        let _ = store.save_setting(pp, "Control Panel\\Desktop", "LogPixels", dpi.log_pixels.map(|v| v.to_string()).as_deref());
-                                    }
-                                    if let Some(ref x11) = x11_driver_settings {
-                                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "Decorated", x11.decorated.map(|v| if v { "Y" } else { "N" }));
-                                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "ClientSideGraphics", x11.client_side_graphics.map(|v| if v { "Y" } else { "N" }));
-                                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "ClientSideWithRender", x11.client_side_with_render.map(|v| if v { "Y" } else { "N" }));
-                                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "ClientSideAntiAliasWithRender", x11.client_side_antialias_with_render.map(|v| if v { "Y" } else { "N" }));
-                                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "ClientSideAntiAliasWithCore", x11.client_side_antialias_with_core.map(|v| if v { "Y" } else { "N" }));
-                                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "GrabFullscreen", x11.grab_fullscreen.map(|v| if v { "Y" } else { "N" }));
-                                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "GrabPointer", x11.grab_pointer.map(|v| if v { "Y" } else { "N" }));
-                                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "Managed", x11.managed.map(|v| if v { "Y" } else { "N" }));
-                                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "UseXRandR", x11.use_xrandr.map(|v| if v { "Y" } else { "N" }));
-                                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "UseXVidMode", x11.use_xvid_mode.map(|v| if v { "Y" } else { "N" }));
-                                    }
-                                    #[cfg(target_os = "macos")]
-                                    if let Some(ref mac) = mac_driver_settings {
-                                        let _ = store.save_setting(pp, "Software\\Wine\\Mac Driver", "AllowVerticalSync", mac.allow_vertical_sync.map(|v| if v { "Y" } else { "N" }));
-                                        let _ = store.save_setting(pp, "Software\\Wine\\Mac Driver", "CaptureDisplaysForFullscreen", mac.capture_displays_for_fullscreen.map(|v| if v { "Y" } else { "N" }));
-                                        let _ = store.save_setting(pp, "Software\\Wine\\Mac Driver", "UsePreciseScrolling", mac.use_precise_scrolling.map(|v| if v { "Y" } else { "N" }));
-                                        let _ = store.save_setting(pp, "Software\\Wine\\Mac Driver", "RetinaMode", mac.retina_mode.map(|v| if v { "Y" } else { "N" }));
-                                    }
-                                }
-                                sender_clone.input(RegistryEditorMsg::RegistryEditorUpdateTabs(
-                                    windows_version, d3d_renderer, d3d_csmt, offscreen_rendering_mode,
-                                    video_memory_size, audio_driver, virtual_desktop, dpi_settings,
-                                    x11_driver_settings, mac_driver_settings,
-                                ));
-                                sender_clone.input(RegistryEditorMsg::RegistryEditorLoaded(Arc::new(Mutex::new(editor))));
-                            }
-                            Ok(Err(e)) => { eprintln!("Failed to load registry: {}", e); }
-                            Err(_) => { eprintln!("Failed to receive registry load result"); }
-                        }
-                    });
+                    if !warm {
+                        // Cold: load .reg in background
+                        self.registry_editor = None;
+                        spawn_registry_load(prefix_path, prefix_path_str, Arc::clone(&self.prefix_store), warm, sender.clone());
+                    }
+                }
+            }
+            RegistryEditorMsg::LoadForEdit => {
+                if !self.prefix_path.as_os_str().is_empty() {
+                    self.set_loading(true);
+                    let prefix_path = self.prefix_path.clone();
+                    let prefix_path_str = prefix_path.to_string_lossy().to_string();
+                    let warm = self.prefix_store.has_registry_cache(&prefix_path_str);
+                    spawn_registry_load(prefix_path, prefix_path_str, Arc::clone(&self.prefix_store), warm, sender.clone());
                 }
             }
             RegistryEditorMsg::SaveRegistry => {
@@ -824,12 +755,22 @@ impl SimpleComponent for RegistryEditorModel {
             }
             RegistryEditorMsg::PrefixPathUpdated(path) => {
                 self.set_prefix_path(path);
-                self.registry_editor = None; // Reset to reload with new path
-                sender.input(RegistryEditorMsg::LoadRegistry);
+                self.registry_editor = None; // Reset, ConfigUpdated will trigger the reload
             }
             RegistryEditorMsg::RegistryEditorLoaded(editor) => {
                 self.registry_editor = Some(editor);
                 self.loading = false;
+                if self.pending_edit {
+                    self.pending_edit = false;
+                    self.set_editing(true);
+                    self.windows_version_controller.emit(super::windows_version_tab::WindowsVersionMsg::SetEditing(true));
+                    self.d3d_controller.emit(super::d3d_tab::D3DMsg::SetEditing(true));
+                    self.audio_controller.emit(super::audio_tab::AudioMsg::SetEditing(true));
+                    self.virtual_desktop_controller.emit(super::virtual_desktop_tab::VirtualDesktopMsg::SetEditing(true));
+                    self.mac_driver_controller.emit(super::mac_driver_tab::MacDriverMsg::SetEditing(true));
+                    self.dpi_controller.emit(super::dpi_tab::DpiMsg::SetEditing(true));
+                    self.x11_driver_controller.emit(super::x11_driver_tab::X11DriverMsg::SetEditing(true));
+                }
             }
             RegistryEditorMsg::RegistryEditorUpdateTabs(windows_version, d3d_renderer, d3d_csmt, offscreen_rendering_mode, video_memory_size, audio_driver, virtual_desktop, dpi_settings, x11_driver_settings, mac_driver_settings) => {
                 // Update Windows Version tab
@@ -925,14 +866,22 @@ impl SimpleComponent for RegistryEditorModel {
                     let store = Arc::clone(&self.prefix_store);
 
                     tokio::spawn(async move {
-                        let result = async {
-                            let mut editor = editor_arc_clone.lock().await;
-                            editor.set_windows_version(&version).await
-                        }.await;
+                        let result: Result<(), PrefixError> = if version.is_empty() {
+                            async {
+                                let editor = editor_arc_clone.lock().await;
+                                editor.registry.delete_value("Software\\Wine", "Version").await
+                            }.await
+                        } else {
+                            async {
+                                let mut editor = editor_arc_clone.lock().await;
+                                editor.set_windows_version(&version).await
+                            }.await
+                        };
 
                         match result {
                             Ok(()) => {
-                                let _ = store.save_setting(&pp, "Software\\Wine", "Version", Some(&version));
+                                let val = if version.is_empty() { None } else { Some(version.as_str()) };
+                                let _ = store.save_setting(&pp, "Software\\Wine", "Version", val);
                                 println!("Windows version updated successfully");
                             }
                             Err(e) => {
@@ -953,9 +902,21 @@ impl SimpleComponent for RegistryEditorModel {
                     tokio::spawn(async move {
                         let result = async {
                             let mut editor = editor_arc_clone.lock().await;
-                            if let Some(ref renderer) = renderer { editor.set_d3d_renderer(renderer).await?; }
+                            if let Some(ref renderer) = renderer {
+                                if renderer.is_empty() {
+                                    editor.registry.delete_value("Software\\Wine\\Direct3D", "renderer").await?;
+                                } else {
+                                    editor.set_d3d_renderer(renderer).await?;
+                                }
+                            }
                             if let Some(csmt) = csmt { editor.set_d3d_csmt(csmt).await?; }
-                            if let Some(ref mode) = offscreen_mode { editor.set_offscreen_rendering_mode(mode).await?; }
+                            if let Some(ref mode) = offscreen_mode {
+                                if mode.is_empty() {
+                                    editor.registry.delete_value("Software\\Wine\\Direct3D", "OffscreenRenderingMode").await?;
+                                } else {
+                                    editor.set_offscreen_rendering_mode(mode).await?;
+                                }
+                            }
                             if let Some(ref size) = video_memory {
                                 if let Ok(size) = size.parse::<u32>() { editor.set_video_memory_size(size).await?; }
                             }
@@ -964,9 +925,11 @@ impl SimpleComponent for RegistryEditorModel {
 
                         match result {
                             Ok(()) => {
-                                let _ = store.save_setting(&pp, "Software\\Wine\\Direct3D", "renderer", renderer.as_deref());
+                                let r_val = renderer.as_deref().filter(|v| !v.is_empty());
+                                let o_val = offscreen_mode.as_deref().filter(|v| !v.is_empty());
+                                let _ = store.save_setting(&pp, "Software\\Wine\\Direct3D", "renderer", r_val);
                                 let _ = store.save_setting(&pp, "Software\\Wine\\Direct3D", "csmt", csmt.map(|v| v.to_string()).as_deref());
-                                let _ = store.save_setting(&pp, "Software\\Wine\\Direct3D", "OffscreenRenderingMode", offscreen_mode.as_deref());
+                                let _ = store.save_setting(&pp, "Software\\Wine\\Direct3D", "OffscreenRenderingMode", o_val);
                                 let _ = store.save_setting(&pp, "Software\\Wine\\Direct3D", "VideoMemorySize", video_memory.as_deref());
                                 println!("D3D settings updated successfully");
                             }
@@ -1158,4 +1121,91 @@ impl SimpleComponent for RegistryEditorModel {
             }
         }
     }
+}
+
+fn spawn_registry_load(
+    prefix_path: PathBuf,
+    prefix_path_str: String,
+    store: Arc<crate::prefix::PrefixStore>,
+    warm: bool,
+    sender: ComponentSender<RegistryEditorModel>,
+) {
+    let (tx, rx) = oneshot::channel();
+    tokio::spawn(async move {
+        let result = async move {
+            let editor = RegistryEditor::with_prefix(Arc::new(InMemoryRegistryCache::with_default_ttl()), &prefix_path).await?;
+            let windows_version = editor.get_windows_version().await?;
+            let d3d_renderer = editor.get_d3d_renderer().await?;
+            let d3d_csmt = editor.get_d3d_csmt().await?;
+            let offscreen_rendering_mode = editor.get_offscreen_rendering_mode().await?;
+            let video_memory_size = editor.get_video_memory_size().await?;
+            let audio_driver = editor.get_audio_driver().await?;
+            let virtual_desktop = editor.get_virtual_desktop().await?;
+            let dpi_settings = editor.get_dpi_settings().await?;
+            let x11_driver_settings = editor.get_x11_driver_settings().await?;
+            #[cfg(target_os = "macos")]
+            let mac_driver_settings = editor.get_mac_driver_settings().await?;
+            let data = (
+                windows_version, d3d_renderer, d3d_csmt, offscreen_rendering_mode,
+                video_memory_size, audio_driver, virtual_desktop, dpi_settings,
+                x11_driver_settings,
+                #[cfg(target_os = "macos")] mac_driver_settings,
+                #[cfg(not(target_os = "macos"))] None::<MacDriverSettings>,
+            );
+            Ok::<_, PrefixError>((editor, data))
+        }.await;
+        let _ = tx.send(result);
+    });
+
+    let prefix_path_str2 = prefix_path_str;
+    tokio::spawn(async move {
+        match rx.await {
+            Ok(Ok((editor, (windows_version, d3d_renderer, d3d_csmt, offscreen_rendering_mode, video_memory_size, audio_driver, virtual_desktop, dpi_settings, x11_driver_settings, mac_driver_settings)))) => {
+                if !warm {
+                    let pp = &prefix_path_str2;
+                    let _ = store.save_setting(pp, "Software\\Wine", "Version", windows_version.as_deref());
+                    let _ = store.save_setting(pp, "Software\\Wine\\Direct3D", "renderer", d3d_renderer.as_deref());
+                    let _ = store.save_setting(pp, "Software\\Wine\\Direct3D", "csmt", d3d_csmt.map(|v| v.to_string()).as_deref());
+                    let _ = store.save_setting(pp, "Software\\Wine\\Direct3D", "OffscreenRenderingMode", offscreen_rendering_mode.as_deref());
+                    let _ = store.save_setting(pp, "Software\\Wine\\Direct3D", "VideoMemorySize", video_memory_size.map(|v| v.to_string()).as_deref());
+                    let _ = store.save_setting(pp, "Software\\Wine\\Drivers\\Audio", "", audio_driver.as_deref());
+                    if let Some(ref vd) = virtual_desktop {
+                        let _ = store.save_setting(pp, "Software\\Wine\\Explorer", "Desktop", Some(if vd.enabled { "Default" } else { "" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\Explorer\\Desktops", "Default_w", Some(&vd.width.to_string()));
+                        let _ = store.save_setting(pp, "Software\\Wine\\Explorer\\Desktops", "Default_h", Some(&vd.height.to_string()));
+                    }
+                    if let Some(ref dpi) = dpi_settings {
+                        let _ = store.save_setting(pp, "Control Panel\\Desktop", "LogPixels", dpi.log_pixels.map(|v| v.to_string()).as_deref());
+                    }
+                    if let Some(ref x11) = x11_driver_settings {
+                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "Decorated", x11.decorated.map(|v| if v { "Y" } else { "N" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "ClientSideGraphics", x11.client_side_graphics.map(|v| if v { "Y" } else { "N" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "ClientSideWithRender", x11.client_side_with_render.map(|v| if v { "Y" } else { "N" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "ClientSideAntiAliasWithRender", x11.client_side_antialias_with_render.map(|v| if v { "Y" } else { "N" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "ClientSideAntiAliasWithCore", x11.client_side_antialias_with_core.map(|v| if v { "Y" } else { "N" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "GrabFullscreen", x11.grab_fullscreen.map(|v| if v { "Y" } else { "N" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "GrabPointer", x11.grab_pointer.map(|v| if v { "Y" } else { "N" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "Managed", x11.managed.map(|v| if v { "Y" } else { "N" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "UseXRandR", x11.use_xrandr.map(|v| if v { "Y" } else { "N" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\X11 Driver", "UseXVidMode", x11.use_xvid_mode.map(|v| if v { "Y" } else { "N" }));
+                    }
+                    #[cfg(target_os = "macos")]
+                    if let Some(ref mac) = mac_driver_settings {
+                        let _ = store.save_setting(pp, "Software\\Wine\\Mac Driver", "AllowVerticalSync", mac.allow_vertical_sync.map(|v| if v { "Y" } else { "N" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\Mac Driver", "CaptureDisplaysForFullscreen", mac.capture_displays_for_fullscreen.map(|v| if v { "Y" } else { "N" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\Mac Driver", "UsePreciseScrolling", mac.use_precise_scrolling.map(|v| if v { "Y" } else { "N" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\Mac Driver", "RetinaMode", mac.retina_mode.map(|v| if v { "Y" } else { "N" }));
+                    }
+                }
+                sender.input(RegistryEditorMsg::RegistryEditorUpdateTabs(
+                    windows_version, d3d_renderer, d3d_csmt, offscreen_rendering_mode,
+                    video_memory_size, audio_driver, virtual_desktop, dpi_settings,
+                    x11_driver_settings, mac_driver_settings,
+                ));
+                sender.input(RegistryEditorMsg::RegistryEditorLoaded(Arc::new(Mutex::new(editor))));
+            }
+            Ok(Err(e)) => { eprintln!("Failed to load registry: {}", e); }
+            Err(_) => { eprintln!("Failed to receive registry load result"); }
+        }
+    });
 }

@@ -15,6 +15,8 @@ pub struct RegisteredAppsListModel {
     #[tracker::do_not_track]
     executables: FactoryVecDeque<RegisteredExecutableItem>,
     registered_executables: Vec<RegisteredExecutable>,
+    #[tracker::do_not_track]
+    selection_handler_id: Option<gtk::glib::SignalHandlerId>,
 }
 
 #[derive(Debug)]
@@ -29,6 +31,16 @@ pub enum RegisteredAppsListOutput {
     Launch(usize),
     Remove(usize),
     ShowInfo(usize),
+}
+
+impl Drop for RegisteredAppsListModel {
+    fn drop(&mut self) {
+        // Disconnect the signal before the factory VecDeque clears children during drop,
+        // which would trigger selected_children_changed and panic-in-drop.
+        if let Some(h) = self.selection_handler_id.take() {
+            self.executables.widget().disconnect(h);
+        }
+    }
 }
 
 // Grid-based factory component for registered executables
@@ -153,9 +165,6 @@ impl AsyncComponent for RegisteredAppsListModel {
                     set_homogeneous: true,
                     set_valign: gtk::Align::Start,
                     set_halign: gtk::Align::Fill,
-                    connect_selected_children_changed[sender] => move |_| {
-                        let _ = sender.input(RegisteredAppsListMsg::SelectionChanged);
-                    },
                 },
             },
 
@@ -194,6 +203,7 @@ impl AsyncComponent for RegisteredAppsListModel {
         let mut model = RegisteredAppsListModel {
             executables,
             registered_executables: init.clone(),
+            selection_handler_id: None,
             tracker: 0
         };
 
@@ -205,10 +215,17 @@ impl AsyncComponent for RegisteredAppsListModel {
             }
         }
 
-        // Get references to the factory widgets
         let registered_grid = model.executables.widget();
-
         let widgets = view_output!();
+
+        // Connect selection-changed on the factory's FlowBox so we can block it during clear
+        let handler_id = registered_grid.connect_selected_children_changed({
+            let sender = sender.clone();
+            move |_| {
+                let _ = sender.input(RegisteredAppsListMsg::SelectionChanged);
+            }
+        });
+        model.selection_handler_id = Some(handler_id);
 
         AsyncComponentParts { model, widgets }
     }
@@ -224,11 +241,22 @@ impl AsyncComponent for RegisteredAppsListModel {
             RegisteredAppsListMsg::UpdateExecutables(executables) => {
                 self.registered_executables = executables.clone();
 
-                // Update factory
+                // Block selection-changed signal during clear to avoid panic
+                {
+                    let grid = self.executables.widget();
+                    if let Some(ref h) = self.selection_handler_id { grid.block_signal(h); }
+                }
+
                 let mut guard = self.executables.guard();
                 guard.clear();
                 for (idx, exe) in executables.iter().enumerate() {
                     guard.push_back((exe.clone(), idx));
+                }
+                drop(guard);
+
+                {
+                    let grid = self.executables.widget();
+                    if let Some(ref h) = self.selection_handler_id { grid.unblock_signal(h); }
                 }
             }
             RegisteredAppsListMsg::SelectionChanged => {

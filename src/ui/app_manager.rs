@@ -331,7 +331,7 @@ impl AsyncComponent for AppManagerModel {
                     }
                     AppActionsOutput::Add => {
                         // Show popover with available executables (loaded from DB during sync)
-                        self.add_app_popover.emit(AddAppPopoverMsg::UpdateAvailableApps(self.available_executables.clone()));
+                        self.add_app_popover.emit(AddAppPopoverMsg::UpdateAvailableApps(self.available_executables.clone(), self.config.architecture.clone()));
 
                         let app_actions_widget = self.app_actions.widget();
                         if let Some(box_widget) = app_actions_widget.downcast_ref::<gtk::Box>() {
