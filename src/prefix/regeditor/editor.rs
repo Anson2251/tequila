@@ -147,11 +147,11 @@ impl RegistryEditor {
             return Err(PrefixError::ValidationError("Key path cannot be empty".to_string()));
         }
 
-        // For our use case, we're using HKEY_CURRENT_USER keys without the prefix
-        // So we just validate that it starts with "Software"
-        if !key_path.starts_with("Software") {
+        // For our use case, we're using HKEY_CURRENT_USER keys without the prefix.
+        // Valid root keys are Software and Control Panel.
+        if !key_path.starts_with("Software") && !key_path.starts_with("Control Panel") {
             return Err(PrefixError::ValidationError(format!(
-                "Invalid key path format: {}. Expected to start with 'Software'",
+                "Invalid key path format: {}. Expected to start with 'Software' or 'Control Panel'",
                 key_path
             )));
         }
@@ -178,6 +178,13 @@ impl RegistryEditor {
 
         Ok(())
     }
+}
+
+/// Check if a Mac Driver option string value is truthy.
+/// Wine's Mac Driver uses IS_OPTION_TRUE macro: accepts y/Y/t/T/1.
+/// From: https://github.com/wine-mirror/wine/blob/0c0d26432084c18213d5c4b343f10939d25eee2c/dlls/winemac.drv/macdrv_main.c#L40
+fn is_mac_option_true(v: &str) -> bool {
+    matches!(v, "Y" | "y" | "T" | "t" | "1")
 }
 
 #[async_trait]
@@ -571,11 +578,13 @@ impl RegEditor for RegistryEditor {
 
             self.set_desktop_settings(&desktop_settings).await
         } else {
-            // Disable virtual desktop
+            // Disable virtual desktop — delete desktop name and size keys
             let key_path = "Software\\Wine\\Explorer";
             Self::validate_key_path(key_path)?;
 
             self.registry.delete_value(key_path, "Desktop").await?;
+            let desktops_path = format!("{}\\Desktops", key_path);
+            self.registry.delete_value(&desktops_path, "Default").await?;
 
             Ok(())
         }
@@ -842,7 +851,6 @@ impl RegEditor for RegistryEditor {
         Ok(())
     }
 
-    /// Get Mac Driver settings
     async fn get_mac_driver_settings(&self) -> Result<Option<MacDriverSettings>> {
         let key_path = "Software\\Wine\\Mac Driver";
 
@@ -853,31 +861,44 @@ impl RegEditor for RegistryEditor {
         let use_precise_scrolling = self.get_string_value(key_path, "UsePreciseScrolling").await?;
         let retina_mode = self.get_string_value(key_path, "RetinaMode").await?;
         let windows_float_when_inactive = self.get_string_value(key_path, "WindowsFloatWhenInactive").await?;
-
-        // println!("DEBUG: Retrieved Mac Driver settings - RetinaMode: {:?}", retina_mode);
+        let left_option_is_alt = self.get_string_value(key_path, "LeftOptionIsAlt").await?;
+        let right_option_is_alt = self.get_string_value(key_path, "RightOptionIsAlt").await?;
+        let left_command_is_ctrl = self.get_string_value(key_path, "LeftCommandIsCtrl").await?;
+        let right_command_is_ctrl = self.get_string_value(key_path, "RightCommandIsCtrl").await?;
 
         // If none of the settings exist, return None
         if allow_vertical_sync.is_none() && capture_displays_for_fullscreen.is_none()
-            && use_precise_scrolling.is_none() && retina_mode.is_none() && windows_float_when_inactive.is_none() {
+            && use_precise_scrolling.is_none() && retina_mode.is_none() && windows_float_when_inactive.is_none()
+            && left_option_is_alt.is_none() && right_option_is_alt.is_none()
+            && left_command_is_ctrl.is_none() && right_command_is_ctrl.is_none() {
             return Ok(None);
         }
 
         let mut settings = MacDriverSettings::new();
 
-        if let Some(sync_str) = allow_vertical_sync {
-            settings.allow_vertical_sync = Some(sync_str == "Y" || sync_str == "y");
+        if let Some(v) = allow_vertical_sync {
+            settings.allow_vertical_sync = Some(is_mac_option_true(&v));
         }
-
-        if let Some(capture_str) = capture_displays_for_fullscreen {
-            settings.capture_displays_for_fullscreen = Some(capture_str == "Y" || capture_str == "y");
+        if let Some(v) = capture_displays_for_fullscreen {
+            settings.capture_displays_for_fullscreen = Some(is_mac_option_true(&v));
         }
-
-        if let Some(scroll_str) = use_precise_scrolling {
-            settings.use_precise_scrolling = Some(scroll_str == "Y" || scroll_str == "y");
+        if let Some(v) = use_precise_scrolling {
+            settings.use_precise_scrolling = Some(is_mac_option_true(&v));
         }
-
-        if let Some(retina_str) = retina_mode {
-            settings.retina_mode = Some(retina_str == "Y" || retina_str == "y");
+        if let Some(v) = retina_mode {
+            settings.retina_mode = Some(is_mac_option_true(&v));
+        }
+        if let Some(v) = left_option_is_alt {
+            settings.left_option_is_alt = Some(is_mac_option_true(&v));
+        }
+        if let Some(v) = right_option_is_alt {
+            settings.right_option_is_alt = Some(is_mac_option_true(&v));
+        }
+        if let Some(v) = left_command_is_ctrl {
+            settings.left_command_is_ctrl = Some(is_mac_option_true(&v));
+        }
+        if let Some(v) = right_command_is_ctrl {
+            settings.right_command_is_ctrl = Some(is_mac_option_true(&v));
         }
 
         if let Some(float_str) = windows_float_when_inactive {
@@ -926,6 +947,24 @@ impl RegEditor for RegistryEditor {
         if let Some(float_mode) = &settings.windows_float_when_inactive {
             Self::validate_value_name("WindowsFloatWhenInactive")?;
             self.set_string_value(key_path, "WindowsFloatWhenInactive", float_mode.to_string()).await?;
+        }
+
+        // Set modifier key remaps
+        if let Some(v) = settings.left_option_is_alt {
+            Self::validate_value_name("LeftOptionIsAlt")?;
+            self.set_string_value(key_path, "LeftOptionIsAlt", if v { "Y" } else { "N" }).await?;
+        }
+        if let Some(v) = settings.right_option_is_alt {
+            Self::validate_value_name("RightOptionIsAlt")?;
+            self.set_string_value(key_path, "RightOptionIsAlt", if v { "Y" } else { "N" }).await?;
+        }
+        if let Some(v) = settings.left_command_is_ctrl {
+            Self::validate_value_name("LeftCommandIsCtrl")?;
+            self.set_string_value(key_path, "LeftCommandIsCtrl", if v { "Y" } else { "N" }).await?;
+        }
+        if let Some(v) = settings.right_command_is_ctrl {
+            Self::validate_value_name("RightCommandIsCtrl")?;
+            self.set_string_value(key_path, "RightCommandIsCtrl", if v { "Y" } else { "N" }).await?;
         }
 
         Ok(())

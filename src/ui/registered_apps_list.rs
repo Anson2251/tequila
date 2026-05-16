@@ -7,6 +7,8 @@ use relm4::{
 use relm4::factory::{FactoryComponent, FactorySender, FactoryVecDeque, DynamicIndex};
 use gtk::prelude::*;
 use crate::prefix::config::RegisteredExecutable;
+use std::collections::HashSet;
+use std::path::PathBuf;
 use tracker;
 
 #[derive(Debug)]
@@ -15,6 +17,7 @@ pub struct RegisteredAppsListModel {
     #[tracker::do_not_track]
     executables: FactoryVecDeque<RegisteredExecutableItem>,
     registered_executables: Vec<RegisteredExecutable>,
+    running_paths: HashSet<PathBuf>,
     #[tracker::do_not_track]
     selection_handler_id: Option<gtk::glib::SignalHandlerId>,
 }
@@ -22,6 +25,7 @@ pub struct RegisteredAppsListModel {
 #[derive(Debug)]
 pub enum RegisteredAppsListMsg {
     UpdateExecutables(Vec<RegisteredExecutable>),
+    SetRunningPaths(HashSet<PathBuf>),
     SelectionChanged,
 }
 
@@ -48,12 +52,14 @@ impl Drop for RegisteredAppsListModel {
 struct RegisteredExecutableItem {
     executable: RegisteredExecutable,
     index: usize,
+    running: bool,
+    css_classes: Vec<&'static str>,
 }
 
 #[relm4::factory]
 impl FactoryComponent for RegisteredExecutableItem {
     type Init = (RegisteredExecutable, usize);
-    type Input = ();
+    type Input = bool;
     type Output = ();
     type CommandOutput = ();
     type ParentWidget = gtk::FlowBox;
@@ -64,12 +70,12 @@ impl FactoryComponent for RegisteredExecutableItem {
             set_orientation: gtk::Orientation::Vertical,
             set_spacing: 6,
             set_margin_all: 8,
-            set_width_request: 64,
-            set_height_request: 64,
+            set_width_request: 72,
+            set_height_request: 72,
             set_focusable: true,
 
-            // Use FlowBox's built-in selection
-            // add_css_class: "card",
+            #[watch]
+            set_css_classes: &self.css_classes,
 
                 // Icon from file, or fallback default
                 gtk::Box {
@@ -122,11 +128,19 @@ impl FactoryComponent for RegisteredExecutableItem {
         Self {
             executable,
             index: idx,
+            running: false,
+            css_classes: vec!["app-item"],
         }
     }
 
-    fn update(&mut self, _msg: Self::Input, _sender: FactorySender<Self>) {
-        // No messages to handle - selection is handled by FlowBox
+    fn update(&mut self, msg: Self::Input, _sender: FactorySender<Self>) {
+        self.running = msg;
+        self.css_classes = if msg {
+            vec!["app-item", "running"]
+        } else {
+            vec!["app-item"]
+        };
+        self.executable = self.executable.clone(); // trigger watch recompute
     }
 }
 
@@ -203,6 +217,7 @@ impl AsyncComponent for RegisteredAppsListModel {
         let mut model = RegisteredAppsListModel {
             executables,
             registered_executables: init.clone(),
+            running_paths: HashSet::new(),
             selection_handler_id: None,
             tracker: 0
         };
@@ -238,6 +253,14 @@ impl AsyncComponent for RegisteredAppsListModel {
     ) {
         self.reset();
         match msg {
+            RegisteredAppsListMsg::SetRunningPaths(paths) => {
+                self.running_paths = paths.clone();
+                let mut guard = self.executables.guard();
+                for i in 0..guard.len() {
+                    let running = guard.get(i).map_or(false, |item| paths.contains(&item.executable.executable_path));
+                    let _ = guard.send(i, running);
+                }
+            }
             RegisteredAppsListMsg::UpdateExecutables(executables) => {
                 self.registered_executables = executables.clone();
 

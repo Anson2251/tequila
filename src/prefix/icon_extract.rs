@@ -9,7 +9,7 @@ fn build_ico_from_group(
     group: &exe::headers::GrpIconDir,
     resource_dir: &ResourceDirectory,
 ) -> Option<Vec<u8>> {
-    let count = *group.count as usize;
+    let count = group.count as usize;
     if count == 0 {
         return None;
     }

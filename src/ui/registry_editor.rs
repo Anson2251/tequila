@@ -6,8 +6,10 @@ use crate::prefix::regeditor::{RegistryEditor, RegEditor};
 use crate::prefix::regeditor::keys::*;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc;
 use tokio::sync::{Mutex, oneshot};
 use crate::prefix::regeditor::cache::InMemoryRegistryCache;
+use notify::{Watcher, RecursiveMode, recommended_watcher};
 use tracker;
 
 use super::{WindowsVersionModel, D3DModel, AudioModel, VirtualDesktopModel, MacDriverModel, DpiModel, X11DriverModel};
@@ -40,6 +42,8 @@ pub struct RegistryEditorModel {
     pub x11_driver_controller: Controller<X11DriverModel>,
     #[tracker::do_not_track]
     prefix_store: Arc<crate::prefix::PrefixStore>,
+    #[tracker::do_not_track]
+    watch_kill: Option<mpsc::Sender<()>>,
 }
 
 #[derive(Debug)]
@@ -54,6 +58,9 @@ pub enum RegistryEditorMsg {
     RegistrySaveError(String),
     ConfigUpdated(PrefixConfig),
     CancelEdit,
+    RunWinecfg,
+    RunRegedit,
+    RefreshReg,
     PrefixPathUpdated(PathBuf),
     // Messages from child components
     WindowsVersionUpdate(String),
@@ -74,6 +81,10 @@ pub enum RegistryEditorMsg {
         capture_displays: Option<bool>,
         precise_scrolling: Option<bool>,
         retina_mode: Option<bool>,
+        left_option_alt: Option<bool>,
+        right_option_alt: Option<bool>,
+        left_command_ctrl: Option<bool>,
+        right_command_ctrl: Option<bool>,
     },
     DpiUpdate {
         log_pixels: Option<u32>,
@@ -150,6 +161,7 @@ impl SimpleComponent for RegistryEditorModel {
                                         .hexpand(true)
                                         .build();
                                     b.append(&model.d3d_controller.widget().clone());
+                                    #[cfg(not(target_os = "macos"))]
                                     b.append(&model.virtual_desktop_controller.widget().clone());
                                     s.set_child(Some(&b));
                                     s.upcast::<gtk::Widget>()
@@ -180,8 +192,29 @@ impl SimpleComponent for RegistryEditorModel {
                     gtk::Box {
                         set_orientation: gtk::Orientation::Horizontal,
                         set_spacing: 10,
-                        set_halign: gtk::Align::End,
                         set_margin_all: 10,
+
+                        gtk::Button {
+                            set_label: "winecfg",
+                            set_tooltip_text: Some("Launch Wine Configuration for this prefix"),
+                            connect_clicked => RegistryEditorMsg::RunWinecfg,
+                        },
+
+                        gtk::Button {
+                            set_label: "regedit",
+                            set_tooltip_text: Some("Launch Wine Registry Editor for this prefix"),
+                            connect_clicked => RegistryEditorMsg::RunRegedit,
+                        },
+
+                        gtk::Button {
+                            set_label: "Refresh",
+                            set_tooltip_text: Some("Reload registry from disk"),
+                            connect_clicked => RegistryEditorMsg::RefreshReg,
+                        },
+
+                        gtk::Box {
+                            set_hexpand: true,
+                        },
 
                         gtk::Button {
                             #[watch]
@@ -343,7 +376,7 @@ impl SimpleComponent for RegistryEditorModel {
             });
 
         let mac_driver_controller = MacDriverModel::builder()
-            .launch((None, None, None, None))
+            .launch((None, None, None, None, None, None, None, None))
             .forward(sender.input_sender(), |msg| match msg {
                 super::mac_driver_tab::MacDriverMsg::UpdateMacAllowVerticalSync(enabled) => {
                     RegistryEditorMsg::MacDriverUpdate {
@@ -351,6 +384,10 @@ impl SimpleComponent for RegistryEditorModel {
                         capture_displays: None,
                         precise_scrolling: None,
                         retina_mode: None,
+                        left_option_alt: None,
+                        right_option_alt: None,
+                        left_command_ctrl: None,
+                        right_command_ctrl: None,
                     }
                 }
                 super::mac_driver_tab::MacDriverMsg::UpdateMacCaptureDisplays(enabled) => {
@@ -359,6 +396,10 @@ impl SimpleComponent for RegistryEditorModel {
                         capture_displays: Some(enabled),
                         precise_scrolling: None,
                         retina_mode: None,
+                        left_option_alt: None,
+                        right_option_alt: None,
+                        left_command_ctrl: None,
+                        right_command_ctrl: None,
                     }
                 }
                 super::mac_driver_tab::MacDriverMsg::UpdateMacPreciseScrolling(enabled) => {
@@ -367,6 +408,10 @@ impl SimpleComponent for RegistryEditorModel {
                         capture_displays: None,
                         precise_scrolling: Some(enabled),
                         retina_mode: None,
+                        left_option_alt: None,
+                        right_option_alt: None,
+                        left_command_ctrl: None,
+                        right_command_ctrl: None,
                     }
                 }
                 super::mac_driver_tab::MacDriverMsg::UpdateMacRetinaMode(enabled) => {
@@ -375,15 +420,65 @@ impl SimpleComponent for RegistryEditorModel {
                         capture_displays: None,
                         precise_scrolling: None,
                         retina_mode: Some(enabled),
+                        left_option_alt: None,
+                        right_option_alt: None,
+                        left_command_ctrl: None,
+                        right_command_ctrl: None,
+                    }
+                }
+                super::mac_driver_tab::MacDriverMsg::UpdateMacLeftOptionAlt(enabled) => {
+                    RegistryEditorMsg::MacDriverUpdate {
+                        allow_vertical_sync: None,
+                        capture_displays: None,
+                        precise_scrolling: None,
+                        retina_mode: None,
+                        left_option_alt: Some(enabled),
+                        right_option_alt: None,
+                        left_command_ctrl: None,
+                        right_command_ctrl: None,
+                    }
+                }
+                super::mac_driver_tab::MacDriverMsg::UpdateMacRightOptionAlt(enabled) => {
+                    RegistryEditorMsg::MacDriverUpdate {
+                        allow_vertical_sync: None,
+                        capture_displays: None,
+                        precise_scrolling: None,
+                        retina_mode: None,
+                        left_option_alt: None,
+                        right_option_alt: Some(enabled),
+                        left_command_ctrl: None,
+                        right_command_ctrl: None,
+                    }
+                }
+                super::mac_driver_tab::MacDriverMsg::UpdateMacLeftCommandCtrl(enabled) => {
+                    RegistryEditorMsg::MacDriverUpdate {
+                        allow_vertical_sync: None,
+                        capture_displays: None,
+                        precise_scrolling: None,
+                        retina_mode: None,
+                        left_option_alt: None,
+                        right_option_alt: None,
+                        left_command_ctrl: Some(enabled),
+                        right_command_ctrl: None,
+                    }
+                }
+                super::mac_driver_tab::MacDriverMsg::UpdateMacRightCommandCtrl(enabled) => {
+                    RegistryEditorMsg::MacDriverUpdate {
+                        allow_vertical_sync: None,
+                        capture_displays: None,
+                        precise_scrolling: None,
+                        retina_mode: None,
+                        left_option_alt: None,
+                        right_option_alt: None,
+                        left_command_ctrl: None,
+                        right_command_ctrl: Some(enabled),
                     }
                 }
                 super::mac_driver_tab::MacDriverMsg::SetEditing(_) => {
-                    // Handle SetEditing message but don't forward to parent
-                    RegistryEditorMsg::ToggleEdit // Dummy message to satisfy compiler
+                    RegistryEditorMsg::ToggleEdit
                 }
                 super::mac_driver_tab::MacDriverMsg::SetMacDriverSettings { .. } => {
-                    // Handle SetMacDriverSettings message but don't forward to parent
-                    RegistryEditorMsg::ToggleEdit // Dummy message to satisfy compiler
+                    RegistryEditorMsg::ToggleEdit
                 }
             });
 
@@ -577,6 +672,7 @@ impl SimpleComponent for RegistryEditorModel {
             dpi_controller,
             x11_driver_controller,
             prefix_store,
+            watch_kill: None,
             tracker: 0,
         };
 
@@ -629,9 +725,10 @@ impl SimpleComponent for RegistryEditorModel {
                         };
                         let load_vd = || -> Option<VirtualDesktopSettings> {
                             let e = load_from_cache("Software\\Wine\\Explorer", "Desktop")?;
-                            let w = load_dword("Software\\Wine\\Explorer\\Desktops", "Default_w").unwrap_or(1024);
-                            let h = load_dword("Software\\Wine\\Explorer\\Desktops", "Default_h").unwrap_or(768);
-                            Some(VirtualDesktopSettings { enabled: !e.is_empty(), width: w, height: h })
+                            let sz = load_from_cache("Software\\Wine\\Explorer\\Desktops", "Default")?;
+                            let size = crate::prefix::regeditor::keys::DesktopSize::from_string(&sz)
+                                .unwrap_or_else(|| crate::prefix::regeditor::keys::DesktopSize::new(1024, 768));
+                            Some(VirtualDesktopSettings { enabled: !e.is_empty(), width: size.width, height: size.height })
                         };
                         sender.input(RegistryEditorMsg::RegistryEditorUpdateTabs(
                             load_from_cache("Software\\Wine", "Version"),
@@ -661,11 +758,15 @@ impl SimpleComponent for RegistryEditorModel {
                                 #[cfg(target_os = "macos")] {
                                     let has = store.get_setting(&prefix_path_str, "Software\\Wine\\Mac Driver", "AllowVerticalSync").ok().flatten();
                                     has.map(|_| MacDriverSettings {
-                                        allow_vertical_sync: load_from_cache("Software\\Wine\\Mac Driver", "AllowVerticalSync").map(|v| v == "Y" || v == "y"),
-                                        capture_displays_for_fullscreen: load_from_cache("Software\\Wine\\Mac Driver", "CaptureDisplaysForFullscreen").map(|v| v == "Y" || v == "y"),
-                                        use_precise_scrolling: load_from_cache("Software\\Wine\\Mac Driver", "UsePreciseScrolling").map(|v| v == "Y" || v == "y"),
-                                        retina_mode: load_from_cache("Software\\Wine\\Mac Driver", "RetinaMode").map(|v| v == "Y" || v == "y"),
+                                        allow_vertical_sync: load_from_cache("Software\\Wine\\Mac Driver", "AllowVerticalSync").map(|v| matches!(v.as_str(), "Y" | "y" | "T" | "t" | "1")),
+                                        capture_displays_for_fullscreen: load_from_cache("Software\\Wine\\Mac Driver", "CaptureDisplaysForFullscreen").map(|v| matches!(v.as_str(), "Y" | "y" | "T" | "t" | "1")),
+                                        use_precise_scrolling: load_from_cache("Software\\Wine\\Mac Driver", "UsePreciseScrolling").map(|v| matches!(v.as_str(), "Y" | "y" | "T" | "t" | "1")),
+                                        retina_mode: load_from_cache("Software\\Wine\\Mac Driver", "RetinaMode").map(|v| matches!(v.as_str(), "Y" | "y" | "T" | "t" | "1")),
                                         windows_float_when_inactive: None,
+                                        left_option_is_alt: load_from_cache("Software\\Wine\\Mac Driver", "LeftOptionIsAlt").map(|v| matches!(v.as_str(), "Y" | "y" | "T" | "t" | "1")),
+                                        right_option_is_alt: load_from_cache("Software\\Wine\\Mac Driver", "RightOptionIsAlt").map(|v| matches!(v.as_str(), "Y" | "y" | "T" | "t" | "1")),
+                                        left_command_is_ctrl: load_from_cache("Software\\Wine\\Mac Driver", "LeftCommandIsCtrl").map(|v| matches!(v.as_str(), "Y" | "y" | "T" | "t" | "1")),
+                                        right_command_is_ctrl: load_from_cache("Software\\Wine\\Mac Driver", "RightCommandIsCtrl").map(|v| matches!(v.as_str(), "Y" | "y" | "T" | "t" | "1")),
                                     })
                                 }
                                 #[cfg(not(target_os = "macos"))] { None }
@@ -742,9 +843,45 @@ impl SimpleComponent for RegistryEditorModel {
             }
             RegistryEditorMsg::CancelEdit => {
                 self.set_editing(false);
+                self.windows_version_controller.emit(super::windows_version_tab::WindowsVersionMsg::SetEditing(false));
+                self.d3d_controller.emit(super::d3d_tab::D3DMsg::SetEditing(false));
+                self.audio_controller.emit(super::audio_tab::AudioMsg::SetEditing(false));
+                self.virtual_desktop_controller.emit(super::virtual_desktop_tab::VirtualDesktopMsg::SetEditing(false));
+                self.mac_driver_controller.emit(super::mac_driver_tab::MacDriverMsg::SetEditing(false));
+                self.dpi_controller.emit(super::dpi_tab::DpiMsg::SetEditing(false));
+                self.x11_driver_controller.emit(super::x11_driver_tab::X11DriverMsg::SetEditing(false));
                 // Invalidate cache so LoadRegistry reads fresh from .reg
                 let pp = self.prefix_path.to_string_lossy().to_string();
                 let _ = self.prefix_store.invalidate_registry_cache(&pp);
+                sender.input(RegistryEditorMsg::LoadRegistry);
+            }
+            RegistryEditorMsg::RunWinecfg => {
+                let pp = self.prefix_path.clone();
+                let _ = std::process::Command::new("winecfg")
+                    .env("WINEPREFIX", pp.to_string_lossy().as_ref())
+                    .spawn()
+                    .map_err(|e| eprintln!("Failed to launch winecfg: {}", e));
+            }
+            RegistryEditorMsg::RunRegedit => {
+                let pp = self.prefix_path.clone();
+                let _ = std::process::Command::new("wine")
+                    .env("WINEPREFIX", pp.to_string_lossy().as_ref())
+                    .arg("regedit")
+                    .spawn()
+                    .map_err(|e| eprintln!("Failed to launch regedit: {}", e));
+            }
+            RegistryEditorMsg::RefreshReg => {
+                let pp = self.prefix_path.to_string_lossy().to_string();
+                let _ = self.prefix_store.invalidate_registry_cache(&pp);
+                self.registry_editor = None;
+                self.set_editing(false);
+                self.windows_version_controller.emit(super::windows_version_tab::WindowsVersionMsg::SetEditing(false));
+                self.d3d_controller.emit(super::d3d_tab::D3DMsg::SetEditing(false));
+                self.audio_controller.emit(super::audio_tab::AudioMsg::SetEditing(false));
+                self.virtual_desktop_controller.emit(super::virtual_desktop_tab::VirtualDesktopMsg::SetEditing(false));
+                self.mac_driver_controller.emit(super::mac_driver_tab::MacDriverMsg::SetEditing(false));
+                self.dpi_controller.emit(super::dpi_tab::DpiMsg::SetEditing(false));
+                self.x11_driver_controller.emit(super::x11_driver_tab::X11DriverMsg::SetEditing(false));
                 sender.input(RegistryEditorMsg::LoadRegistry);
             }
             RegistryEditorMsg::ConfigUpdated(config) => {
@@ -754,8 +891,48 @@ impl SimpleComponent for RegistryEditorModel {
                 sender.input(RegistryEditorMsg::LoadRegistry);
             }
             RegistryEditorMsg::PrefixPathUpdated(path) => {
+                let pp = path.clone();
                 self.set_prefix_path(path);
                 self.registry_editor = None; // Reset, ConfigUpdated will trigger the reload
+
+                // Stop old file watcher
+                self.watch_kill = None;
+
+                // Start watching registry files for the new prefix
+                let s = sender.clone();
+                let (kill_tx, kill_rx) = mpsc::channel::<()>();
+                self.watch_kill = Some(kill_tx);
+
+                std::thread::spawn(move || {
+                    let (tx, rx) = mpsc::channel();
+                    let mut watcher = match recommended_watcher(move |_| {
+                        let _ = tx.send(());
+                    }) {
+                        Ok(w) => w,
+                        Err(e) => { eprintln!("watch init: {}", e); return; }
+                    };
+
+                    let _ = watcher.watch(&pp.join("system.reg"), RecursiveMode::NonRecursive);
+                    let _ = watcher.watch(&pp.join("user.reg"), RecursiveMode::NonRecursive);
+                    let _ = watcher.watch(&pp.join("userdef.reg"), RecursiveMode::NonRecursive);
+
+                    loop {
+                        match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+                            Ok(_) => {
+                                // drain pending events
+                                while rx.recv_timeout(std::time::Duration::from_millis(200)).is_ok() {}
+                                // wait for files to be fully flushed before refresh
+                                std::thread::sleep(std::time::Duration::from_millis(500));
+                                let _ = s.input(RegistryEditorMsg::RefreshReg);
+                            }
+                            Err(mpsc::RecvTimeoutError::Timeout) => {
+                                if kill_rx.try_recv().is_ok() { break; }
+                            }
+                            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                        }
+                    }
+                    // watcher dropped here — unwatches
+                });
             }
             RegistryEditorMsg::RegistryEditorLoaded(editor) => {
                 self.registry_editor = Some(editor);
@@ -788,6 +965,7 @@ impl SimpleComponent for RegistryEditorModel {
                 self.audio_controller.emit(super::audio_tab::AudioMsg::SetAudioDriver(audio_driver));
                 
                 // Update Virtual Desktop tab
+                #[cfg(not(target_os = "macos"))]
                 if let Some(virtual_settings) = virtual_desktop {
                     self.virtual_desktop_controller.emit(super::virtual_desktop_tab::VirtualDesktopMsg::SetVirtualDesktopSettings {
                         enabled: virtual_settings.enabled,
@@ -826,6 +1004,10 @@ impl SimpleComponent for RegistryEditorModel {
                         capture_displays: mac_settings.capture_displays_for_fullscreen,
                         precise_scrolling: mac_settings.use_precise_scrolling,
                         retina_mode: mac_settings.retina_mode,
+                        left_option_alt: mac_settings.left_option_is_alt,
+                        right_option_alt: mac_settings.right_option_is_alt,
+                        left_command_ctrl: mac_settings.left_command_is_ctrl,
+                        right_command_ctrl: mac_settings.right_command_is_ctrl,
                     });
                 }
             }
@@ -994,8 +1176,11 @@ impl SimpleComponent for RegistryEditorModel {
                                 let h = height_c.unwrap_or_else(|| "768".to_string());
                                 let en = enabled_c.unwrap_or(false);
                                 let _ = store.save_setting(&pp, "Software\\Wine\\Explorer", "Desktop", Some(if en { "Default" } else { "" }));
-                                let _ = store.save_setting(&pp, "Software\\Wine\\Explorer\\Desktops", "Default_w", Some(&w));
-                                let _ = store.save_setting(&pp, "Software\\Wine\\Explorer\\Desktops", "Default_h", Some(&h));
+                                if en {
+                                    let _ = store.save_setting(&pp, "Software\\Wine\\Explorer\\Desktops", "Default", Some(&format!("{}x{}", w, h)));
+                                } else {
+                                    let _ = store.save_setting(&pp, "Software\\Wine\\Explorer\\Desktops", "Default", None);
+                                }
                                 println!("Virtual desktop updated successfully");
                             }
                             Err(e) => {
@@ -1006,7 +1191,7 @@ impl SimpleComponent for RegistryEditorModel {
                     });
                 }
             }
-            RegistryEditorMsg::MacDriverUpdate { allow_vertical_sync, capture_displays, precise_scrolling, retina_mode } => {
+            RegistryEditorMsg::MacDriverUpdate { allow_vertical_sync, capture_displays, precise_scrolling, retina_mode, left_option_alt, right_option_alt, left_command_ctrl, right_command_ctrl } => {
                 if let Some(editor_arc) = &self.registry_editor {
                     let editor_arc_clone = editor_arc.clone();
                     let sender_clone = sender.clone();
@@ -1021,6 +1206,10 @@ impl SimpleComponent for RegistryEditorModel {
                             if let Some(v) = capture_displays { mac_settings.capture_displays_for_fullscreen = Some(v); }
                             if let Some(v) = precise_scrolling { mac_settings.use_precise_scrolling = Some(v); }
                             if let Some(v) = retina_mode { mac_settings.retina_mode = Some(v); }
+                            if let Some(v) = left_option_alt { mac_settings.left_option_is_alt = Some(v); }
+                            if let Some(v) = right_option_alt { mac_settings.right_option_is_alt = Some(v); }
+                            if let Some(v) = left_command_ctrl { mac_settings.left_command_is_ctrl = Some(v); }
+                            if let Some(v) = right_command_ctrl { mac_settings.right_command_is_ctrl = Some(v); }
                             editor.set_mac_driver_settings(&mac_settings).await
                         }.await;
 
@@ -1030,6 +1219,10 @@ impl SimpleComponent for RegistryEditorModel {
                                 if let Some(v) = capture_displays { let _ = store.save_setting(&pp, "Software\\Wine\\Mac Driver", "CaptureDisplaysForFullscreen", Some(if v { "Y" } else { "N" })); }
                                 if let Some(v) = precise_scrolling { let _ = store.save_setting(&pp, "Software\\Wine\\Mac Driver", "UsePreciseScrolling", Some(if v { "Y" } else { "N" })); }
                                 if let Some(v) = retina_mode { let _ = store.save_setting(&pp, "Software\\Wine\\Mac Driver", "RetinaMode", Some(if v { "Y" } else { "N" })); }
+                                if let Some(v) = left_option_alt { let _ = store.save_setting(&pp, "Software\\Wine\\Mac Driver", "LeftOptionIsAlt", Some(if v { "Y" } else { "N" })); }
+                                if let Some(v) = right_option_alt { let _ = store.save_setting(&pp, "Software\\Wine\\Mac Driver", "RightOptionIsAlt", Some(if v { "Y" } else { "N" })); }
+                                if let Some(v) = left_command_ctrl { let _ = store.save_setting(&pp, "Software\\Wine\\Mac Driver", "LeftCommandIsCtrl", Some(if v { "Y" } else { "N" })); }
+                                if let Some(v) = right_command_ctrl { let _ = store.save_setting(&pp, "Software\\Wine\\Mac Driver", "RightCommandIsCtrl", Some(if v { "Y" } else { "N" })); }
                                 println!("Mac driver settings updated successfully");
                             }
                             Err(e) => {
@@ -1171,8 +1364,7 @@ fn spawn_registry_load(
                     let _ = store.save_setting(pp, "Software\\Wine\\Drivers\\Audio", "", audio_driver.as_deref());
                     if let Some(ref vd) = virtual_desktop {
                         let _ = store.save_setting(pp, "Software\\Wine\\Explorer", "Desktop", Some(if vd.enabled { "Default" } else { "" }));
-                        let _ = store.save_setting(pp, "Software\\Wine\\Explorer\\Desktops", "Default_w", Some(&vd.width.to_string()));
-                        let _ = store.save_setting(pp, "Software\\Wine\\Explorer\\Desktops", "Default_h", Some(&vd.height.to_string()));
+                        let _ = store.save_setting(pp, "Software\\Wine\\Explorer\\Desktops", "Default", Some(&format!("{}x{}", vd.width, vd.height)));
                     }
                     if let Some(ref dpi) = dpi_settings {
                         let _ = store.save_setting(pp, "Control Panel\\Desktop", "LogPixels", dpi.log_pixels.map(|v| v.to_string()).as_deref());
@@ -1195,6 +1387,10 @@ fn spawn_registry_load(
                         let _ = store.save_setting(pp, "Software\\Wine\\Mac Driver", "CaptureDisplaysForFullscreen", mac.capture_displays_for_fullscreen.map(|v| if v { "Y" } else { "N" }));
                         let _ = store.save_setting(pp, "Software\\Wine\\Mac Driver", "UsePreciseScrolling", mac.use_precise_scrolling.map(|v| if v { "Y" } else { "N" }));
                         let _ = store.save_setting(pp, "Software\\Wine\\Mac Driver", "RetinaMode", mac.retina_mode.map(|v| if v { "Y" } else { "N" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\Mac Driver", "LeftOptionIsAlt", mac.left_option_is_alt.map(|v| if v { "Y" } else { "N" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\Mac Driver", "RightOptionIsAlt", mac.right_option_is_alt.map(|v| if v { "Y" } else { "N" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\Mac Driver", "LeftCommandIsCtrl", mac.left_command_is_ctrl.map(|v| if v { "Y" } else { "N" }));
+                        let _ = store.save_setting(pp, "Software\\Wine\\Mac Driver", "RightCommandIsCtrl", mac.right_command_is_ctrl.map(|v| if v { "Y" } else { "N" }));
                     }
                 }
                 sender.input(RegistryEditorMsg::RegistryEditorUpdateTabs(

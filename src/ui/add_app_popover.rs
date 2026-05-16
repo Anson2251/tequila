@@ -26,12 +26,14 @@ pub enum AddAppPopoverMsg {
     UpdateAvailableApps(Vec<RegisteredExecutable>, String), // exes, prefix_arch
     SelectApp(usize),
     AddSelected,
+    Scan,
     ResetProcessingFlag,
 }
 
 #[derive(Debug)]
 pub enum AddAppPopoverOutput {
     AddApp(Vec<usize>),
+    Scan,
     Close,
 }
 
@@ -234,8 +236,19 @@ impl AsyncComponent for AddAppPopoverModel {
                 gtk::Box {
                     set_orientation: gtk::Orientation::Horizontal,
                     set_spacing: 10,
-                    set_halign: gtk::Align::End,
                     set_margin_top: 10,
+
+                    gtk::Button {
+                        set_label: "Scan",
+                        set_tooltip_text: Some("Scan prefix for executables"),
+                        connect_clicked[sender] => move |_| {
+                            sender.input(AddAppPopoverMsg::Scan);
+                        },
+                    },
+
+                    gtk::Box {
+                        set_hexpand: true,
+                    },
 
                     gtk::Button {
                         set_label: "Cancel",
@@ -375,6 +388,9 @@ impl AsyncComponent for AddAppPopoverModel {
                 });
 
                 println!("DEBUG: Current selected indices: {:?}", self.selected_indices);
+            }
+            AddAppPopoverMsg::Scan => {
+                let _ = sender.output(AddAppPopoverOutput::Scan);
             }
             AddAppPopoverMsg::ResetProcessingFlag => {
                 self.is_processing_selection = false;

@@ -10,12 +10,14 @@ use tracker;
 pub struct AppActionsModel {
     has_selection: bool,
     is_scanning: bool,
+    selected_running: bool,
 }
 
 #[derive(Debug)]
 pub enum AppActionsMsg {
     SetSelection(bool),
     SetScanning(bool),
+    SetSelectedRunning(bool),
     Launch,
     Add,
     Remove,
@@ -25,6 +27,7 @@ pub enum AppActionsMsg {
 #[derive(Debug)]
 pub enum AppActionsOutput {
     Launch,
+    Kill,
     Add,
     Remove,
     ShowInfo,
@@ -75,14 +78,23 @@ impl AsyncComponent for AppActionsModel {
                 },
             },
 
+            #[name = "launch_btn"]
             gtk::Button {
-                set_label: "Launch",
-                #[track = "model.changed(AppActionsModel::has_selection()) || model.changed(AppActionsModel::is_scanning())"]
+                #[track = "model.changed(AppActionsModel::has_selection()) || model.changed(AppActionsModel::is_scanning()) || model.changed(AppActionsModel::selected_running())"]
                 set_sensitive: model.has_selection && !model.is_scanning,
+                #[track = "model.changed(AppActionsModel::selected_running())"]
+                set_tooltip_text: Some(if model.selected_running { "Kill" } else { "Launch" }),
+                #[track = "model.changed(AppActionsModel::selected_running())"]
+                set_label: if model.selected_running { "Kill" } else { "Launch" },
+                #[track = "model.changed(AppActionsModel::selected_running())"]
+                set_css_classes: if model.selected_running {
+                    &["destructive-action"]
+                } else {
+                    &["suggested-action"]
+                },
                 connect_clicked[sender] => move |_| {
                     sender.input(AppActionsMsg::Launch);
                 },
-                add_css_class: "suggested-action",
             },
         }
     }
@@ -93,10 +105,11 @@ impl AsyncComponent for AppActionsModel {
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
         let (has_selection, is_scanning) = init;
-        
+
         let model = AppActionsModel {
             has_selection,
             is_scanning,
+            selected_running: false,
             tracker: 0
         };
 
@@ -119,8 +132,15 @@ impl AsyncComponent for AppActionsModel {
             AppActionsMsg::SetScanning(is_scanning) => {
                 self.set_is_scanning(is_scanning);
             }
+            AppActionsMsg::SetSelectedRunning(running) => {
+                self.set_selected_running(running);
+            }
             AppActionsMsg::Launch => {
-                let _ = sender.output(AppActionsOutput::Launch);
+                if self.selected_running {
+                    let _ = sender.output(AppActionsOutput::Kill);
+                } else {
+                    let _ = sender.output(AppActionsOutput::Launch);
+                }
             }
             AppActionsMsg::Add => {
                 let _ = sender.output(AppActionsOutput::Add);

@@ -119,14 +119,6 @@ impl SimpleComponent for AppModel {
         sidebar_btn.connect_clicked(move |_| { sb_sender.input(AppMsg::ToggleSidebar); });
         header_bar.pack_start(&sidebar_btn);
 
-        let refresh_btn = gtk::Button::builder()
-            .icon_name("view-refresh-symbolic")
-            .tooltip_text("Sync prefixes from disk")
-            .build();
-        let rf_sender = sender.clone();
-        refresh_btn.connect_clicked(move |_| { rf_sender.input(AppMsg::SyncPrefixes); });
-        header_bar.pack_start(&refresh_btn);
-
         let info_btn = gtk::Button::builder()
             .icon_name("dialog-information-symbolic")
             .tooltip_text("Prefix Info")
@@ -304,13 +296,29 @@ impl SimpleComponent for AppModel {
             provider.load_from_data(".sync-overlay-bg { background: rgba(0, 0, 0, 0.45); } \
                                      .sync-progress-box { background: @view_bg_color; border: 1px solid @borders; border-radius: 12px; padding: 24px; } \
                                      .icon-bg { background: #eee; border-radius: 24px; padding: 12px; } \
-                                     .desc-text { padding: 8px; }");
+                                     .desc-text { padding: 8px; } \
+                                     .app-item { border: 2px solid transparent; border-radius: 8px; } \
+                                     .app-item.running { border-color: @accent_color; }");
             gtk::style_context_add_provider_for_display(
                 &gdk::Display::default().unwrap(),
                 &provider,
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
             );
         }
+        // macOS: remove rounded window corners, macOS would do that
+        #[cfg(target_os = "macos")]
+        {
+            let provider = gtk::CssProvider::new();
+            provider.load_from_data(
+                "window, .background, .titlebar, headerbar, .window-frame { border-radius: 0px; }",
+            );
+            gtk::style_context_add_provider_for_display(
+                &gdk::Display::default().unwrap(),
+                &provider,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+        }
+
         let overlay_widget = sync_overlay.clone().upcast::<gtk::Widget>();
 
         let model = AppModel {

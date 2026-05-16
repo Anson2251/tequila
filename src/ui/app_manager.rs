@@ -4,8 +4,10 @@ use relm4::{
 use gtk::prelude::*;
 use crate::prefix::config::{RegisteredExecutable, PrefixConfig};
 use crate::prefix::IconCache;
+use crate::prefix::ProcessTracker;
+use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tracker;
 use crate::ui::{
     registered_apps_list::{RegisteredAppsListModel, RegisteredAppsListMsg, RegisteredAppsListOutput},
@@ -33,6 +35,9 @@ pub struct AppManagerModel {
     icon_cache: Arc<IconCache>,
     #[tracker::do_not_track]
     prefix_store: Arc<crate::prefix::PrefixStore>,
+    #[tracker::do_not_track]
+    process_tracker: Arc<Mutex<ProcessTracker>>,
+    running_paths: HashSet<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -51,6 +56,7 @@ pub enum AppManagerMsg {
     RegisteredAppsList(RegisteredAppsListOutput),
     AppActions(AppActionsOutput),
     AddAppPopover(AddAppPopoverOutput),
+    PollProcesses,
 }
 
 #[relm4::component(pub, async)]
@@ -129,6 +135,15 @@ impl AsyncComponent for AppManagerModel {
             .launch(())
             .detach();
 
+        let process_tracker = ProcessTracker::shared();
+
+        // Poll process status every 5 seconds
+        let poll_sender = sender.clone();
+        gtk::glib::timeout_add_seconds_local(5, move || {
+            poll_sender.input(AppManagerMsg::PollProcesses);
+            gtk::glib::ControlFlow::Continue
+        });
+
         let model = AppManagerModel {
             prefix_path,
             config: config.clone(),
@@ -141,6 +156,8 @@ impl AsyncComponent for AppManagerModel {
             executable_info_dialog,
             icon_cache,
             prefix_store,
+            process_tracker,
+            running_paths: HashSet::new(),
             tracker: 0
         };
 
@@ -247,19 +264,26 @@ impl AsyncComponent for AppManagerModel {
             }
             AppManagerMsg::LaunchExecutable(index) => {
                 if let Some(executable) = self.config.registered_executables.get(index) {
-                    // Create a temporary PrefixManager for launching
-                    let prefix_manager = crate::prefix::Manager::new(
-                        self.prefix_path.parent().unwrap_or(&self.prefix_path).to_path_buf(),
-                        Arc::clone(&self.icon_cache),
-                    );
+                    let pp = self.prefix_path.clone();
+                    let exe_path = executable.executable_path.clone();
+                    let tracker = Arc::clone(&self.process_tracker);
 
-                    match prefix_manager.launch_executable(&self.prefix_path, executable) {
-                        Ok(_) => {
+                    match std::process::Command::new("wine")
+                        .current_dir(&pp)
+                        .env("WINEPREFIX", pp.to_string_lossy().as_ref())
+                        .arg(&exe_path)
+                        .spawn()
+                    {
+                        Ok(child) => {
                             println!("Successfully launched: {}", executable.name);
+                            let mut t = tracker.lock().unwrap();
+                            t.register(&exe_path, child);
+                            drop(t);
+                            // Update the running state immediately
+                            sender.input(AppManagerMsg::PollProcesses);
                         }
                         Err(e) => {
                             eprintln!("Failed to launch executable '{}': {}", executable.name, e);
-                            // TODO: Show error dialog to user
                         }
                     }
                 }
@@ -292,9 +316,35 @@ impl AsyncComponent for AppManagerModel {
 
                 // Update the registered apps list from cached config
                 self.registered_apps_list.emit(RegisteredAppsListMsg::UpdateExecutables(self.config.registered_executables.clone()));
+
+                // Restore running highlight immediately
+                let paths = {
+                    let t = self.process_tracker.lock().unwrap();
+                    t.running_paths().into_iter().collect::<HashSet<_>>()
+                };
+                self.set_running_paths(paths.clone());
+                self.registered_apps_list.emit(RegisteredAppsListMsg::SetRunningPaths(paths));
+
+                // Update selected running state
+                if let Some(i) = self.selected_executable {
+                    if let Some(exe) = self.config.registered_executables.get(i) {
+                        let running = self.process_tracker.lock().unwrap().is_running(&exe.executable_path);
+                        self.app_actions.emit(AppActionsMsg::SetSelectedRunning(running));
+                    }
+                }
+
+                // Reset selection if the config has no executables or index is out of bounds
+                if self.config.registered_executables.is_empty()
+                    || self.selected_executable.map_or(false, |i| i >= self.config.registered_executables.len())
+                {
+                    self.set_selected_executable(None);
+                    self.app_actions.emit(AppActionsMsg::SetSelection(false));
+                }
             }
             AppManagerMsg::PrefixPathUpdated(path) => {
                 self.set_prefix_path(path);
+                self.set_selected_executable(None);
+                self.app_actions.emit(AppActionsMsg::SetSelection(false));
             }
             AppManagerMsg::ShowInfoDialog(index) => {
                 if let Some(executable) = self.config.registered_executables.get(index) {
@@ -309,6 +359,11 @@ impl AsyncComponent for AppManagerModel {
                         println!("DEBUG: Setting selected executable to: {}", index);
                         self.set_selected_executable(Some(index));
                         self.app_actions.emit(AppActionsMsg::SetSelection(true));
+                        // Check if the selected app is running
+                        if let Some(exe) = self.config.registered_executables.get(index) {
+                            let running = self.process_tracker.lock().unwrap().is_running(&exe.executable_path);
+                            self.app_actions.emit(AppActionsMsg::SetSelectedRunning(running));
+                        }
                     }
                     RegisteredAppsListOutput::Launch(index) => {
                         sender.input(AppManagerMsg::LaunchExecutable(index));
@@ -327,6 +382,23 @@ impl AsyncComponent for AppManagerModel {
                     AppActionsOutput::Launch => {
                         if let Some(index) = self.selected_executable {
                             sender.input(AppManagerMsg::LaunchExecutable(index));
+                        }
+                    }
+                    AppActionsOutput::Kill => {
+                        if let Some(index) = self.selected_executable {
+                            if let Some(exe) = self.config.registered_executables.get(index) {
+                                let killed = self.process_tracker.lock().unwrap().kill(&exe.executable_path);
+                                if killed {
+                                    self.app_actions.emit(AppActionsMsg::SetSelectedRunning(false));
+                                    // Refresh the list highlight
+                                    let paths = {
+                                        let t = self.process_tracker.lock().unwrap();
+                                        t.running_paths().into_iter().collect::<HashSet<_>>()
+                                    };
+                                    self.set_running_paths(paths.clone());
+                                    self.registered_apps_list.emit(RegisteredAppsListMsg::SetRunningPaths(paths));
+                                }
+                            }
                         }
                     }
                     AppActionsOutput::Add => {
@@ -366,6 +438,28 @@ impl AsyncComponent for AppManagerModel {
                     AddAppPopoverOutput::Close => {
                         println!("DEBUG: Closing popover");
                         self.add_app_popover.widget().unparent();
+                    }
+                    AddAppPopoverOutput::Scan => {
+                        sender.input(AppManagerMsg::ScanForApplications);
+                    }
+                }
+            }
+            AppManagerMsg::PollProcesses => {
+                {
+                    let mut t = self.process_tracker.lock().unwrap();
+                    t.poll_dead();
+                }
+                let paths = {
+                    let t = self.process_tracker.lock().unwrap();
+                    t.running_paths().into_iter().collect::<HashSet<_>>()
+                };
+                self.set_running_paths(paths.clone());
+                self.registered_apps_list.emit(RegisteredAppsListMsg::SetRunningPaths(paths));
+                // Update selected running state
+                if let Some(i) = self.selected_executable {
+                    if let Some(exe) = self.config.registered_executables.get(i) {
+                        let running = self.process_tracker.lock().unwrap().is_running(&exe.executable_path);
+                        self.app_actions.emit(AppActionsMsg::SetSelectedRunning(running));
                     }
                 }
             }

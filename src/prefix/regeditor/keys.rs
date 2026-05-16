@@ -428,6 +428,10 @@ pub struct MacDriverSettings {
     pub use_precise_scrolling: Option<bool>,
     pub retina_mode: Option<bool>,
     pub windows_float_when_inactive: Option<WindowsFloatWhenInactive>,
+    pub left_option_is_alt: Option<bool>,
+    pub right_option_is_alt: Option<bool>,
+    pub left_command_is_ctrl: Option<bool>,
+    pub right_command_is_ctrl: Option<bool>,
 }
 
 impl MacDriverSettings {
@@ -438,6 +442,10 @@ impl MacDriverSettings {
             use_precise_scrolling: None,
             retina_mode: None,
             windows_float_when_inactive: None,
+            left_option_is_alt: None,
+            right_option_is_alt: None,
+            left_command_is_ctrl: None,
+            right_command_is_ctrl: None,
         }
     }
 }

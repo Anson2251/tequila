@@ -262,6 +262,17 @@ impl Manager {
         Ok(())
     }
 
+    pub fn run_regedit(&self, prefix_path: &PathBuf) -> Result<()> {
+        Command::new("wine")
+            .current_dir(&prefix_path)
+            .env("WINEPREFIX", prefix_path.to_string_lossy().as_ref())
+            .arg("regedit")
+            .spawn()
+            .map_err(|e| PrefixError::Process(format!("Failed to run regedit: {}", e)))?;
+
+        Ok(())
+    }
+
     pub fn get_prefix_info(&self, prefix_path: &PathBuf) -> Result<PrefixInfo> {
         let name = prefix_path
             .file_name()

@@ -7,7 +7,7 @@ mod ui;
 use ui::{initialize_custom_icons, AppModel};
 
 fn main() {
-    let app = RelmApp::new("com.anson2251.tequila");
+    let app = RelmApp::new("com.github.anson2251.tequila");
 
     // Initialize custom icons
     initialize_custom_icons();

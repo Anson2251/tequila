@@ -10,6 +10,10 @@ pub struct MacDriverModel {
     mac_capture_displays: Option<bool>,
     mac_precise_scrolling: Option<bool>,
     mac_retina_mode: Option<bool>,
+    mac_left_option_alt: Option<bool>,
+    mac_right_option_alt: Option<bool>,
+    mac_left_command_ctrl: Option<bool>,
+    mac_right_command_ctrl: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -20,16 +24,28 @@ pub enum MacDriverMsg {
         capture_displays: Option<bool>,
         precise_scrolling: Option<bool>,
         retina_mode: Option<bool>,
+        left_option_alt: Option<bool>,
+        right_option_alt: Option<bool>,
+        left_command_ctrl: Option<bool>,
+        right_command_ctrl: Option<bool>,
     },
     UpdateMacAllowVerticalSync(bool),
     UpdateMacCaptureDisplays(bool),
     UpdateMacPreciseScrolling(bool),
     UpdateMacRetinaMode(bool),
+    UpdateMacLeftOptionAlt(bool),
+    UpdateMacRightOptionAlt(bool),
+    UpdateMacLeftCommandCtrl(bool),
+    UpdateMacRightCommandCtrl(bool),
 }
 
 #[relm4::component(pub)]
 impl SimpleComponent for MacDriverModel {
     type Init = (
+        Option<bool>,
+        Option<bool>,
+        Option<bool>,
+        Option<bool>,
         Option<bool>,
         Option<bool>,
         Option<bool>,
@@ -99,6 +115,62 @@ impl SimpleComponent for MacDriverModel {
                         sender.input(MacDriverMsg::UpdateMacRetinaMode(check.is_active()));
                     },
                 },
+
+                gtk::Separator {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_margin_top: 5,
+                    set_margin_bottom: 5,
+                },
+
+                gtk::Label {
+                    set_label: "Keyboard Modifier Keys",
+                    add_css_class: "title-4",
+                    set_halign: gtk::Align::Start,
+                },
+
+                gtk::CheckButton {
+                    set_label: Some("Left Option is Alt"),
+                    #[track = "model.changed(MacDriverModel::mac_left_option_alt())"]
+                    set_active: model.mac_left_option_alt.unwrap_or(false),
+                    #[track = "model.changed(MacDriverModel::editing())"]
+                    set_sensitive: model.editing,
+                    connect_toggled[sender] => move |check| {
+                        sender.input(MacDriverMsg::UpdateMacLeftOptionAlt(check.is_active()));
+                    },
+                },
+
+                gtk::CheckButton {
+                    set_label: Some("Right Option is Alt"),
+                    #[track = "model.changed(MacDriverModel::mac_right_option_alt())"]
+                    set_active: model.mac_right_option_alt.unwrap_or(false),
+                    #[track = "model.changed(MacDriverModel::editing())"]
+                    set_sensitive: model.editing,
+                    connect_toggled[sender] => move |check| {
+                        sender.input(MacDriverMsg::UpdateMacRightOptionAlt(check.is_active()));
+                    },
+                },
+
+                gtk::CheckButton {
+                    set_label: Some("Left Command is Ctrl"),
+                    #[track = "model.changed(MacDriverModel::mac_left_command_ctrl())"]
+                    set_active: model.mac_left_command_ctrl.unwrap_or(false),
+                    #[track = "model.changed(MacDriverModel::editing())"]
+                    set_sensitive: model.editing,
+                    connect_toggled[sender] => move |check| {
+                        sender.input(MacDriverMsg::UpdateMacLeftCommandCtrl(check.is_active()));
+                    },
+                },
+
+                gtk::CheckButton {
+                    set_label: Some("Right Command is Ctrl"),
+                    #[track = "model.changed(MacDriverModel::mac_right_command_ctrl())"]
+                    set_active: model.mac_right_command_ctrl.unwrap_or(false),
+                    #[track = "model.changed(MacDriverModel::editing())"]
+                    set_sensitive: model.editing,
+                    connect_toggled[sender] => move |check| {
+                        sender.input(MacDriverMsg::UpdateMacRightCommandCtrl(check.is_active()));
+                    },
+                },
             }
         }
     }
@@ -108,7 +180,7 @@ impl SimpleComponent for MacDriverModel {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let (allow_vertical_sync, capture_displays, precise_scrolling, retina_mode) = init;
+        let (allow_vertical_sync, capture_displays, precise_scrolling, retina_mode, left_option_alt, right_option_alt, left_command_ctrl, right_command_ctrl) = init;
 
         let model = MacDriverModel {
             editing: false,
@@ -116,6 +188,10 @@ impl SimpleComponent for MacDriverModel {
             mac_capture_displays: capture_displays,
             mac_precise_scrolling: precise_scrolling,
             mac_retina_mode: retina_mode,
+            mac_left_option_alt: left_option_alt,
+            mac_right_option_alt: right_option_alt,
+            mac_left_command_ctrl: left_command_ctrl,
+            mac_right_command_ctrl: right_command_ctrl,
             tracker: 0,
         };
 
@@ -130,11 +206,15 @@ impl SimpleComponent for MacDriverModel {
             MacDriverMsg::SetEditing(editing) => {
                 self.set_editing(editing);
             }
-            MacDriverMsg::SetMacDriverSettings { allow_vertical_sync, capture_displays, precise_scrolling, retina_mode } => {
+            MacDriverMsg::SetMacDriverSettings { allow_vertical_sync, capture_displays, precise_scrolling, retina_mode, left_option_alt, right_option_alt, left_command_ctrl, right_command_ctrl } => {
                 self.set_mac_allow_vertical_sync(allow_vertical_sync);
                 self.set_mac_capture_displays(capture_displays);
                 self.set_mac_precise_scrolling(precise_scrolling);
                 self.set_mac_retina_mode(retina_mode);
+                self.set_mac_left_option_alt(left_option_alt);
+                self.set_mac_right_option_alt(right_option_alt);
+                self.set_mac_left_command_ctrl(left_command_ctrl);
+                self.set_mac_right_command_ctrl(right_command_ctrl);
             }
             MacDriverMsg::UpdateMacAllowVerticalSync(enabled) => {
                 self.set_mac_allow_vertical_sync(Some(enabled));
@@ -151,6 +231,22 @@ impl SimpleComponent for MacDriverModel {
             MacDriverMsg::UpdateMacRetinaMode(enabled) => {
                 self.set_mac_retina_mode(Some(enabled));
                 let _ = sender.output(MacDriverMsg::UpdateMacRetinaMode(enabled));
+            }
+            MacDriverMsg::UpdateMacLeftOptionAlt(enabled) => {
+                self.set_mac_left_option_alt(Some(enabled));
+                let _ = sender.output(MacDriverMsg::UpdateMacLeftOptionAlt(enabled));
+            }
+            MacDriverMsg::UpdateMacRightOptionAlt(enabled) => {
+                self.set_mac_right_option_alt(Some(enabled));
+                let _ = sender.output(MacDriverMsg::UpdateMacRightOptionAlt(enabled));
+            }
+            MacDriverMsg::UpdateMacLeftCommandCtrl(enabled) => {
+                self.set_mac_left_command_ctrl(Some(enabled));
+                let _ = sender.output(MacDriverMsg::UpdateMacLeftCommandCtrl(enabled));
+            }
+            MacDriverMsg::UpdateMacRightCommandCtrl(enabled) => {
+                self.set_mac_right_command_ctrl(Some(enabled));
+                let _ = sender.output(MacDriverMsg::UpdateMacRightCommandCtrl(enabled));
             }
         }
     }
