@@ -26,7 +26,9 @@ pub struct AppModel {
     #[tracker::do_not_track]
     pub registry_editor: Controller<RegistryEditorModel>,
     #[tracker::do_not_track]
-    pub content_stack: adw::ViewStack,
+    content_stack: adw::ViewStack,
+    #[tracker::do_not_track]
+    content_box: gtk::Stack,
     #[tracker::do_not_track]
     pub flap: adw::Flap,
     #[tracker::do_not_track]
@@ -166,6 +168,7 @@ impl SimpleComponent for AppModel {
             .launch((prefixes.clone(), None))
             .forward(sender.input_sender(), |msg| match msg {
                 crate::ui::prefix_list::PrefixListOutput::SelectPrefix(index) => AppMsg::SelectPrefix(index),
+                crate::ui::prefix_list::PrefixListOutput::DeselectPrefix => AppMsg::HideDetails,
                 crate::ui::prefix_list::PrefixListOutput::ShowPrefixDetails(index) => AppMsg::ShowPrefixDetails(index),
                 crate::ui::prefix_list::PrefixListOutput::DeletePrefix(index) => AppMsg::DeletePrefix(index),
             });
@@ -199,44 +202,33 @@ impl SimpleComponent for AppModel {
 
         let prefix_list_widget = prefix_list.widget().clone().upcast::<gtk::Widget>();
 
-        // Build content Stack
-        let content_stack = adw::ViewStack::new();
-        {
-            let empty_page = gtk::Box::builder()
-                .orientation(gtk::Orientation::Vertical)
-                .halign(gtk::Align::Center).valign(gtk::Align::Center).vexpand(true).build();
-            empty_page.append(&gtk::Image::builder().pixel_size(72)
-                .icon_name("brand-winehq-symbolic").css_classes(["dim-label"]).build());
-            empty_page.append(&gtk::Label::builder().label("No prefix selected")
-                .css_classes(["title-4", "dim-label"]).margin_top(10).build());
+        // Empty state page
+        let empty_page = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .halign(gtk::Align::Center).valign(gtk::Align::Center).vexpand(true).build();
+        empty_page.append(&gtk::Image::builder().pixel_size(72)
+            .icon_name("brand-winehq-symbolic").css_classes(["dim-label"]).build());
+        empty_page.append(&gtk::Label::builder().label("No prefix selected")
+            .css_classes(["title-4", "dim-label"]).margin_top(10).build());
 
-            let sync_spinner = gtk::Spinner::new();
-            sync_spinner.set_margin_top(20);
-            empty_page.append(&sync_spinner);
-            if needs_sync {
-                sync_spinner.start();
-            }
-            let sync_label = gtk::Label::builder()
-                .label(if needs_sync { "Scanning Wine prefixes..." } else { "Select a prefix from the list to view details" })
-                .css_classes(["body", "dim-label"]).build();
-            empty_page.append(&sync_label);
-            content_stack.add(&empty_page);
-        }
+        // Tabbed content Stack
+        let content_stack = adw::ViewStack::new();
         content_stack.add_titled(app_manager.widget(), Some("apps"), "Apps")
             .set_icon_name(Some("application-x-executable-symbolic"));
         content_stack.add_titled(prefix_details.widget(), Some("details"), "Details")
             .set_icon_name(Some("document-properties-symbolic"));
         content_stack.add_titled(registry_editor.widget(), Some("registry"), "Registry")
             .set_icon_name(Some("preferences-system-symbolic"));
-        content_stack.set_visible_child_name("empty");
         switcher.set_stack(Some(&content_stack));
 
-        // Content area
-        let content_box = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical).hexpand(true).vexpand(true).build();
-        content_stack.set_hexpand(true);
-        content_stack.set_vexpand(true);
-        content_box.append(&content_stack);
+        // Wrapper Stack: show either empty page or tabbed content
+        let content_box = gtk::Stack::builder()
+            .hexpand(true).vexpand(true)
+            .transition_type(gtk::StackTransitionType::Crossfade)
+            .build();
+        content_box.add_named(&empty_page, Some("empty"));
+        content_box.add_named(&content_stack, Some("tabs"));
+        content_box.set_visible_child_name("empty");
 
         // Build Flap (native collapsible sidebar)
         let flap = adw::Flap::builder()
@@ -329,6 +321,7 @@ impl SimpleComponent for AppModel {
             app_manager,
             registry_editor,
             content_stack,
+            content_box,
             flap,
             switcher,
             prefix_store,
@@ -582,6 +575,7 @@ impl SimpleComponent for AppModel {
                 if index < self.prefixes.len() {
                     self.selected_prefix = Some(index);
                     self.switcher.set_sensitive(true);
+                    self.content_box.set_visible_child_name("tabs");
                     self.content_stack.set_visible_child_name("apps");
 
                     // Update the details component
@@ -601,7 +595,7 @@ impl SimpleComponent for AppModel {
             }
             AppMsg::HideDetails => {
                 self.switcher.set_sensitive(false);
-                self.content_stack.set_visible_child_name("empty");
+                self.content_box.set_visible_child_name("empty");
             }
             AppMsg::ConfigUpdated(index, config) => {
                 // Handle config updates from both app_manager and prefix_details

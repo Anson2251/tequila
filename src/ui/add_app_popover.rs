@@ -442,28 +442,23 @@ impl AsyncComponent for AddAppPopoverModel {
             AddAppPopoverMsg::AddSelected => {
                 if !self.selected_indices.is_empty() {
                     let selected_vec: Vec<usize> = self.selected_indices.iter().copied().collect();
-                    let _ = sender.output(AddAppPopoverOutput::AddApp(selected_vec));
-                    self.set_is_visible(false);
-                    widgets.popdown();
 
-                    // Clear selection after adding
-                    self.selected_indices.clear();
-
-                    // Notify tracker that selected_indices has changed
-                    self.set_selected_indices(self.selected_indices.clone());
-
-                    // Set flag to prevent recursive calls during cleanup
-                    self.is_processing_selection = true;
-
-                    // Update selection state in factory without rebuilding
+                    // Clear factory state BEFORE closing popover (avoids SIGSEGV on destroyed widgets)
                     {
                         let mut guard = self.available_executables.guard();
                         for item in guard.iter_mut() {
                             item.selected = false;
                         }
                     }
+                    self.selected_indices.clear();
+                    self.set_selected_indices(self.selected_indices.clone());
+                    self.is_processing_selection = true;
 
-                    // Reset flag after a short delay
+                    // Emit add and close
+                    let _ = sender.output(AddAppPopoverOutput::AddApp(selected_vec));
+                    self.set_is_visible(false);
+                    widgets.popdown();
+
                     let sender = sender.clone();
                     relm4::spawn(async move {
                         relm4::tokio::time::sleep(std::time::Duration::from_millis(50)).await;

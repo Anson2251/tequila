@@ -20,6 +20,7 @@ pub enum PrefixListMsg {
 #[derive(Debug)]
 pub enum PrefixListOutput {
     SelectPrefix(usize),
+    DeselectPrefix,
     ShowPrefixDetails(usize),
     DeletePrefix(usize),
 }
@@ -79,8 +80,14 @@ impl SimpleComponent for PrefixListModel {
                 populate(&self.prefixes, &self.list_box, &sender);
             }
             PrefixListMsg::SelectPrefix(index) => {
-                self.selected_prefix = Some(index);
-                let _ = sender.output(PrefixListOutput::SelectPrefix(index));
+                if self.selected_prefix == Some(index) {
+                    self.selected_prefix = None;
+                    self.list_box.unselect_all();
+                    let _ = sender.output(PrefixListOutput::DeselectPrefix);
+                } else {
+                    self.selected_prefix = Some(index);
+                    let _ = sender.output(PrefixListOutput::SelectPrefix(index));
+                }
             }
             PrefixListMsg::ShowPrefixDetails(index) => {
                 let _ = sender.output(PrefixListOutput::ShowPrefixDetails(index));

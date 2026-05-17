@@ -220,7 +220,7 @@ impl SimpleComponent for RegistryEditorModel {
                             #[watch]
                             set_label: if model.editing { "Save" } else { "Edit" },
                             #[watch]
-                            add_css_class: if model.editing { "suggested-action" } else { "" },
+                            set_css_classes: if model.editing { &["suggested-action"] } else { &[] },
                             connect_clicked => RegistryEditorMsg::ToggleEdit,
                         },
 

@@ -204,7 +204,7 @@ impl SimpleComponent for PrefixDetailsModel {
                         #[track = "model.changed(PrefixDetailsModel::editing())"]
                         set_label: if model.editing { "Save" } else { "Edit" },
                         #[track = "model.changed(PrefixDetailsModel::editing())"]
-                        add_css_class: if model.editing { "suggested-action" } else { "" },
+                        set_css_classes: if model.editing { &["suggested-action"] } else { &[] },
                         connect_clicked => PrefixDetailsMsg::ToggleEdit,
                     },
 

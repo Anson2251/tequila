@@ -7,8 +7,6 @@ use relm4::{
 use relm4::factory::{FactoryComponent, FactorySender, FactoryVecDeque, DynamicIndex};
 use gtk::prelude::*;
 use crate::prefix::config::RegisteredExecutable;
-use std::collections::HashSet;
-use std::path::PathBuf;
 use tracker;
 
 #[derive(Debug)]
@@ -17,7 +15,6 @@ pub struct RegisteredAppsListModel {
     #[tracker::do_not_track]
     executables: FactoryVecDeque<RegisteredExecutableItem>,
     registered_executables: Vec<RegisteredExecutable>,
-    running_paths: HashSet<PathBuf>,
     #[tracker::do_not_track]
     selection_handler_id: Option<gtk::glib::SignalHandlerId>,
 }
@@ -25,7 +22,7 @@ pub struct RegisteredAppsListModel {
 #[derive(Debug)]
 pub enum RegisteredAppsListMsg {
     UpdateExecutables(Vec<RegisteredExecutable>),
-    SetRunningPaths(HashSet<PathBuf>),
+    SetRunningPaths(std::collections::HashSet<std::path::PathBuf>),
     SelectionChanged,
 }
 
@@ -52,14 +49,13 @@ impl Drop for RegisteredAppsListModel {
 struct RegisteredExecutableItem {
     executable: RegisteredExecutable,
     index: usize,
-    running: bool,
-    css_classes: Vec<&'static str>,
+    is_running: bool,
 }
 
 #[relm4::factory]
 impl FactoryComponent for RegisteredExecutableItem {
     type Init = (RegisteredExecutable, usize);
-    type Input = bool;
+    type Input = ();
     type Output = ();
     type CommandOutput = ();
     type ParentWidget = gtk::FlowBox;
@@ -70,12 +66,12 @@ impl FactoryComponent for RegisteredExecutableItem {
             set_orientation: gtk::Orientation::Vertical,
             set_spacing: 6,
             set_margin_all: 8,
-            set_width_request: 72,
-            set_height_request: 72,
+            set_width_request: 64,
+            set_height_request: 64,
             set_focusable: true,
 
             #[watch]
-            set_css_classes: &self.css_classes,
+            set_css_classes: if self.is_running { &["app-item", "running"] } else { &["app-item"] },
 
                 // Icon from file, or fallback default
                 gtk::Box {
@@ -128,19 +124,12 @@ impl FactoryComponent for RegisteredExecutableItem {
         Self {
             executable,
             index: idx,
-            running: false,
-            css_classes: vec!["app-item"],
+            is_running: false,
         }
     }
 
-    fn update(&mut self, msg: Self::Input, _sender: FactorySender<Self>) {
-        self.running = msg;
-        self.css_classes = if msg {
-            vec!["app-item", "running"]
-        } else {
-            vec!["app-item"]
-        };
-        self.executable = self.executable.clone(); // trigger watch recompute
+    fn update(&mut self, _msg: Self::Input, _sender: FactorySender<Self>) {
+        // No messages to handle - selection is handled by FlowBox
     }
 }
 
@@ -157,6 +146,7 @@ impl AsyncComponent for RegisteredAppsListModel {
             set_orientation: gtk::Orientation::Vertical,
             set_spacing: 5,
             set_margin_all: 10,
+            set_vexpand: true,
 
 
 
@@ -217,7 +207,6 @@ impl AsyncComponent for RegisteredAppsListModel {
         let mut model = RegisteredAppsListModel {
             executables,
             registered_executables: init.clone(),
-            running_paths: HashSet::new(),
             selection_handler_id: None,
             tracker: 0
         };
@@ -253,14 +242,6 @@ impl AsyncComponent for RegisteredAppsListModel {
     ) {
         self.reset();
         match msg {
-            RegisteredAppsListMsg::SetRunningPaths(paths) => {
-                self.running_paths = paths.clone();
-                let mut guard = self.executables.guard();
-                for i in 0..guard.len() {
-                    let running = guard.get(i).map_or(false, |item| paths.contains(&item.executable.executable_path));
-                    let _ = guard.send(i, running);
-                }
-            }
             RegisteredAppsListMsg::UpdateExecutables(executables) => {
                 self.registered_executables = executables.clone();
 
@@ -280,6 +261,12 @@ impl AsyncComponent for RegisteredAppsListModel {
                 {
                     let grid = self.executables.widget();
                     if let Some(ref h) = self.selection_handler_id { grid.unblock_signal(h); }
+                }
+            }
+            RegisteredAppsListMsg::SetRunningPaths(paths) => {
+                let mut guard = self.executables.guard();
+                for item in guard.iter_mut() {
+                    item.is_running = paths.contains(&item.executable.executable_path);
                 }
             }
             RegisteredAppsListMsg::SelectionChanged => {
