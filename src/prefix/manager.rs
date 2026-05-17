@@ -3,7 +3,9 @@ use crate::prefix::scanner::ApplicationScanner;
 use crate::prefix::IconCache;
 use crate::prefix::error::{Result, PrefixError};
 use crate::prefix::traits::{PrefixManager as PrefixManagerTrait, WinePrefix, PrefixInfo};
-use std::path::PathBuf;
+use crate::prefix::runtime::{RuntimeManager, Runtime, Channel};
+use crate::prefix::wine_processes::apply_runtime_env;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::fs;
 use std::process::Command;
@@ -12,14 +14,28 @@ use std::process::Command;
 pub struct Manager {
     wine_dir: PathBuf,
     scanner: ApplicationScanner,
+    runtime_manager: RuntimeManager,
 }
 
 impl Manager {
     /// Create a new PrefixManager with the specified wine directory and icon cache.
     pub fn new(wine_dir: PathBuf, icon_cache: Arc<IconCache>) -> Self {
+        let mut runtime_manager = RuntimeManager::new();
+
+        // Load persisted runtimes or detect system Wine
+        if let Some(settings) = crate::prefix::settings::Settings::load() {
+            let mut rm: RuntimeManager = settings.into();
+            // Always refresh system Wine detection (version may have changed)
+            rm.ensure_system_runtime();
+            runtime_manager = rm;
+        } else {
+            runtime_manager.ensure_system_runtime();
+        }
+
         Self {
             wine_dir,
             scanner: ApplicationScanner::new(icon_cache),
+            runtime_manager,
         }
     }
 
@@ -33,13 +49,99 @@ impl Manager {
         &self.scanner
     }
 
+    /// Get a reference to the runtime manager
+    pub fn runtime_manager(&self) -> &RuntimeManager {
+        &self.runtime_manager
+    }
+
+    /// Get a mutable reference to the runtime manager
+    pub fn runtime_manager_mut(&mut self) -> &mut RuntimeManager {
+        &mut self.runtime_manager
+    }
+
+    /// Persist the current runtime state to settings.json.
+    pub fn save_runtime_state(&self) {
+        let settings: crate::prefix::settings::Settings = self.runtime_manager.clone().into();
+        if let Err(e) = settings.save() {
+            eprintln!("Failed to save runtime settings: {}", e);
+        }
+    }
+
+    /// Download a channel-based Wine runtime (macOS).
+    /// On success, registers it and persists settings.
+    pub async fn download_channel_runtime(
+        &mut self,
+        channel: Channel,
+        progress: crate::prefix::download::ProgressFn,
+    ) -> Result<Runtime> {
+        // Clean up stale temp dirs before starting
+        let runtimes = crate::prefix::download::runtimes_dir();
+        crate::prefix::download::cleanup_temp_runtimes(&runtimes);
+
+        let bundle_dir = crate::prefix::download::download_channel_runtime(&channel, &progress).await?;
+        let cask = crate::prefix::homebrew::fetch_cask(channel.cask_name())
+            .await
+            .map_err(|e| PrefixError::Process(e))?;
+
+        let runtime = self
+            .runtime_manager
+            .register_channel(channel, cask.version, bundle_dir)
+            .clone();
+        self.save_runtime_state();
+        Ok(runtime)
+    }
+
+    /// Import a Wine runtime from a user-provided path.
+    pub fn import_runtime(
+        &mut self,
+        source_path: &PathBuf,
+        label: &str,
+    ) -> std::result::Result<Runtime, String> {
+        let runtimes = crate::prefix::download::runtimes_dir();
+        let runtime = self
+            .runtime_manager
+            .import_runtime(source_path, label, &runtimes)?;
+        self.save_runtime_state();
+        Ok(runtime)
+    }
+
+    /// Remove a runtime by id.
+    pub fn remove_runtime(&mut self, id: &str) {
+        self.runtime_manager.remove(id);
+        self.save_runtime_state();
+    }
+
+    /// Set the global default runtime.
+    pub fn set_default_runtime(&mut self, id: &str) {
+        self.runtime_manager.set_default(id);
+        self.save_runtime_state();
+    }
+
+    /// Resolve the runtime for a given prefix config.
+    fn runtime_for_prefix(&self, config: &PrefixConfig) -> Option<&Runtime> {
+        self.runtime_manager.resolve(config.wine_version.as_deref())
+    }
+
+    /// Build a Command for wine, applying the runtime environment for the prefix.
+    fn build_wine_command(&self, config: &PrefixConfig, prefix_path: &Path) -> Command {
+        let mut cmd = Command::new("wine");
+        if let Some(runtime) = self.runtime_for_prefix(config) {
+            apply_runtime_env(&mut cmd, runtime, prefix_path);
+        } else {
+            // Fallback: use bare WINEPREFIX without runtime PATH injection
+            cmd.env("WINEPREFIX", prefix_path);
+        }
+        cmd
+    }
+
     pub fn scan_prefixes(&self) -> Result<Vec<WinePrefix>> {
         let mut prefixes: Vec<WinePrefix> = Vec::new();
 
         println!("Scanning Wine prefixes in directory: {:?}", self.wine_dir);
 
-        // Detect wine version once via `wine --version`; shared across all prefixes
-        let wine_version = detect_system_wine_version().ok();
+        // Detect system wine version once via `wine --version`; shared across all prefixes
+        let system_runtime = self.runtime_manager.get("wine-system");
+        let system_wine_version = system_runtime.map(|r| r.wine_version.clone());
 
         for entry in fs::read_dir(&self.wine_dir)? {
             let entry = entry?;
@@ -51,10 +153,10 @@ impl Manager {
                     println!("✅ Valid Wine prefix: {:?}", path);
                     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                         println!("🔧 Loading config for prefix: {}", name);
-                        match self.load_or_create_config(&path, name, &wine_version) {
+                        match self.load_or_create_config(&path, name, &system_wine_version) {
                             Ok(mut config) => {
                                 // Always refresh wine version from system on scan
-                                if let Some(ref ver) = wine_version {
+                                if let Some(ref ver) = system_wine_version {
                                     if config.wine_version.as_ref() != Some(ver) {
                                         config.wine_version = Some(ver.clone());
                                         let _ = config.save_to_file(&path);
@@ -87,8 +189,7 @@ impl Manager {
         let drive_c = path.join("drive_c");
         let system_reg = path.join("system.reg");
         let user_reg = path.join("user.reg");
-        
-        // Check for basic Wine prefix structure
+
         drive_c.exists() && system_reg.exists() && user_reg.exists()
     }
 
@@ -116,16 +217,14 @@ impl Manager {
     }
 
     fn detect_architecture(&self, prefix_path: &PathBuf) -> Result<String> {
-        // Check for 64-bit indicators
         let program_files_x64 = prefix_path.join("drive_c/Program Files");
         let program_files_x86 = prefix_path.join("drive_c/Program Files (x86)");
-        
+
         if program_files_x86.exists() {
             Ok("win64".to_string())
         } else if program_files_x64.exists() {
             Ok("win32".to_string())
         } else {
-            // Default to win64 for modern systems
             Ok("win64".to_string())
         }
     }
@@ -133,27 +232,56 @@ impl Manager {
     pub fn create_prefix(&self, name: &str, architecture: &str) -> Result<PathBuf> {
         let prefix_path = self.wine_dir.join(name);
 
-        // Check if prefix already exists
         if prefix_path.exists() {
             return Err(PrefixError::AlreadyExists(format!("Prefix '{}' already exists", name)));
         }
 
-        // Create prefix directory
         fs::create_dir_all(&prefix_path)?;
 
-        // Create initial config
-        let config = PrefixConfig::new(name.to_string(), architecture.to_string());
+        // Store the default runtime id on the config
+        let mut config = PrefixConfig::new(name.to_string(), architecture.to_string());
+        config.wine_version = Some(self.runtime_manager.default_id.clone());
         config.save_to_file(&prefix_path)?;
 
-        // Initialize Wine prefix using winecfg (non-blocking)
+        // Initialize Wine prefix using winecfg with runtime environment
         let wine_arch = if architecture == "win32" { "win32" } else { "win64" };
-        Command::new("winecfg")
-            .env("WINEPREFIX", prefix_path.to_string_lossy().as_ref())
-            .env("WINEARCH", wine_arch)
-            .spawn()
+        let mut cmd = self.build_wine_command_for_exe("winecfg", &config, &prefix_path);
+        cmd.env("WINEARCH", wine_arch);
+        cmd.spawn()
             .map_err(|e| PrefixError::Process(format!("Failed to run winecfg: {}", e)))?;
 
         Ok(prefix_path)
+    }
+
+    /// Build a command for a specific executable name (winecfg, regedit, wine, etc.)
+    /// applying the runtime environment.
+    fn build_wine_command_for_exe(&self, exe: &str, config: &PrefixConfig, prefix_path: &Path) -> Command {
+        if let Some(runtime) = self.runtime_for_prefix(config) {
+            let mut cmd = Command::new(exe);
+            apply_runtime_env(&mut cmd, runtime, prefix_path);
+            cmd
+        } else {
+            let mut cmd = Command::new(exe);
+            cmd.env("WINEPREFIX", prefix_path);
+            cmd
+        }
+    }
+
+    /// Build a wine command with arguments, applying the runtime environment.
+    fn build_wine_command_with_args(&self, args: &[&str], config: &PrefixConfig, prefix_path: &Path) -> Command {
+        let mut cmd = if let Some(runtime) = self.runtime_for_prefix(config) {
+            let mut cmd = Command::new("wine");
+            apply_runtime_env(&mut cmd, runtime, prefix_path);
+            cmd
+        } else {
+            let mut cmd = Command::new("wine");
+            cmd.env("WINEPREFIX", prefix_path);
+            cmd
+        };
+        for arg in args {
+            cmd.arg(arg);
+        }
+        cmd
     }
 
     pub fn delete_prefix(&self, prefix_path: &PathBuf) -> Result<()> {
@@ -161,7 +289,6 @@ impl Manager {
             return Err(PrefixError::NotFound("Prefix does not exist".to_string()));
         }
 
-        // Additional safety check
         if !self.is_valid_wine_prefix(prefix_path) {
             return Err(PrefixError::Validation("Not a valid Wine prefix".to_string()));
         }
@@ -172,39 +299,29 @@ impl Manager {
 
     pub fn scan_for_applications(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>> {
         let mut executables = Vec::new();
-        
-        // Scan regular directories
+
         executables.extend(self.scanner.scan_prefix(prefix_path)?);
-        
-        // Scan desktop files and shortcuts
         executables.extend(self.scanner.scan_for_desktop_files(prefix_path)?);
-        
-        // Remove duplicates and sort
+
         executables.sort_by(|a, b| a.name.cmp(&b.name));
         executables.dedup_by(|a, b| a.name == b.name && a.executable_path == b.executable_path);
-        
+
         Ok(executables)
     }
 
-    /// Async version of scan_for_applications
     pub async fn scan_for_applications_async(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>> {
         let mut executables = Vec::new();
-        
-        // Scan regular directories asynchronously
+
         executables.extend(self.scanner.scan_prefix_async(prefix_path).await?);
-        
-        // Scan desktop files and shortcuts asynchronously
         executables.extend(self.scanner.scan_for_desktop_files_async(prefix_path).await?);
-        
-        // Remove duplicates and sort
+
         executables.sort_by(|a, b| a.name.cmp(&b.name));
         executables.dedup_by(|a, b| a.name == b.name && a.executable_path == b.executable_path);
-        
+
         Ok(executables)
     }
 
     pub fn update_config(&self, prefix_path: &PathBuf, config: &PrefixConfig) -> Result<()> {
-        // Validate config before saving
         config.validate()?;
 
         let mut updated_config = config.clone();
@@ -219,7 +336,7 @@ impl Manager {
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
         let mut config = self.load_or_create_config(prefix_path, name, &None)?;
-        
+
         config.add_executable(executable);
         self.update_config(prefix_path, &config)?;
         Ok(())
@@ -231,42 +348,62 @@ impl Manager {
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
         let mut config = self.load_or_create_config(prefix_path, name, &None)?;
-        
+
         config.remove_executable(index);
         self.update_config(prefix_path, &config)?;
         Ok(())
     }
 
+    /// Load the prefix config, then launch the executable with the runtime environment.
     pub fn launch_executable(&self, prefix_path: &PathBuf, executable: &RegisteredExecutable) -> Result<()> {
         if !executable.executable_path.exists() {
             return Err(PrefixError::NotFound("Executable file does not exist".to_string()));
         }
 
-        Command::new("wine")
-            .current_dir(&prefix_path)
-            .env("WINEPREFIX", prefix_path.to_string_lossy().as_ref())
-            .arg(&executable.executable_path)
-            .spawn()
-            .map_err(|e| PrefixError::Process(format!("Failed to launch executable: {}", e)))?;
+        let name = prefix_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let config = self.load_or_create_config(prefix_path, name, &None)?;
+
+        self.build_wine_command_with_args(
+            &[&executable.executable_path.to_string_lossy()],
+            &config,
+            prefix_path,
+        )
+        .current_dir(prefix_path)
+        .spawn()
+        .map_err(|e| PrefixError::Process(format!("Failed to launch executable: {}", e)))?;
 
         Ok(())
     }
 
+    /// Load the prefix config, then launch winecfg with the runtime environment.
     pub fn run_winecfg(&self, prefix_path: &PathBuf) -> Result<()> {
-        Command::new("winecfg")
-            .current_dir(&prefix_path)
-            .env("WINEPREFIX", prefix_path.to_string_lossy().as_ref())
+        let name = prefix_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let config = self.load_or_create_config(prefix_path, name, &None)?;
+
+        self.build_wine_command_for_exe("winecfg", &config, prefix_path)
+            .current_dir(prefix_path)
             .spawn()
             .map_err(|e| PrefixError::Process(format!("Failed to run winecfg: {}", e)))?;
 
         Ok(())
     }
 
+    /// Load the prefix config, then launch regedit with the runtime environment.
     pub fn run_regedit(&self, prefix_path: &PathBuf) -> Result<()> {
-        Command::new("wine")
-            .current_dir(&prefix_path)
-            .env("WINEPREFIX", prefix_path.to_string_lossy().as_ref())
-            .arg("regedit")
+        let name = prefix_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let config = self.load_or_create_config(prefix_path, name, &None)?;
+
+        self.build_wine_command_with_args(&["regedit"], &config, prefix_path)
+            .current_dir(prefix_path)
             .spawn()
             .map_err(|e| PrefixError::Process(format!("Failed to run regedit: {}", e)))?;
 
@@ -279,10 +416,10 @@ impl Manager {
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
         let config = self.load_or_create_config(prefix_path, name, &None)?;
-        
+
         let size = self.calculate_prefix_size(prefix_path)?;
         let executable_count = config.get_executable_count();
-        
+
         Ok(PrefixInfo {
             name: config.name.clone(),
             path: prefix_path.clone(),
@@ -380,22 +517,8 @@ impl PrefixManagerTrait for Manager {
 
 impl std::fmt::Display for Manager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PrefixManager(wine_dir: {})", self.wine_dir.display())
-    }
-}
-
-/// Run `wine --version` once and return the formatted result (e.g. `"WINE 11.0"`).
-/// Cache this value and pass it to all prefixes to avoid redundant subprocess calls.
-fn detect_system_wine_version() -> Result<String> {
-    let output = Command::new("wine").arg("--version").output()
-        .map_err(|e| PrefixError::Process(format!("Failed to run wine --version: {}", e)))?;
-    if output.status.success() {
-        let raw = String::from_utf8(output.stdout)
-            .map_err(|e| PrefixError::Wine(format!("Failed to parse wine version: {}", e)))?;
-        // "wine-11.0" -> "WINE 11.0"
-        let formatted = raw.trim().split('-').collect::<Vec<_>>().join(" ").to_uppercase();
-        Ok(formatted)
-    } else {
-        Err(PrefixError::Wine("wine --version exited with non-zero status".to_string()))
+        write!(f, "PrefixManager(wine_dir: {}, runtimes: {})",
+            self.wine_dir.display(),
+            self.runtime_manager.runtimes.len())
     }
 }

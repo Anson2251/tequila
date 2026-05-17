@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use std::path::PathBuf;
 use crate::prefix::error::{Result, PrefixError};
 use crate::prefix::traits::{ConfigOperations, ExecutableManager};
+use crate::prefix::runtime::GraphicsConfig;
 
 /// Configuration for a Wine prefix
 ///
@@ -18,12 +19,15 @@ pub struct PrefixConfig {
     pub creation_date: DateTime<Utc>,
     /// When this prefix was last modified
     pub last_modified: DateTime<Utc>,
-    /// Wine version used with this prefix
+    /// Wine runtime id (e.g. "wine-system", "wine-stable"), immutable after creation
     pub wine_version: Option<String>,
     /// Architecture (win32 or win64)
     pub architecture: String,
     /// Optional description of the prefix
     pub description: Option<String>,
+    /// Optional graphics backend config for this prefix
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graphics: Option<GraphicsConfig>,
     /// List of registered executables for this prefix
     pub registered_executables: Vec<RegisteredExecutable>,
 }
@@ -78,6 +82,7 @@ impl PrefixConfig {
             wine_version: None,
             architecture,
             description: None,
+            graphics: None,
             registered_executables: Vec::new(),
         }
     }

@@ -9,6 +9,11 @@ pub mod icon_cache;
 pub mod icon_extract;
 pub mod state;
 pub mod process_tracker;
+pub mod runtime;
+pub mod settings;
+pub mod homebrew;
+pub mod download;
+pub mod graphics;
 
 #[allow(unused)]
 pub use config::{PrefixConfig, RegisteredExecutable};
@@ -23,3 +28,6 @@ pub use icon_extract::extract_icon;
 pub use scanner::{extract_icon_for_exe, extract_metadata_for_exe};
 pub use state::PrefixStore;
 pub use process_tracker::ProcessTracker;
+pub use runtime::{Runtime, RuntimeSource, Channel, GraphicsBackend, GraphicsConfig, RuntimeManager};
+pub use settings::Settings;
+pub use homebrew::CaskInfo;

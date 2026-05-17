@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 dirs = "6.0.0"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 gtk4 = "0.11.3"
 relm4 = {version = "0.11.0", features = ["libadwaita"]}
 tokio = { version = "1.52.3", features = ["full"] }
@@ -19,6 +20,7 @@ async-trait = "0.1.89"
 rusqlite = { version = "0.39", features = ["bundled"] }
 sha2 = "0.11"
 hex = "0.4"
+zstd = "0.13"
 notify = { version = "8", default-features = false, features = ["macos_kqueue"] }
 image = "0.25"
 
