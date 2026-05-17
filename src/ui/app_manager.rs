@@ -185,6 +185,7 @@ impl AsyncComponent for AppManagerModel {
                 }
 
                 self.set_scanning(true);
+                self.add_app_popover.emit(AddAppPopoverMsg::SetScanning(true));
                 self.set_selected_executable(None);
                 self.app_actions.emit(AppActionsMsg::SetSelection(false));
 
@@ -207,6 +208,7 @@ impl AsyncComponent for AppManagerModel {
                     }
                 }
                 self.set_scanning(false);
+                self.add_app_popover.emit(AddAppPopoverMsg::SetScanning(false));
             }
             AppManagerMsg::AddExecutable(index) => {
                 if let Some(executable) = self.available_executables.get(index) {

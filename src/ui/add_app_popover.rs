@@ -15,6 +15,7 @@ pub struct AddAppPopoverModel {
     available_apps: Vec<RegisteredExecutable>,
     selected_indices: std::collections::HashSet<usize>,
     is_visible: bool,
+    is_scanning: bool,
     #[tracker::do_not_track]
     is_processing_selection: bool,
 }
@@ -28,6 +29,7 @@ pub enum AddAppPopoverMsg {
     AddSelected,
     Scan,
     ResetProcessingFlag,
+    SetScanning(bool),
 }
 
 #[derive(Debug)]
@@ -202,35 +204,69 @@ impl AsyncComponent for AddAppPopoverModel {
                     set_margin_bottom: 10,
                 },
 
-                gtk::ScrolledWindow {
-                    set_vexpand: true,
-                    set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
-                    set_min_content_height: 200,
+                // Conditional: spinner during scan, list otherwise — no layout shift
+                #[transition = "Crossfade"]
+                match model.is_scanning {
+                    true => {
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Vertical,
+                            set_spacing: 10,
+                            set_halign: gtk::Align::Center,
+                            set_valign: gtk::Align::Center,
+                            set_vexpand: true,
+                            set_height_request: 200,
 
-                    #[local_ref]
-                    available_list_box -> gtk::ListBox {
-                        set_css_classes: &["boxed-list"],
-                        set_selection_mode: gtk::SelectionMode::None,
-                    },
-                },
+                            gtk::Spinner {
+                                set_spinning: true,
+                                set_halign: gtk::Align::Center,
+                            },
+                            gtk::Label {
+                                set_label: "Scanning for applications...",
+                                set_halign: gtk::Align::Center,
+                                add_css_class: "dim-label",
+                            },
+                        }
+                    }
+                    false => {
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Vertical,
+                            set_spacing: 10,
+                            set_vexpand: true,
 
-                gtk::Label {
-                    #[watch]
-                    set_label: &format!("{} applications found", model.available_apps.len()),
-                    add_css_class: "caption",
-                    set_halign: gtk::Align::Center,
-                    #[watch]
-                    set_visible: model.available_apps.len() > 0,
-                },
+                            gtk::ScrolledWindow {
+                                #[watch]
+                                set_visible: model.available_apps.len() > 0,
+                                set_vexpand: true,
+                                set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
+                                set_min_content_height: 200,
 
-                gtk::Label {
-                    set_label: "No available applications found\nScan for applications first",
-                    set_halign: gtk::Align::Center,
-                    set_valign: gtk::Align::Center,
-                    set_wrap: true,
-                    #[watch]
-                    set_visible: model.available_apps.len() == 0,
-                    add_css_class: "dim-label",
+                                #[local_ref]
+                                available_list_box -> gtk::ListBox {
+                                    set_css_classes: &["boxed-list"],
+                                    set_selection_mode: gtk::SelectionMode::None,
+                                },
+                            },
+
+                            gtk::Label {
+                                set_label: "No available applications found\nScan for applications first",
+                                set_halign: gtk::Align::Center,
+                                set_valign: gtk::Align::Center,
+                                set_wrap: true,
+                                #[watch]
+                                set_visible: model.available_apps.len() == 0,
+                                add_css_class: "dim-label",
+                            },
+
+                            gtk::Label {
+                                #[watch]
+                                set_label: &format!("{} applications found", model.available_apps.len()),
+                                add_css_class: "caption",
+                                set_halign: gtk::Align::Center,
+                                #[watch]
+                                set_visible: model.available_apps.len() > 0,
+                            },
+                        }
+                    }
                 },
 
                 gtk::Box {
@@ -239,7 +275,10 @@ impl AsyncComponent for AddAppPopoverModel {
                     set_margin_top: 10,
 
                     gtk::Button {
-                        set_label: "Scan",
+                        #[watch]
+                        set_label: if model.is_scanning { "Scanning..." } else { "Scan" },
+                        #[watch]
+                        set_sensitive: !model.is_scanning,
                         set_tooltip_text: Some("Scan prefix for executables"),
                         connect_clicked[sender] => move |_| {
                             sender.input(AddAppPopoverMsg::Scan);
@@ -288,6 +327,7 @@ impl AsyncComponent for AddAppPopoverModel {
             available_apps: Vec::new(),
             selected_indices: std::collections::HashSet::new(),
             is_visible: false,
+            is_scanning: false,
             is_processing_selection: false,
             tracker: 0
         };
@@ -391,6 +431,9 @@ impl AsyncComponent for AddAppPopoverModel {
             }
             AddAppPopoverMsg::Scan => {
                 let _ = sender.output(AddAppPopoverOutput::Scan);
+            }
+            AddAppPopoverMsg::SetScanning(scanning) => {
+                self.set_is_scanning(scanning);
             }
             AddAppPopoverMsg::ResetProcessingFlag => {
                 self.is_processing_selection = false;

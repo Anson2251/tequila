@@ -50,7 +50,8 @@ impl AsyncComponent for AppActionsModel {
 
             #[name = "add_button"]
             gtk::Button {
-                set_label: "Add",
+                set_icon_name: "list-add-symbolic",
+                set_tooltip_text: Some("Add Application"),
                 #[track = "model.changed(AppActionsModel::is_scanning())"]
                 set_sensitive: !model.is_scanning,
                 connect_clicked[sender] => move |_| {
@@ -60,7 +61,8 @@ impl AsyncComponent for AppActionsModel {
             },
 
             gtk::Button {
-                set_label: "Remove",
+                set_icon_name: "user-trash-symbolic",
+                set_tooltip_text: Some("Remove Application"),
                 #[track = "model.changed(AppActionsModel::has_selection()) || model.changed(AppActionsModel::is_scanning())"]
                 set_sensitive: model.has_selection && !model.is_scanning,
                 connect_clicked[sender] => move |_| {
@@ -70,7 +72,8 @@ impl AsyncComponent for AppActionsModel {
             },
 
             gtk::Button {
-                set_label: "Info",
+                set_icon_name: "dialog-information-symbolic",
+                set_tooltip_text: Some("Application Info"),
                 #[track = "model.changed(AppActionsModel::has_selection()) || model.changed(AppActionsModel::is_scanning())"]
                 set_sensitive: model.has_selection && !model.is_scanning,
                 connect_clicked[sender] => move |_| {
@@ -85,7 +88,7 @@ impl AsyncComponent for AppActionsModel {
                 #[track = "model.changed(AppActionsModel::selected_running())"]
                 set_tooltip_text: Some(if model.selected_running { "Kill" } else { "Launch" }),
                 #[track = "model.changed(AppActionsModel::selected_running())"]
-                set_label: if model.selected_running { "Kill" } else { "Launch" },
+                set_icon_name: if model.selected_running { "media-playback-stop-symbolic" } else { "media-playback-start-symbolic" },
                 #[track = "model.changed(AppActionsModel::selected_running())"]
                 set_css_classes: if model.selected_running {
                     &["destructive-action"]

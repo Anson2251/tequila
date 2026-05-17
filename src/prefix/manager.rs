@@ -238,17 +238,36 @@ impl Manager {
 
         fs::create_dir_all(&prefix_path)?;
 
-        // Store the default runtime id on the config
         let mut config = PrefixConfig::new(name.to_string(), architecture.to_string());
         config.wine_version = Some(self.runtime_manager.default_id.clone());
         config.save_to_file(&prefix_path)?;
 
-        // Initialize Wine prefix using winecfg with runtime environment
         let wine_arch = if architecture == "win32" { "win32" } else { "win64" };
-        let mut cmd = self.build_wine_command_for_exe("winecfg", &config, &prefix_path);
+
+        // Bootstrap the prefix: unset DISPLAY prevents Wine GUI from appearing.
+        // A simple cmd /c echo both initializes the prefix and verifies it works.
+        let mut cmd = self.build_wine_command_with_args(
+            &["cmd", "/c", "echo hello, world"],
+            &config,
+            &prefix_path,
+        );
         cmd.env("WINEARCH", wine_arch);
-        cmd.spawn()
-            .map_err(|e| PrefixError::Process(format!("Failed to run winecfg: {}", e)))?;
+        cmd.env("DISPLAY", "");
+        cmd.env("WINEDEBUG", "-all");
+
+        let output = cmd
+            .output()
+            .map_err(|e| PrefixError::Process(format!("Failed to run wine: {}", e)))?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        if !stdout.contains("hello, world") {
+            let _ = fs::remove_dir_all(&prefix_path);
+            return Err(PrefixError::Wine(format!(
+                "Prefix bootstrap failed: expected 'hello, world' in output, got: {}",
+                stdout.trim()
+            )));
+        }
 
         Ok(prefix_path)
     }
