@@ -1,0 +1,14 @@
+[package]
+name = "prefix"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+base = { path = "../base" }
+registry = { path = "../registry" }
+runtime = { path = "../runtime" }
+scan = { path = "../scan" }
+store = { path = "../store" }
+walkdir = "2.5"
+tokio = { version = "1.52.3", features = ["full"] }
+dirs = "6.0.0"

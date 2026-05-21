@@ -1,0 +1,8 @@
+[package]
+name = "tequila"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ui = { path = "../ui" }
+relm4 = {version = "0.11.0", features = ["libadwaita"]}

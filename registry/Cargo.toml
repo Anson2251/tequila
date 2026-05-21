@@ -1,0 +1,11 @@
+[package]
+name = "registry"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+base = { path = "../base" }
+regashii = "0.4.0"
+async-trait = "0.1.89"
+tokio = { version = "1.52.3", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
