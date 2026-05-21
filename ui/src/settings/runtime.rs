@@ -233,12 +233,10 @@ impl AsyncComponent for RuntimeSettings {
                 self.progress_bar.set_visible(false);
                 self.progress_label.set_visible(false);
 
-                let alert = gtk::AlertDialog::builder()
-                    .message("Download Failed")
-                    .detail(&err)
-                    .build();
-                alert.set_buttons(&["OK"]);
-                alert.set_default_button(0);
+                let alert = adw::AlertDialog::new(Some("Download Failed"), Some(&err));
+                alert.add_response("ok", "OK");
+                alert.set_default_response(Some("ok"));
+                alert.set_close_response("ok");
                 alert.choose(Some(&self.parent), None::<&gtk::gio::Cancellable>, |_| {});
             }
             RuntimeSettingsMsg::ImportRuntime => {
@@ -276,12 +274,13 @@ impl AsyncComponent for RuntimeSettings {
                         emit_runtimes_updated(&self.prefix_manager, &sender);
                     }
                     Err(e) => {
-                        let alert = gtk::AlertDialog::builder()
-                            .message("Import Failed")
-                            .detail(&format!("Failed to import Wine runtime:\n{}", e))
-                            .build();
-                        alert.set_buttons(&["OK"]);
-                        alert.set_default_button(0);
+                        let alert = adw::AlertDialog::new(
+                            Some("Import Failed"),
+                            Some(&format!("Failed to import Wine runtime:\n{}", e)),
+                        );
+                        alert.add_response("ok", "OK");
+                        alert.set_default_response(Some("ok"));
+                        alert.set_close_response("ok");
                         alert.choose(Some(&self.parent), None::<&gtk::gio::Cancellable>, |_| {});
                     }
                 }

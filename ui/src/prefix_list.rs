@@ -1,6 +1,7 @@
-use relm4::{gtk, ComponentParts, ComponentSender, SimpleComponent};
+use relm4::{gtk, adw, ComponentParts, ComponentSender, SimpleComponent};
 use gtk::prelude::*;
 use gtk::gio;
+use relm4::adw::prelude::*;
 use prefix::WinePrefix;
 
 #[derive(Debug)]
@@ -182,38 +183,24 @@ fn populate(
             action.connect_activate(move |_, _| {
                 popover_clone.popdown();
 
-                let dlg = gtk::Dialog::builder()
-                    .title("Delete Prefix")
-                    .modal(true)
-                    .build();
-                dlg.add_button("Cancel", gtk::ResponseType::Cancel);
-                dlg.add_button("Delete", gtk::ResponseType::Ok);
-
-                let content = dlg.content_area();
-                content.append(&gtk::Label::builder()
-                    .label(&format!(
+                let alert = adw::AlertDialog::new(
+                    Some("Delete Prefix"),
+                    Some(&format!(
                         "Are you sure you want to delete the prefix \"{}\"?\n\nThis will permanently remove all files in the prefix directory.",
                         name
-                    ))
-                    .wrap(true)
-                    .halign(gtk::Align::Start)
-                    .margin_top(16).margin_bottom(16)
-                    .margin_start(16).margin_end(16)
-                    .build());
-
-                if let Some(btn) = dlg.widget_for_response(gtk::ResponseType::Ok) {
-                    btn.add_css_class("destructive-action");
-                }
-
+                    )),
+                );
+                alert.add_response("cancel", "Cancel");
+                alert.add_response("delete", "Delete");
+                alert.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+                alert.set_default_response(Some("cancel"));
+                alert.set_close_response("cancel");
                 let s = s.clone();
-                dlg.connect_response(move |dlg, response| {
-                    if response == gtk::ResponseType::Ok {
+                alert.choose(None::<&gtk::Window>, None::<&gtk::gio::Cancellable>, move |response| {
+                    if response == "delete" {
                         let _ = s.output(PrefixListOutput::DeletePrefix(i));
                     }
-                    dlg.close();
                 });
-
-                dlg.present();
             });
 
             popover.popup();

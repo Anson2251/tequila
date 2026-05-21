@@ -3,6 +3,7 @@ use relm4::{
     component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender}, RelmWidgetExt,
 };
 use gtk::prelude::*;
+use adw::prelude::*;
 use prefix::{
     Manager as PrefixManager,
     runtime::{RuntimeSource, Channel, RuntimeManager},
@@ -294,22 +295,11 @@ impl AsyncComponent for RuntimeManagerModel {
                 self.progress_label.set_label(&format!("Error: {}", err));
                 self.download_stack.set_visible_child_name("menu");
 
-                let dlg = gtk::Dialog::builder()
-                    .title("Download Failed")
-                    .modal(true)
-                    .build();
-                dlg.set_transient_for(Some(root));
-                dlg.content_area().append(
-                    &gtk::Label::builder()
-                        .label(&err)
-                        .wrap(true)
-                        .margin_top(16).margin_bottom(16)
-                        .margin_start(16).margin_end(16)
-                        .build(),
-                );
-                dlg.add_button("OK", gtk::ResponseType::Ok);
-                dlg.connect_response(|d, _| d.close());
-                dlg.present();
+                let alert = adw::AlertDialog::new(Some("Download Failed"), Some(&err));
+                alert.add_response("ok", "OK");
+                alert.set_default_response(Some("ok"));
+                alert.set_close_response("ok");
+                alert.choose(Some(root), None::<&gtk::gio::Cancellable>, |_| {});
             }
             RuntimeManagerMsg::ImportRuntime => {
                 self.add_popover.popdown();
@@ -351,22 +341,14 @@ impl AsyncComponent for RuntimeManagerModel {
                     }
                     Err(e) => {
                         eprintln!("Import failed: {}", e);
-                        let dlg = gtk::Dialog::builder()
-                            .title("Import Failed")
-                            .modal(true)
-                            .build();
-                        dlg.set_transient_for(Some(root));
-                        dlg.content_area().append(
-                            &gtk::Label::builder()
-                                .label(&format!("Failed to import Wine runtime:\n{}", e))
-                                .wrap(true)
-                                .margin_top(16).margin_bottom(16)
-                                .margin_start(16).margin_end(16)
-                                .build(),
+                        let alert = adw::AlertDialog::new(
+                            Some("Import Failed"),
+                            Some(&format!("Failed to import Wine runtime:\n{}", e)),
                         );
-                        dlg.add_button("OK", gtk::ResponseType::Ok);
-                        dlg.connect_response(|d, _| d.close());
-                        dlg.present();
+                        alert.add_response("ok", "OK");
+                        alert.set_default_response(Some("ok"));
+                        alert.set_close_response("ok");
+                        alert.choose(Some(root), None::<&gtk::gio::Cancellable>, |_| {});
                     }
                 }
             }
