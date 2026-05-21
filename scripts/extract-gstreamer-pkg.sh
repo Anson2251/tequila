@@ -149,6 +149,7 @@ echo "GStreamer environment set for $OUTPUT_DIR_ABS"
 echo "Version: $(cat "$OUTPUT_DIR_ABS/version.txt")"
 EOF
 chmod +x "$OUTPUT_DIR_ABS/setup_env.sh"
+chmod +x "$OUTPUT_DIR_ABS"/bin/gst-*-1.0
 
 # --- Create key=val env file for Tequila to read directly ---
 cat > "$OUTPUT_DIR_ABS/env" <<EOF

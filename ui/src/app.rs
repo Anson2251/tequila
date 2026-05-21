@@ -9,7 +9,7 @@ use tracker;
 
 use prefix::{Manager as PrefixManager, WinePrefix};
 use prefix::runtime::RuntimeManager;
-use super::{PrefixListModel, PrefixDetailsModel, AppManagerModel, RegistryEditorModel, RuntimeManagerModel};
+use super::{PrefixListModel, PrefixDetailsModel, AppManagerModel, RegistryEditorModel, SettingsWindow};
 use gtk::gdk;
 
 #[tracker::track]
@@ -46,7 +46,7 @@ pub struct AppModel {
     #[tracker::do_not_track]
     sync_progress_label: gtk::Label,
     #[tracker::do_not_track]
-    runtime_manager: relm4::prelude::AsyncController<RuntimeManagerModel>,
+    settings: relm4::prelude::AsyncController<SettingsWindow>,
 }
 
 #[derive(Debug)]
@@ -68,7 +68,7 @@ pub enum AppMsg {
     ReloadPrefixes(Vec<WinePrefix>),
     SyncProgress(usize, usize),
     ToggleSidebar,
-    ShowRuntimeManager,
+    ShowSettings,
     RuntimesUpdated(RuntimeManager),
 }
 
@@ -134,10 +134,10 @@ impl SimpleComponent for AppModel {
 
         let settings_btn = gtk::Button::builder()
             .icon_name("emblem-system-symbolic")
-            .tooltip_text("Runtime Settings")
+            .tooltip_text("Settings")
             .build();
         let st_sender = sender.clone();
-        settings_btn.connect_clicked(move |_| { st_sender.input(AppMsg::ShowRuntimeManager); });
+        settings_btn.connect_clicked(move |_| { st_sender.input(AppMsg::ShowSettings); });
         header_bar.pack_end(&settings_btn);
 
         let switcher = adw::ViewSwitcherTitle::new();
@@ -211,10 +211,10 @@ impl SimpleComponent for AppModel {
                 _ => AppMsg::RefreshPrefixes
             });
 
-        let runtime_manager = RuntimeManagerModel::builder()
+        let settings = SettingsWindow::builder()
             .launch(prefix_manager.clone())
             .forward(sender.input_sender(), |msg| match msg {
-                crate::runtime_manager::RuntimeManagerOutput::RuntimesUpdated(rm) => {
+                crate::settings::SettingsOutput::RuntimesUpdated(rm) => {
                     AppMsg::RuntimesUpdated(rm)
                 }
             });
@@ -300,21 +300,6 @@ impl SimpleComponent for AppModel {
             sync_overlay_box.set_visible(true);
             sync_progress_label.set_label("Scanning...");
         }
-        // Apply sync overlay CSS
-        {
-            let provider = gtk::CssProvider::new();
-            provider.load_from_data(".sync-overlay-bg { background: rgba(0, 0, 0, 0.45); } \
-                                     .sync-progress-box { background: @view_bg_color; border: 1px solid @borders; border-radius: 12px; padding: 24px; } \
-                                     .icon-bg { background: #eee; border-radius: 24px; padding: 12px; } \
-                                     .desc-text { padding: 8px; } \
-                                     .app-item { border: 2px solid transparent; border-radius: 8px; } \
-                                     .app-item.running { border-color: @accent_color; }");
-            gtk::style_context_add_provider_for_display(
-                &gdk::Display::default().unwrap(),
-                &provider,
-                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-            );
-        }
         // macOS: remove rounded window corners, macOS would do that
         #[cfg(target_os = "macos")]
         {
@@ -339,7 +324,7 @@ impl SimpleComponent for AppModel {
             prefix_details,
             app_manager,
             registry_editor,
-            runtime_manager,
+            settings,
             content_stack,
             content_box,
             flap,
@@ -356,10 +341,6 @@ impl SimpleComponent for AppModel {
 
         let widgets = view_output!();
 
-        // Auto-select first prefix and trigger background scan if cold start
-        if !model.prefixes.is_empty() {
-            sender_clone.input(AppMsg::ShowPrefixDetails(0));
-        }
         if needs_sync {
             let bg_sender = sender.clone();
             glib::spawn_future_local(async move {
@@ -725,9 +706,6 @@ impl SimpleComponent for AppModel {
                 self.sync_overlay.set_visible(false);
                 self.prefixes = fresh.clone();
                 self.prefix_list.emit(crate::prefix_list::PrefixListMsg::SetPrefixes(fresh));
-                if !self.prefixes.is_empty() {
-                    sender.input(AppMsg::ShowPrefixDetails(0));
-                }
             }
             AppMsg::ReloadPrefixes(fresh) => {
                 // Light reload: update the prefix list without app scanning or auto-select
@@ -770,8 +748,8 @@ impl SimpleComponent for AppModel {
                 self.set_sidebar_visible(visible);
                 self.flap.set_reveal_flap(visible);
             }
-            AppMsg::ShowRuntimeManager => {
-                self.runtime_manager.widget().present();
+            AppMsg::ShowSettings => {
+                self.settings.widget().present();
             }
             AppMsg::RuntimesUpdated(rm) => {
                 // Sync the updated RuntimeManager into our PrefixManager
@@ -787,8 +765,17 @@ impl SimpleComponent for AppModel {
 
 pub fn initialize_custom_icons() {
     gio::resources_register_include!("icons.gresource").unwrap();
+    gio::resources_register_include!("css.gresource").unwrap();
 
     let display = gdk::Display::default().unwrap();
     let theme = gtk::IconTheme::for_display(&display);
     theme.add_resource_path("/com/anson2251/tequila/icons");
+
+    let provider = gtk::CssProvider::new();
+    provider.load_from_resource("/com/anson2251/tequila/css/style.css");
+    gtk::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
 }

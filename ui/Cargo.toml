@@ -7,11 +7,18 @@ edition = "2024"
 base = { path = "../base" }
 prefix = { path = "../prefix" }
 dirs = "6.0.0"
-gtk4 = "0.11.3"
+gtk4 = { version = "0.11.3", features = ["v4_10"] }
 relm4 = {version = "0.11.0", features = ["libadwaita"]}
+libadwaita = {version = "0.9", features = ["v1_8"]}
 tracker = "0.2.2"
 tokio = { version = "1.52.3", features = ["full"] }
 notify = { version = "8", default-features = false, features = ["macos_kqueue"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSPanel", "NSResponder", "NSSavePanel", "NSWindow"] }
 
 [build-dependencies]
 glib-build-tools = "0.22.0"

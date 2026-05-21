@@ -8,9 +8,10 @@ base = { path = "../base" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "system-proxy"], default-features = false }
 walkdir = "2.5"
 sha2 = "0.11"
 hex = "0.4"
 zstd = "0.13"
 dirs = "6.0.0"
+glib = "0.22"

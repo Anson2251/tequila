@@ -3,6 +3,9 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
+use std::time::Duration;
 use base::error::{Result, PrefixError};
 use crate::Channel;
 
@@ -13,6 +16,15 @@ pub fn runtimes_dir() -> PathBuf {
 }
 
 pub type ProgressFn = Box<dyn Fn(u64, u64) + Send>;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum InstallPhase {
+    Download,
+    Verify,
+    Extract,
+}
+
+pub type PhaseProgressFn = Box<dyn Fn(u64, u64, InstallPhase) + Send>;
 
 pub async fn download_file(url: &str, dest: &Path, progress: &ProgressFn) -> Result<()> {
     let mut response = reqwest::get(url)
@@ -129,25 +141,100 @@ pub async fn download_channel_runtime(channel: &Channel, progress: &ProgressFn) 
     Ok(final_dir)
 }
 
-pub async fn download_gstreamer(data_dir: &Path, progress: &ProgressFn) -> Result<PathBuf> {
+pub async fn download_gstreamer(data_dir: &Path, progress: PhaseProgressFn, cancel: Option<Arc<AtomicBool>>) -> Result<PathBuf> {
     let gst_cask = crate::homebrew::fetch_cask("gstreamer-runtime")
         .await
         .map_err(|e| PrefixError::Process(e))?;
-    let gst_dir = data_dir.join("runtimes").join("gstreamer");
-    let tmp_dir = data_dir.join("runtimes").join(".tmp-gstreamer");
+    let runtimes_dir = data_dir.join("runtimes");
+    fs::create_dir_all(&runtimes_dir)?;
+    cleanup_temp_runtimes(&runtimes_dir);
+    let _lock = LockGuard::acquire(&runtimes_dir, "gstreamer")?;
+    let gst_dir = runtimes_dir.join("gstreamer");
+    let tmp_dir = runtimes_dir.join(".tmp-gstreamer");
     if tmp_dir.exists() { fs::remove_dir_all(&tmp_dir)?; }
     fs::create_dir_all(&tmp_dir)?;
     let pkg_path = tmp_dir.join("gstreamer.pkg");
-    download_file(&gst_cask.url, &pkg_path, progress).await?;
+
+    // Download phase (0-80% of overall in the UI) — inline to share the
+    // PhaseProgressFn without requiring Sync on Box<dyn Fn>.
+    {
+        // Check cancel before starting the download request
+        if let Some(ref cancel) = cancel {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(PrefixError::Process("Download cancelled".to_string()));
+            }
+        }
+        let mut response = reqwest::get(&gst_cask.url)
+            .await
+            .map_err(|e| PrefixError::Process(format!("Download failed: {}", e)))?;
+        let total = response.content_length().unwrap_or(0);
+        let mut file = fs::File::create(&pkg_path)?;
+        let mut downloaded: u64 = 0;
+        loop {
+            if let Some(ref cancel) = cancel {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(PrefixError::Process("Download cancelled".to_string()));
+                }
+            }
+            match response.chunk().await {
+                Ok(Some(chunk)) => {
+                    file.write_all(&chunk)?;
+                    downloaded += chunk.len() as u64;
+                    progress(downloaded, total, InstallPhase::Download);
+                }
+                Ok(None) => break,
+                Err(e) => return Err(PrefixError::Process(format!("Download error: {}", e))),
+            }
+        }
+        file.flush()?;
+    }
+
+    // Verify phase (80-90%)
+    progress(0, 1, InstallPhase::Verify);
     verify_sha256(&pkg_path, &gst_cask.sha256)?;
+    progress(1, 1, InstallPhase::Verify);
+
+    // Extract phase (90-100%) — spawn on a thread to avoid blocking main loop
+    progress(0, 1, InstallPhase::Extract);
     let script = include_str!("../../scripts/extract-gstreamer-pkg.sh");
     let script_path = tmp_dir.join("extract.sh");
     fs::write(&script_path, script)?;
-    let status = Command::new("bash")
-        .arg(&script_path).arg("--force").arg(&pkg_path).arg(&tmp_dir)
-        .status()
-        .map_err(|e| PrefixError::Process(format!("Failed to run extract script: {}", e)))?;
-    if !status.success() { return Err(PrefixError::Process("GStreamer extraction failed".to_string())); }
+    let (tx, rx) = mpsc::channel();
+    let script_c = script_path.clone();
+    let pkg_c = pkg_path.clone();
+    let tmp_c = tmp_dir.clone();
+    std::thread::spawn(move || {
+        let result = Command::new("bash")
+            .arg(&script_c).arg("--force").arg(&pkg_c).arg(&tmp_c)
+            .status();
+        let _ = tx.send(result);
+    });
+    loop {
+        if let Some(ref cancel) = cancel {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(PrefixError::Process("Download cancelled".to_string()));
+            }
+        }
+        match rx.try_recv() {
+            Ok(result) => {
+                let status = result.map_err(|e| {
+                    PrefixError::Process(format!("Failed to run extract script: {}", e))
+                })?;
+                if !status.success() {
+                    return Err(PrefixError::Process("GStreamer extraction failed".to_string()));
+                }
+                break;
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                glib::timeout_future(Duration::from_millis(200)).await;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return Err(PrefixError::Process("Extraction thread crashed".to_string()));
+            }
+        }
+    }
+    progress(1, 1, InstallPhase::Extract);
+
     if gst_dir.exists() { fs::remove_dir_all(&gst_dir)?; }
     fs::rename(&tmp_dir, &gst_dir)?;
     Ok(gst_dir)

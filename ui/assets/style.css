@@ -1,0 +1,29 @@
+.sync-overlay-bg {
+    background: rgba(0, 0, 0, 0.45);
+}
+
+.sync-progress-box {
+    background: @view_bg_color;
+    border: 1px solid @borders;
+    border-radius: 12px;
+    padding: 24px;
+}
+
+.icon-bg {
+    background: #eee;
+    border-radius: 24px;
+    padding: 12px;
+}
+
+.desc-text {
+    padding: 8px;
+}
+
+.app-item {
+    border: 2px solid transparent;
+    border-radius: 8px;
+}
+
+.app-item.running {
+    border-color: @accent_color;
+}

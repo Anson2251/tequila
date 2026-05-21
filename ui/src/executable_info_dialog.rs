@@ -281,7 +281,8 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                                         .map(|e| e.imported_modules.iter()
                                             .map(|m| format!("\u{2022} {}", m))
                                             .collect::<Vec<_>>()
-                                            .join("\n"))
+                                            .join("\n")
+                                            .to_uppercase())
                                         .unwrap_or_default(),
                                 },
                             },

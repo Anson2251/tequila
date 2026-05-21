@@ -67,6 +67,15 @@ impl SimpleComponent for PrefixListModel {
 
         populate(&model.prefixes, &model.list_box, &sender);
 
+        // If more than one prefix, deselect all (don't auto-select first)
+        if model.prefixes.len() != 1 {
+            let lb = model.list_box.clone();
+            gtk::glib::idle_add_local(move || {
+                lb.unselect_all();
+                gtk::glib::ControlFlow::Break
+            });
+        }
+
         ComponentParts { model, widgets }
     }
 
@@ -212,4 +221,6 @@ fn populate(
         row.add_controller(gesture);
         list_box.append(&row);
     }
+    // Unselect all to prevent auto-selecting the first row
+    list_box.unselect_all();
 }
