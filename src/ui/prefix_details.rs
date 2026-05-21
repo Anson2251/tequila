@@ -12,6 +12,7 @@ pub struct PrefixDetailsModel {
     saved_config: PrefixConfig,
     editing: bool,
     prefix_index: usize,
+    wine_runtime_display: String,
     #[tracker::do_not_track]
     description_buffer: gtk::TextBuffer,
     #[tracker::do_not_track]
@@ -25,11 +26,11 @@ pub enum PrefixDetailsMsg {
     SaveConfig,
     UpdateName(String),
     UpdateDescription(String),
-    // Architecture and Wine Version are auto-detected and read-only
     CancelEdit,
     ConfigUpdated(PrefixConfig),
     PrefixPathUpdated(PathBuf),
     SetPrefixIndex(usize),
+    SetWineVersionDisplay(String),
 }
 
 #[relm4::component(pub)]
@@ -105,12 +106,12 @@ impl SimpleComponent for PrefixDetailsModel {
                             },
 
                             gtk::Entry {
-                                #[track = "model.changed(PrefixDetailsModel::config())"]
-                                set_text: &model.config.wine_version.as_deref().unwrap_or(""),
+                                #[track = "model.changed(PrefixDetailsModel::wine_runtime_display())"]
+                                set_text: &model.wine_runtime_display,
                                 set_hexpand: true,
                                 set_editable: false,
                                 set_sensitive: false,
-                                add_css_class: "monospace",
+                                set_css_classes: &["monospace"],
                             },
                         },
                     },
@@ -234,6 +235,7 @@ impl SimpleComponent for PrefixDetailsModel {
             saved_config: config,
             editing: false,
             prefix_index: 0,
+            wine_runtime_display: String::new(),
             description_buffer: gtk::TextBuffer::new(None),
             suppress_update: false,
             tracker: 0,
@@ -319,6 +321,9 @@ impl SimpleComponent for PrefixDetailsModel {
             }
             PrefixDetailsMsg::SetPrefixIndex(index) => {
                 self.set_prefix_index(index);
+            }
+            PrefixDetailsMsg::SetWineVersionDisplay(display) => {
+                self.set_wine_runtime_display(display);
             }
             // PrefixDetailsMsg::ShowAppManager => {
             //     // This message will be handled by the parent component (main.rs)

@@ -135,7 +135,10 @@ impl RuntimeManager {
         bundle_dir: PathBuf,
     ) -> &Runtime {
         let id = channel.runtime_id().to_string();
-        let version = run_wine_version(&bundle_dir.join("bin").join("wine"))
+        let wine_bin = discover_wine_binary(&bundle_dir);
+        let version = wine_bin
+            .as_ref()
+            .and_then(|b| run_wine_version(b))
             .unwrap_or_else(|| "unknown".to_string());
 
         // Remove existing runtime with the same id (update in place)
@@ -168,7 +171,10 @@ impl RuntimeManager {
         bundle_dir: PathBuf,
     ) -> &Runtime {
         let id = format!("wine-{}", version);
-        let wine_version = run_wine_version(&bundle_dir.join("bin").join("wine"))
+        let wine_bin = discover_wine_binary(&bundle_dir);
+        let wine_version = wine_bin
+            .as_ref()
+            .and_then(|b| run_wine_version(b))
             .unwrap_or_else(|| version.to_string());
 
         self.runtimes.retain(|r| r.id != id);
@@ -321,6 +327,7 @@ fn run_wine_version(wine_bin: &Path) -> Option<String> {
             .ok()
             .map(|s| s.trim().to_string())
     } else {
+        println!("Fail to fetch version");
         None
     }
 }
@@ -333,32 +340,16 @@ fn discover_wine_binary(path: &Path) -> Option<PathBuf> {
         return Some(candidate);
     }
 
-    // 2. macOS .app bundle: Contents/Resources/wine/bin/wine
-    if path.extension().map(|e| e == "app").unwrap_or(false) {
-        let app_candidate = path
-            .join("Contents")
-            .join("Resources")
-            .join("wine")
-            .join("bin")
-            .join("wine");
-        if app_candidate.is_file() {
-            return Some(app_candidate);
+    // 2. Path itself is a .app bundle
+    if path.to_string_lossy().ends_with("app") {
+        let wine = path.join("Contents").join("Resources").join("wine").join("bin").join("wine");
+        if wine.is_file() {
+            return Some(wine);
         }
     }
 
-    // 3. Search for Contents/Resources/wine/bin/wine within the path (loose .app detection)
-    let app_inner = path
-        .join("Contents")
-        .join("Resources")
-        .join("wine")
-        .join("bin")
-        .join("wine");
-    if app_inner.is_file() {
-        return Some(app_inner);
-    }
-
-    // 4. Walk the directory (max depth 4) looking for bin/wine
-    for entry in walkdir::WalkDir::new(path).max_depth(4).into_iter().flatten() {
+    // 3. Walk as last resort
+    for entry in walkdir::WalkDir::new(path).max_depth(6).into_iter().flatten() {
         if entry.file_type().is_file() && entry.file_name() == "wine" {
             let parent = entry.path().parent()?;
             if parent.file_name().map(|n| n == "bin").unwrap_or(false) {

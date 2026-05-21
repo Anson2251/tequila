@@ -128,7 +128,7 @@ pub fn extract_tar_zst(archive: &Path, dest_dir: &Path) -> Result<()> {
 /// Search `dir` recursively for a `bin/wine` executable.
 /// Handles nested directories (e.g. tarballs that extract into a subdirectory).
 pub fn find_wine_binary(dir: &Path) -> Result<PathBuf> {
-    for entry in walkdir::WalkDir::new(dir).max_depth(5).into_iter().flatten() {
+    for entry in walkdir::WalkDir::new(dir).max_depth(6).into_iter().flatten() {
         if entry.file_type().is_file() && entry.file_name() == "wine" {
             let parent = entry.path().parent().unwrap();
             if parent.file_name().map(|n| n == "bin").unwrap_or(false) {
@@ -188,6 +188,7 @@ pub async fn download_channel_runtime(
         .map_err(|e| PrefixError::Process(e))?;
 
     let runtimes = runtimes_dir();
+    fs::create_dir_all(&runtimes)?;
     let runtime_id = channel.runtime_id().to_string();
     let tmp_dir = runtimes.join(format!(".tmp-{}", runtime_id));
     let final_dir = runtimes.join(&runtime_id);

@@ -104,10 +104,9 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                 gtk::Separator {},
 
                 // Information sections in a scrolled window
-                gtk::ScrolledWindow {
+                gtk::Box {
                     set_vexpand: true,
-                    set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
-                    set_min_content_height: 400,
+                    set_orientation: gtk::Orientation::Vertical,
 
                     gtk::Box {
                         set_orientation: gtk::Orientation::Vertical,
@@ -115,26 +114,18 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                         set_margin_all: 10,
 
                         // File Information Section
-                        gtk::Box {
-                            set_orientation: gtk::Orientation::Vertical,
-                            set_spacing: 8,
-
-                            gtk::Label {
-                                set_label: "File Information",
-                                add_css_class: "heading",
-                                set_halign: gtk::Align::Start,
-                            },
+                        gtk::Frame {
+                            set_label: Some("File Information"),
 
                             gtk::Box {
                                 set_orientation: gtk::Orientation::Vertical,
                                 set_spacing: 8,
-                                set_margin_start: 20,
+                                set_margin_all: 10,
 
                                 // Executable Path
                                 gtk::Box {
                                     set_orientation: gtk::Orientation::Horizontal,
                                     set_spacing: 15,
-                                    set_margin_bottom: 5,
 
                                     gtk::Label {
                                         set_label: "Path:",
@@ -159,7 +150,6 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                                 gtk::Box {
                                     set_orientation: gtk::Orientation::Horizontal,
                                     set_spacing: 15,
-                                    set_margin_bottom: 5,
 
                                     gtk::Label {
                                         set_label: "File Version:",
@@ -181,7 +171,6 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                                 gtk::Box {
                                     set_orientation: gtk::Orientation::Horizontal,
                                     set_spacing: 15,
-                                    set_margin_bottom: 5,
 
                                     gtk::Label {
                                         set_label: "Product Version:",
@@ -203,7 +192,6 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                                 gtk::Box {
                                     set_orientation: gtk::Orientation::Horizontal,
                                     set_spacing: 15,
-                                    set_margin_bottom: 5,
 
                                     gtk::Label {
                                         set_label: "Company:",
@@ -225,7 +213,6 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                                 gtk::Box {
                                     set_orientation: gtk::Orientation::Horizontal,
                                     set_spacing: 15,
-                                    set_margin_bottom: 5,
 
                                     gtk::Label {
                                         set_label: "Product:",
@@ -242,63 +229,61 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                                         set_selectable: true,
                                     },
                                 },
+                            },
+                        },
 
-                                // File Description
-                                gtk::Box {
-                                    set_orientation: gtk::Orientation::Vertical,
-                                    set_spacing: 5,
-                                    set_margin_bottom: 5,
+                        // File Description Section
+                        gtk::Frame {
+                            set_label: Some("File Description"),
 
-                                    gtk::Label {
-                                        set_label: "File Description:",
-                                        add_css_class: "caption",
-                                        set_halign: gtk::Align::Start,
-                                    },
-                                    gtk::Label {
-                                        #[watch]
-                                        set_label: model.executable.as_ref()
+                            gtk::ScrolledWindow {
+                                set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
+                                set_min_content_height: 60,
+                                set_margin_all: 10,
+
+                                gtk::TextView {
+                                    set_editable: false,
+                                    set_cursor_visible: true,
+                                    set_wrap_mode: gtk::WrapMode::Word,
+                                    #[watch]
+                                    set_buffer: Some(&gtk::TextBuffer::builder()
+                                        .text(model.executable.as_ref()
                                             .and_then(|e| e.file_description.as_deref())
-                                            .unwrap_or("N/A"),
-                                        set_halign: gtk::Align::Start,
-                                        set_selectable: true,
-                                        set_wrap: true,
-                                        set_wrap_mode: gtk::pango::WrapMode::WordChar,
-                                        set_max_width_chars: 40,
-                                        set_margin_start: 20,
-                                    },
+                                            .unwrap_or("N/A"))
+                                        .build()),
                                 },
                             },
                         },
 
                         // Imported Modules Section
-                        gtk::Box {
-                            set_orientation: gtk::Orientation::Vertical,
-                            set_spacing: 8,
+                        gtk::Frame {
+                            set_label: Some("Imported Modules"),
+                            set_vexpand: true,
                             #[watch]
                             set_visible: model.executable.as_ref()
                                 .map(|e| !e.imported_modules.is_empty())
                                 .unwrap_or(false),
 
-                            gtk::Label {
-                                set_label: "Imported Modules",
-                                add_css_class: "heading",
-                                set_halign: gtk::Align::Start,
-                            },
-
                             gtk::ScrolledWindow {
                                 set_policy: (gtk::PolicyType::Automatic, gtk::PolicyType::Automatic),
                                 set_min_content_height: 150,
                                 set_max_content_height: 200,
+                                set_margin_all: 10,
 
-                                gtk::TextView {
-                                    set_editable: false,
-                                    set_cursor_visible: false,
-                                    set_margin_start: 20,
-                                    set_buffer: Some(&gtk::TextBuffer::builder()
-                                        .text(model.executable.as_ref()
-                                            .map(|e| e.imported_modules.join("\n"))
-                                            .unwrap_or_else(|| "".to_string()))
-                                        .build()),
+                                gtk::Label {
+                                    set_halign: gtk::Align::Start,
+                                    set_valign: gtk::Align::Start,
+                                    set_selectable: true,
+                                    set_wrap: true,
+                                    set_wrap_mode: gtk::pango::WrapMode::WordChar,
+                                    set_xalign: 0.0,
+                                    #[watch]
+                                    set_label: &model.executable.as_ref()
+                                        .map(|e| e.imported_modules.iter()
+                                            .map(|m| format!("\u{2022} {}", m))
+                                            .collect::<Vec<_>>()
+                                            .join("\n"))
+                                        .unwrap_or_default(),
                                 },
                             },
                         },

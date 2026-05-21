@@ -13,7 +13,6 @@ pub struct PrefixListModel {
 #[derive(Debug)]
 pub enum PrefixListMsg {
     SelectPrefix(usize),
-    ShowPrefixDetails(usize),
     SetPrefixes(Vec<WinePrefix>),
 }
 
@@ -21,7 +20,6 @@ pub enum PrefixListMsg {
 pub enum PrefixListOutput {
     SelectPrefix(usize),
     DeselectPrefix,
-    ShowPrefixDetails(usize),
     DeletePrefix(usize),
 }
 
@@ -53,7 +51,7 @@ impl SimpleComponent for PrefixListModel {
         let widgets = view_output!();
 
         let sender_clone = sender.clone();
-        widgets.prefix_list_box.connect_row_activated(move |list_box, row| {
+        widgets.prefix_list_box.connect_row_activated(move |_, row| {
             if let Some(idx) = row.index().checked_sub(0) {
                 if idx >= 0 {
                     sender_clone.input(PrefixListMsg::SelectPrefix(idx as usize));
@@ -88,9 +86,6 @@ impl SimpleComponent for PrefixListModel {
                     self.selected_prefix = Some(index);
                     let _ = sender.output(PrefixListOutput::SelectPrefix(index));
                 }
-            }
-            PrefixListMsg::ShowPrefixDetails(index) => {
-                let _ = sender.output(PrefixListOutput::ShowPrefixDetails(index));
             }
         }
     }

@@ -230,6 +230,12 @@ impl Manager {
     }
 
     pub fn create_prefix(&self, name: &str, architecture: &str) -> Result<PathBuf> {
+        let runtime_id = self.runtime_manager.default_id.clone();
+        self.create_prefix_with_runtime(name, architecture, &runtime_id)
+    }
+
+    /// Create a prefix with a specific runtime id.
+    pub fn create_prefix_with_runtime(&self, name: &str, architecture: &str, runtime_id: &str) -> Result<PathBuf> {
         let prefix_path = self.wine_dir.join(name);
 
         if prefix_path.exists() {
@@ -239,7 +245,7 @@ impl Manager {
         fs::create_dir_all(&prefix_path)?;
 
         let mut config = PrefixConfig::new(name.to_string(), architecture.to_string());
-        config.wine_version = Some(self.runtime_manager.default_id.clone());
+        config.wine_version = Some(runtime_id.to_string());
         config.save_to_file(&prefix_path)?;
 
         let wine_arch = if architecture == "win32" { "win32" } else { "win64" };

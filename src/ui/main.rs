@@ -9,7 +9,8 @@ use std::sync::Arc;
 use tracker;
 
 use crate::prefix::{Manager as PrefixManager, WinePrefix};
-use super::{PrefixListModel, PrefixDetailsModel, AppManagerModel, RegistryEditorModel};
+use crate::prefix::runtime::RuntimeManager;
+use super::{PrefixListModel, PrefixDetailsModel, AppManagerModel, RegistryEditorModel, RuntimeManagerModel};
 use gtk::gdk;
 
 #[tracker::track]
@@ -45,6 +46,8 @@ pub struct AppModel {
     sync_progress_bar: gtk::ProgressBar,
     #[tracker::do_not_track]
     sync_progress_label: gtk::Label,
+    #[tracker::do_not_track]
+    runtime_manager: relm4::prelude::AsyncController<RuntimeManagerModel>,
 }
 
 #[derive(Debug)]
@@ -66,6 +69,8 @@ pub enum AppMsg {
     ReloadPrefixes(Vec<WinePrefix>),
     SyncProgress(usize, usize),
     ToggleSidebar,
+    ShowRuntimeManager,
+    RuntimesUpdated(RuntimeManager),
 }
 
 impl AppModel {
@@ -128,6 +133,14 @@ impl SimpleComponent for AppModel {
         new_prefix_btn.connect_clicked(move |_| { np_sender.input(AppMsg::CreatePrefix); });
         header_bar.pack_end(&new_prefix_btn);
 
+        let settings_btn = gtk::Button::builder()
+            .icon_name("emblem-system-symbolic")
+            .tooltip_text("Runtime Settings")
+            .build();
+        let st_sender = sender.clone();
+        settings_btn.connect_clicked(move |_| { st_sender.input(AppMsg::ShowRuntimeManager); });
+        header_bar.pack_end(&settings_btn);
+
         let switcher = adw::ViewSwitcherTitle::new();
         switcher.set_title("Tequila");
         switcher.set_sensitive(false);
@@ -169,7 +182,6 @@ impl SimpleComponent for AppModel {
             .forward(sender.input_sender(), |msg| match msg {
                 crate::ui::prefix_list::PrefixListOutput::SelectPrefix(index) => AppMsg::SelectPrefix(index),
                 crate::ui::prefix_list::PrefixListOutput::DeselectPrefix => AppMsg::HideDetails,
-                crate::ui::prefix_list::PrefixListOutput::ShowPrefixDetails(index) => AppMsg::ShowPrefixDetails(index),
                 crate::ui::prefix_list::PrefixListOutput::DeletePrefix(index) => AppMsg::DeletePrefix(index),
             });
 
@@ -198,6 +210,14 @@ impl SimpleComponent for AppModel {
                     AppMsg::ConfigUpdated(0, config)
                 }
                 _ => AppMsg::RefreshPrefixes
+            });
+
+        let runtime_manager = RuntimeManagerModel::builder()
+            .launch(prefix_manager.clone())
+            .forward(sender.input_sender(), |msg| match msg {
+                crate::ui::runtime_manager::RuntimeManagerOutput::RuntimesUpdated(rm) => {
+                    AppMsg::RuntimesUpdated(rm)
+                }
             });
 
         let prefix_list_widget = prefix_list.widget().clone().upcast::<gtk::Widget>();
@@ -320,6 +340,7 @@ impl SimpleComponent for AppModel {
             prefix_details,
             app_manager,
             registry_editor,
+            runtime_manager,
             content_stack,
             content_box,
             flap,
@@ -396,6 +417,29 @@ impl SimpleComponent for AppModel {
                 arch_combo.append_text("win64");
                 arch_combo.set_active(Some(1));
 
+                // Runtime selector
+                let runtime_label = gtk::Label::builder()
+                    .label("Wine Runtime:")
+                    .halign(gtk::Align::Start)
+                    .build();
+                let runtime_combo = gtk::ComboBoxText::builder()
+                    .hexpand(true)
+                    .build();
+                {
+                    let rm = self.prefix_manager.runtime_manager();
+                    let default_id = &rm.default_id;
+                    let mut default_idx = 0u32;
+                    for (i, rt) in rm.runtimes.iter().enumerate() {
+                        runtime_combo.append_text(&format!("{} ({})", rt.name, rt.wine_version));
+                        if &rt.id == default_id {
+                            default_idx = i as u32;
+                        }
+                    }
+                    if !rm.runtimes.is_empty() {
+                        runtime_combo.set_active(Some(default_idx));
+                    }
+                }
+
                 // Progress bar for prefix creation (hidden until Create is clicked)
                 let progress_bar = gtk::ProgressBar::builder()
                     .visible(false)
@@ -410,6 +454,8 @@ impl SimpleComponent for AppModel {
                 content_box.append(&name_entry);
                 content_box.append(&arch_label);
                 content_box.append(&arch_combo);
+                content_box.append(&runtime_label);
+                content_box.append(&runtime_combo);
                 content_box.append(&progress_label);
                 content_box.append(&progress_bar);
 
@@ -435,9 +481,18 @@ impl SimpleComponent for AppModel {
                         .map(|t| t.to_string())
                         .unwrap_or_else(|| "win64".to_string());
 
+                    // Get selected runtime id
+                    let runtime_id = runtime_combo.active()
+                        .and_then(|i| {
+                            let rm = prefix_manager.runtime_manager();
+                            rm.runtimes.get(i as usize).map(|r| r.id.clone())
+                        })
+                        .unwrap_or_else(|| prefix_manager.runtime_manager().default_id.clone());
+
                     // Show progress, disable inputs
                     name_entry.set_sensitive(false);
                     arch_combo.set_sensitive(false);
+                    runtime_combo.set_sensitive(false);
                     progress_label.set_visible(true);
                     progress_bar.set_visible(true);
                     progress_bar.pulse();
@@ -458,8 +513,10 @@ impl SimpleComponent for AppModel {
                     let ctx = glib::MainContext::default();
                     ctx.spawn_local(async move {
                         let n = prefix_name.clone();
+                        let a = architecture.clone();
+                        let rid = runtime_id.clone();
                         let result = tokio::task::spawn_blocking(move || {
-                            pm.create_prefix(&n, &architecture)
+                            pm.create_prefix_with_runtime(&n, &a, &rid)
                         }).await;
 
                         // Back on the main thread
@@ -587,6 +644,13 @@ impl SimpleComponent for AppModel {
                     self.app_manager.emit(crate::ui::app_manager::AppManagerMsg::PrefixPathUpdated(prefix_path.clone()));
                     self.registry_editor.emit(crate::ui::registry_editor::RegistryEditorMsg::PrefixPathUpdated(prefix_path));
 
+                    // Resolve runtime display name
+                    let runtime_display = config.wine_version.as_ref()
+                        .and_then(|id| self.prefix_manager.runtime_manager().get(id))
+                        .map(|r| format!("{} ({})", r.name, r.wine_version))
+                        .unwrap_or_else(|| config.wine_version.as_deref().unwrap_or("Unknown").to_string());
+                    self.prefix_details.emit(crate::ui::prefix_details::PrefixDetailsMsg::SetWineVersionDisplay(runtime_display));
+
                     self.prefix_details.emit(crate::ui::prefix_details::PrefixDetailsMsg::ConfigUpdated(config.clone()));
                     self.prefix_details.emit(crate::ui::prefix_details::PrefixDetailsMsg::SetPrefixIndex(index));
                     self.app_manager.emit(crate::ui::app_manager::AppManagerMsg::ConfigUpdated(config.clone()));
@@ -706,6 +770,15 @@ impl SimpleComponent for AppModel {
                 let visible = !self.sidebar_visible;
                 self.set_sidebar_visible(visible);
                 self.flap.set_reveal_flap(visible);
+            }
+            AppMsg::ShowRuntimeManager => {
+                self.runtime_manager.widget().present();
+            }
+            AppMsg::RuntimesUpdated(rm) => {
+                // Sync the updated RuntimeManager into our PrefixManager
+                let pm_rm = self.prefix_manager.runtime_manager_mut();
+                let _old = std::mem::replace(pm_rm, rm);
+                self.prefix_manager.save_runtime_state();
             }
         }
 
