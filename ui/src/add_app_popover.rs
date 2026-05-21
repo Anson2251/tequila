@@ -43,6 +43,7 @@ pub enum AddAppPopoverOutput {
 #[derive(Debug)]
 struct AvailableExecutable {
     executable: RegisteredExecutable,
+    #[allow(dead_code)]
     index: usize,
     selected: bool,
     arch_label: String,
@@ -50,6 +51,7 @@ struct AvailableExecutable {
 
 #[derive(Debug)]
 enum AvailableExecutableMsg {
+    #[allow(dead_code)]
     Select,
 }
 
@@ -87,9 +89,9 @@ impl FactoryComponent for AvailableExecutable {
                 gtk::CheckButton {
                     #[watch]
                     set_active: self.selected,
-                    connect_toggled[sender, index] => move |check| {
+                    connect_toggled[sender, index] => move |_check| {
                         // Always send the output - we'll handle deduplication at the parent level
-                        sender.output(AvailableExecutableOutput::Selected(index.current_index()));
+                        let _ = sender.output(AvailableExecutableOutput::Selected(index.current_index()));
                     },
                 },
 
@@ -311,7 +313,7 @@ impl AsyncComponent for AddAppPopoverModel {
     }
 
     async fn init(
-        init: Self::Init,
+        _init: Self::Init,
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {

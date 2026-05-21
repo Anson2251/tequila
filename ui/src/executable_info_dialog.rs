@@ -1,7 +1,6 @@
 use relm4::{
     gtk, RelmWidgetExt,
-    component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
-    view
+    component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender}
 };
 use gtk::prelude::*;
 use prefix::config::RegisteredExecutable;

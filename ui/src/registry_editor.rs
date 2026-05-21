@@ -1,4 +1,4 @@
-use relm4::{Component, ComponentController, ComponentParts, ComponentSender, Controller, RelmWidgetExt, SimpleComponent, gtk, view};
+use relm4::{Component, ComponentController, ComponentParts, ComponentSender, Controller, RelmWidgetExt, SimpleComponent, gtk};
 use gtk::prelude::*;
 use prefix::PrefixError;
 use prefix::config::PrefixConfig;
@@ -498,7 +498,7 @@ impl SimpleComponent for RegistryEditorModel {
                     // Handle SetEditing message but don't forward to parent
                     RegistryEditorMsg::ToggleEdit // Dummy message to satisfy compiler
                 }
-                super::dpi_tab::DpiMsg::SetDpiSettings { log_pixels } => {
+                super::dpi_tab::DpiMsg::SetDpiSettings { log_pixels: _ } => {
                     // Handle SetDpiSettings message but don't forward to parent
                     RegistryEditorMsg::ToggleEdit // Dummy message to satisfy compiler
                 }
@@ -949,7 +949,7 @@ impl SimpleComponent for RegistryEditorModel {
                     self.x11_driver_controller.emit(super::x11_driver_tab::X11DriverMsg::SetEditing(true));
                 }
             }
-            RegistryEditorMsg::RegistryEditorUpdateTabs(windows_version, d3d_renderer, d3d_csmt, offscreen_rendering_mode, video_memory_size, audio_driver, virtual_desktop, dpi_settings, x11_driver_settings, mac_driver_settings) => {
+            RegistryEditorMsg::RegistryEditorUpdateTabs(windows_version, d3d_renderer, d3d_csmt, offscreen_rendering_mode, video_memory_size, audio_driver, _virtual_desktop, dpi_settings, x11_driver_settings, mac_driver_settings) => {
                 // Update Windows Version tab
                 self.windows_version_controller.emit(super::windows_version_tab::WindowsVersionMsg::SetWindowsVersion(windows_version));
                 

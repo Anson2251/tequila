@@ -1,5 +1,5 @@
 use relm4::{
-    ComponentParts, ComponentSender, RelmWidgetExt, WidgetRef, component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender, AsyncController}, gtk, prelude::{AsyncComponentController, FactoryVecDeque}, view
+    RelmWidgetExt, component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender, AsyncController}, gtk, prelude::AsyncComponentController, view
 };
 use gtk::prelude::*;
 use prefix::config::{RegisteredExecutable, PrefixConfig};

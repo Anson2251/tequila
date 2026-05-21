@@ -1,4 +1,8 @@
 mod manager;
+mod prefix_ops;
+mod runtime_ops;
+mod app_ops;
+mod launch_ops;
 mod wine_processes;
 mod process_tracker;
 

@@ -1,7 +1,6 @@
 use relm4::{
     gtk,
     component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
-    view,
     RelmWidgetExt,
 };
 use relm4::factory::{FactoryComponent, FactorySender, FactoryVecDeque, DynamicIndex};
@@ -48,6 +47,7 @@ impl Drop for RegisteredAppsListModel {
 #[derive(Debug)]
 struct RegisteredExecutableItem {
     executable: RegisteredExecutable,
+    #[allow(dead_code)]
     index: usize,
     is_running: bool,
 }
@@ -278,7 +278,7 @@ impl AsyncComponent for RegisteredAppsListModel {
                     // Get the index of the selected child
                     let index = child.index() as usize;
                     if index < self.registered_executables.len() {
-                        sender.output(RegisteredAppsListOutput::Selected(index));
+                        let _ = sender.output(RegisteredAppsListOutput::Selected(index));
                     }
                 }
             }

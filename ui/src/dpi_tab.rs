@@ -1,4 +1,4 @@
-use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, gtk, view};
+use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, gtk};
 use gtk::prelude::*;
 use tracker;
 

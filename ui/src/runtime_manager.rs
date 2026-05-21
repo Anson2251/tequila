@@ -1,12 +1,11 @@
 use relm4::{
     gtk, adw,
-    component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
-    view, RelmWidgetExt,
+    component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender}, RelmWidgetExt,
 };
 use gtk::prelude::*;
 use prefix::{
     Manager as PrefixManager,
-    runtime::{Runtime, RuntimeSource, Channel, RuntimeManager},
+    runtime::{RuntimeSource, Channel, RuntimeManager},
 };
 use tracker;
 use std::path::PathBuf;
@@ -22,12 +21,14 @@ pub struct RuntimeManagerModel {
     #[tracker::do_not_track]
     add_popover: gtk::Popover,
     #[tracker::do_not_track]
+    #[allow(dead_code)]
     channel_combo: gtk::ComboBoxText,
     #[tracker::do_not_track]
     progress_bar: gtk::ProgressBar,
     #[tracker::do_not_track]
     progress_label: gtk::Label,
     #[tracker::do_not_track]
+    #[allow(dead_code)]
     download_button: gtk::Button,
     #[tracker::do_not_track]
     download_stack: gtk::Stack,
@@ -471,7 +472,7 @@ fn build_add_popover(sender: AsyncComponentSender<RuntimeManagerModel>) -> gtk::
         .build();
 
     {
-        let stack_ref = gtk::Stack::new(); // placeholder, will find parent
+        let _stack_ref = gtk::Stack::new(); // placeholder, will find parent
         let back_btn = gtk::Button::with_label("Back");
         back_btn.connect_clicked(move |btn| {
             // Walk up to find the Stack and switch to menu page

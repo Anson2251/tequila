@@ -16,6 +16,7 @@ pub struct PrefixDetailsModel {
     #[tracker::do_not_track]
     description_buffer: gtk::TextBuffer,
     #[tracker::do_not_track]
+    #[allow(dead_code)]
     suppress_update: bool,
 }
 

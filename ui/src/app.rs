@@ -1,8 +1,7 @@
 use gtk::prelude::*;
 use gtk4::gio;
 use gtk::glib;
-use relm4::view;
-use relm4::{ComponentController, ComponentParts, ComponentSender, Controller, RelmWidgetExt, SimpleComponent, Component, gtk, adw, component::AsyncComponentController};
+use relm4::{ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent, Component, gtk, adw, component::AsyncComponentController};
 use relm4::prelude::{AsyncController, AsyncComponent};
 use std::path::PathBuf;
 use std::sync::Arc;
