@@ -1,4 +1,5 @@
 pub mod app;
+pub mod prefix;
 pub mod prefix_list;
 pub mod prefix_details;
 pub mod app_manager;

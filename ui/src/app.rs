@@ -48,6 +48,8 @@ pub struct AppModel {
     sync_progress_label: gtk::Label,
     #[tracker::do_not_track]
     settings: relm4::prelude::AsyncController<SettingsWindow>,
+    #[tracker::do_not_track]
+    create_prefix_dialog: Option<relm4::Controller<crate::prefix::create_dialog::CreatePrefixDialog>>,
 }
 
 #[derive(Debug)]
@@ -342,6 +344,7 @@ impl SimpleComponent for AppModel {
             app_manager,
             registry_editor,
             settings,
+            create_prefix_dialog: None,
             content_stack,
             content_box,
             flap,
@@ -387,178 +390,10 @@ impl SimpleComponent for AppModel {
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
         match msg {
             AppMsg::ShowCreatePrefixDialog => {
-                let dialog = gtk::Window::builder()
-                    .title("Create New Wine Prefix")
-                    .modal(true)
-                    .transient_for(&self.main_window)
-                    .build();
-
-                let header_bar = gtk::HeaderBar::new();
-                let cancel_btn = gtk::Button::with_label("Cancel");
-                let create_btn = gtk::Button::builder()
-                    .label("Create")
-                    .css_classes(["suggested-action"])
-                    .build();
-                header_bar.pack_start(&cancel_btn);
-                header_bar.pack_end(&create_btn);
-                #[cfg(not(target_os = "macos"))]
-                dialog.set_titlebar(Some(&header_bar));
-
-                let content_box = gtk::Box::builder()
-                    .orientation(gtk::Orientation::Vertical)
-                    .spacing(10)
-                    .margin_top(10)
-                    .margin_bottom(10)
-                    .margin_start(10)
-                    .margin_end(10)
-                    .build();
-
-                let name_label = gtk::Label::builder()
-                    .label("Prefix Name:")
-                    .halign(gtk::Align::Start)
-                    .build();
-                let name_entry = gtk::Entry::builder()
-                    .placeholder_text("Enter prefix name")
-                    .hexpand(true)
-                    .width_chars(32)
-                    .build();
-
-                let arch_label = gtk::Label::builder()
-                    .label("Architecture:")
-                    .halign(gtk::Align::Start)
-                    .build();
-                let arch_combo = gtk::DropDown::from_strings(&["win32", "win64"]);
-                arch_combo.set_hexpand(true);
-                arch_combo.set_selected(1);
-
-                // Runtime selector
-                let runtime_label = gtk::Label::builder()
-                    .label("Wine Runtime:")
-                    .halign(gtk::Align::Start)
-                    .build();
-                let runtime_combo = {
-                    let rm = self.prefix_manager.runtime_manager();
-                    let default_id = &rm.default_id;
-                    let items: Vec<String> = rm.runtimes.iter()
-                        .map(|rt| format!("{} ({})", rt.name, rt.wine_version))
-                        .collect();
-                    let str_refs: Vec<&str> = items.iter().map(|s| s.as_str()).collect();
-                    let combo = gtk::DropDown::from_strings(&str_refs);
-                    combo.set_hexpand(true);
-                    if let Some(idx) = rm.runtimes.iter().position(|rt| &rt.id == default_id) {
-                        combo.set_selected(idx as u32);
-                    }
-                    combo
-                };
-
-                // Progress bar for prefix creation (hidden until Create is clicked)
-                let progress_bar = gtk::ProgressBar::builder()
-                    .visible(false)
-                    .pulse_step(0.1)
-                    .build();
-                let progress_label = gtk::Label::builder()
-                    .label("Creating Wine prefix...")
-                    .visible(false)
-                    .build();
-
-                content_box.append(&name_label);
-                content_box.append(&name_entry);
-                content_box.append(&arch_label);
-                content_box.append(&arch_combo);
-                content_box.append(&runtime_label);
-                content_box.append(&runtime_combo);
-                content_box.append(&progress_label);
-                content_box.append(&progress_bar);
-
-                dialog.set_child(Some(&content_box));
-                dialog.present();
-
-                let dlg_clone = dialog.clone();
-                cancel_btn.clone().connect_clicked(move |_| dlg_clone.close());
-                let cancel_btn_for_create = cancel_btn.clone();
-
-                let btn_for_create = create_btn.clone();
-                let create_btn_clone = btn_for_create.clone();
-                let prefix_manager = self.prefix_manager.clone();
-                let main_window = self.main_window.clone();
-                let sender_clone = sender.clone();
-                create_btn_clone.connect_clicked(move |_| {
-                    let name = name_entry.text().to_string();
-                    if name.is_empty() {
-                        eprintln!("Prefix name cannot be empty");
-                        return;
-                    }
-
-                    let architecture = if arch_combo.selected() == 0 { "win32" } else { "win64" };
-
-                    // Get selected runtime id
-                    let runtime_id = {
-                        let i = runtime_combo.selected() as usize;
-                        let rm = prefix_manager.runtime_manager();
-                        rm.runtimes.get(i).map(|r| r.id.clone())
-                            .unwrap_or_else(|| rm.default_id.clone())
-                    };
-
-                    // Show progress, disable inputs
-                    name_entry.set_sensitive(false);
-                    arch_combo.set_sensitive(false);
-                    runtime_combo.set_sensitive(false);
-                    progress_label.set_visible(true);
-                    progress_bar.set_visible(true);
-                    progress_bar.pulse();
-                    cancel_btn_for_create.set_sensitive(false);
-                    btn_for_create.set_sensitive(false);
-
-                    let pb = progress_bar.clone();
-                    let pulse_id = glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
-                        pb.pulse();
-                        glib::ControlFlow::Continue
-                    });
-
-                    let prefix_name = name.clone();
-                    let pm = prefix_manager.clone();
-                    let sc = sender_clone.clone();
-                    let dlg = dialog.clone();
-                    let mw = main_window.clone();
-                    let ctx = glib::MainContext::default();
-                    ctx.spawn_local(async move {
-                        let n = prefix_name.clone();
-                        let a = architecture;
-                        let rid = runtime_id.clone();
-                        let result = tokio::task::spawn_blocking(move || {
-                            pm.create_prefix_with_runtime(&n, &a, &rid)
-                        }).await;
-
-                        // Back on the main thread
-                        pulse_id.remove();
-                        dlg.close();
-                        let err_msg: Option<String> = match result {
-                            Ok(Ok(prefix_path)) => {
-                                println!("Created prefix: {} at {}", prefix_name, prefix_path.display());
-                                sc.input(AppMsg::RefreshPrefixes);
-                                return;
-                            }
-                            Ok(Err(e)) => Some(format!("{}", e)),
-                            Err(e) => Some(if e.is_panic() {
-                                "panic in create_prefix".to_string()
-                            } else {
-                                format!("{}", e)
-                            }),
-                        };
-
-                        if let Some(msg) = err_msg {
-                            eprintln!("Failed to create prefix '{}': {}", prefix_name, msg);
-                            let alert = adw::AlertDialog::new(
-                                Some("Error"),
-                                Some(&format!("Failed to create prefix '{}': {}", prefix_name, msg)),
-                            );
-                            alert.add_response("ok", "OK");
-                            alert.set_default_response(Some("ok"));
-                            alert.set_close_response("ok");
-                            alert.choose(Some(&mw), None::<&gtk::gio::Cancellable>, |_| {});
-                        }
-                    });
-                });
+                let dialog = crate::prefix::create_dialog::CreatePrefixDialog::builder()
+                    .launch((self.prefix_manager.clone(), self.main_window.clone()))
+                    .forward(sender.input_sender(), |msg| msg);
+                self.create_prefix_dialog = Some(dialog);
             }
             AppMsg::CreatePrefix => {
                 // Legacy handler - now redirected to dialog
