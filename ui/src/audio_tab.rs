@@ -44,20 +44,14 @@ impl SimpleComponent for AudioModel {
                     set_halign: gtk::Align::Start,
                 },
 
-                gtk::ComboBoxText {
-                    append_text: "Default",
-                    append_text: "PulseAudio",
-                    append_text: "ALSA",
-                    append_text: "OSS",
-                    append_text: "CoreAudio",
+                gtk::DropDown {
+                    set_model: Some(&gtk::StringList::new(&["Default", "PulseAudio", "ALSA", "OSS", "CoreAudio"])),
                     #[track = "model.changed(AudioModel::audio_driver())"]
-                    set_active: aud_code_to_index(model.audio_driver.as_deref().unwrap_or("")),
+                    set_selected: aud_code_to_index(model.audio_driver.as_deref().unwrap_or("")).unwrap_or(0),
                     #[track = "model.changed(AudioModel::editing())"]
                     set_sensitive: model.editing,
-                    connect_changed[sender] => move |combo| {
-                        if let Some(idx) = combo.active() {
-                            sender.input(AudioMsg::UpdateAudioDriver(aud_index_to_code(idx as u32).to_string()));
-                        }
+                    connect_selected_notify[sender] => move |dd| {
+                        sender.input(AudioMsg::UpdateAudioDriver(aud_index_to_code(dd.selected()).to_string()));
                     },
                 },
             }

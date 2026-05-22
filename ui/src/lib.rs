@@ -17,7 +17,7 @@ pub mod mac_driver_tab;
 pub mod x11_driver_tab;
 pub mod dpi_tab;
 
-pub use app::{AppModel, AppMsg, initialize_custom_icons};
+pub use app::{AppModel, AppMsg, initialize_custom_resources};
 pub use prefix_details::PrefixDetailsModel;
 pub use app_manager::AppManagerModel;
 pub use prefix_list::{PrefixListModel, PrefixListOutput};

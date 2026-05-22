@@ -61,19 +61,14 @@ impl SimpleComponent for D3DModel {
                     set_halign: gtk::Align::Start,
                 },
 
-                gtk::ComboBoxText {
-                    append_text: "Default",
-                    append_text: "OpenGL",
-                    append_text: "Vulkan",
-                    append_text: "GDI",
+                gtk::DropDown {
+                    set_model: Some(&gtk::StringList::new(&["Default", "OpenGL", "Vulkan", "GDI"])),
                     #[track = "model.changed(D3DModel::d3d_renderer())"]
-                    set_active: d3d_renderer_code_to_index(model.d3d_renderer.as_deref().unwrap_or("")),
+                    set_selected: d3d_renderer_code_to_index(model.d3d_renderer.as_deref().unwrap_or("")).unwrap_or(0),
                     #[track = "model.changed(D3DModel::editing())"]
                     set_sensitive: model.editing,
-                    connect_changed[sender] => move |combo| {
-                        if let Some(idx) = combo.active() {
-                            sender.input(D3DMsg::UpdateD3DRenderer(d3d_renderer_index_to_code(idx as u32).to_string()));
-                        }
+                    connect_selected_notify[sender] => move |dd| {
+                        sender.input(D3DMsg::UpdateD3DRenderer(d3d_renderer_index_to_code(dd.selected()).to_string()));
                     },
                 },
 
@@ -102,18 +97,14 @@ impl SimpleComponent for D3DModel {
                     set_margin_top: 10,
                 },
 
-                gtk::ComboBoxText {
-                    append_text: "Default",
-                    append_text: "FBO",
-                    append_text: "Backbuffer",
+                gtk::DropDown {
+                    set_model: Some(&gtk::StringList::new(&["Default", "FBO", "Backbuffer"])),
                     #[track = "model.changed(D3DModel::offscreen_rendering_mode())"]
-                    set_active: offscreen_code_to_index(model.offscreen_rendering_mode.as_deref().unwrap_or("")),
+                    set_selected: offscreen_code_to_index(model.offscreen_rendering_mode.as_deref().unwrap_or("")).unwrap_or(0),
                     #[track = "model.changed(D3DModel::editing())"]
                     set_sensitive: model.editing,
-                    connect_changed[sender] => move |combo| {
-                        if let Some(idx) = combo.active() {
-                            sender.input(D3DMsg::UpdateOffscreenRenderingMode(offscreen_index_to_code(idx as u32).to_string()));
-                        }
+                    connect_selected_notify[sender] => move |dd| {
+                        sender.input(D3DMsg::UpdateOffscreenRenderingMode(offscreen_index_to_code(dd.selected()).to_string()));
                     },
                 },
 

@@ -574,7 +574,7 @@ fn init_gst_css() {
         ".gst-installed { background-color: rgba(76, 175, 80, 0.12); }"
     );
     if let Some(display) = Display::default() {
-        gtk::StyleContext::add_provider_for_display(
+        gtk::style_context_add_provider_for_display(
             &display,
             &provider,
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,

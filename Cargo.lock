@@ -783,6 +783,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "gdk4-macos"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42afa6569445e74c7a580eda5c1d0e9adbc9760ef5f05d9ceff46c77469c5c00"
+dependencies = [
+ "gdk4",
+ "gdk4-macos-sys",
+ "gio",
+ "glib",
+ "libc",
+]
+
+[[package]]
+name = "gdk4-macos-sys"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a05900af362b667cc58e4270ad4367677bdcd190c76fb85f49236e072a17365"
+dependencies = [
+ "gdk4-sys",
+ "glib-sys",
+ "libc",
+ "system-deps",
+]
+
+[[package]]
 name = "gdk4-sys"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3164,6 +3189,7 @@ dependencies = [
  "base",
  "block2",
  "dirs",
+ "gdk4-macos",
  "glib-build-tools",
  "gtk4",
  "libadwaita",

@@ -19,6 +19,7 @@ objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSURL"] }
 objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSPanel", "NSResponder", "NSSavePanel", "NSWindow", "NSMenu", "NSMenuItem", "NSEvent"] }
+gdk4-macos = { version = "0.11", features = ["v4_8"] }
 
 [build-dependencies]
 glib-build-tools = "0.22.0"

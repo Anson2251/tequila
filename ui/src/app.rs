@@ -31,9 +31,9 @@ pub struct AppModel {
     #[tracker::do_not_track]
     content_box: gtk::Stack,
     #[tracker::do_not_track]
-    pub flap: adw::Flap,
+    pub flap: adw::OverlaySplitView,
     #[tracker::do_not_track]
-    pub switcher: adw::ViewSwitcherTitle,
+    pub switcher: adw::ViewSwitcher,
     #[tracker::do_not_track]
     pub prefix_store: Arc<prefix::PrefixStore>,
     pub syncing: bool,
@@ -110,7 +110,7 @@ impl SimpleComponent for AppModel {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let sender_clone = sender.clone();
+        let _sender_clone = sender.clone();
 
         // Build header bar early
         let header_bar = gtk::HeaderBar::new();
@@ -141,8 +141,9 @@ impl SimpleComponent for AppModel {
         settings_btn.connect_clicked(move |_| { st_sender.input(AppMsg::ShowSettings); });
         header_bar.pack_end(&settings_btn);
 
-        let switcher = adw::ViewSwitcherTitle::new();
-        switcher.set_title("Tequila");
+        let switcher = adw::ViewSwitcher::builder()
+            .policy(adw::ViewSwitcherPolicy::Wide)
+            .build();
         switcher.set_sensitive(false);
         header_bar.set_title_widget(Some(&switcher));
 
@@ -250,14 +251,12 @@ impl SimpleComponent for AppModel {
         content_box.add_named(&content_stack, Some("tabs"));
         content_box.set_visible_child_name("empty");
 
-        // Build Flap (native collapsible sidebar)
-        let flap = adw::Flap::builder()
-            .reveal_flap(true)
-            .fold_policy(adw::FlapFoldPolicy::Never)
-            .transition_type(adw::FlapTransitionType::Slide)
+        // Build sidebar using OverlaySplitView (replaces deprecated Flap)
+        let flap = adw::OverlaySplitView::builder()
+            .sidebar(&prefix_list_widget)
+            .content(&content_box)
+            .show_sidebar(true)
             .build();
-        flap.set_flap(Some(&prefix_list_widget));
-        flap.set_content(Some(&content_box));
         prefix_list_widget.set_width_request(240);
 
         let flap_widget = flap.clone().upcast::<gtk::Widget>();
@@ -315,6 +314,23 @@ impl SimpleComponent for AppModel {
             );
         }
 
+        // macOS: prevent fullscreen by setting collectionBehavior on the native NSWindow.
+        // Uses connect_realize instead of notify::surface because the latter
+        // may not fire reliably during initial window setup.
+        #[cfg(target_os = "macos")]
+        root.connect_realize(move |window| {
+            if let Some(surface) = window.surface() {
+                if let Some(macos_surface) = surface.downcast_ref::<gdk4_macos::MacosSurface>() {
+                    let ns_ptr = macos_surface.native();
+                    let ns_window: &objc2_app_kit::NSWindow =
+                        unsafe { &*(ns_ptr as *const objc2_app_kit::NSWindow) };
+                    ns_window.setCollectionBehavior(
+                        objc2_app_kit::NSWindowCollectionBehavior::FullScreenNone,
+                    );
+                }
+            }
+        });
+
         let overlay_widget = sync_overlay.clone().upcast::<gtk::Widget>();
 
         let model = AppModel {
@@ -371,19 +387,23 @@ impl SimpleComponent for AppModel {
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
         match msg {
             AppMsg::ShowCreatePrefixDialog => {
-                let dialog = gtk::Dialog::builder()
+                let dialog = gtk::Window::builder()
                     .title("Create New Wine Prefix")
                     .modal(true)
+                    .transient_for(&self.main_window)
                     .build();
 
+                let header_bar = gtk::HeaderBar::new();
+                let cancel_btn = gtk::Button::with_label("Cancel");
+                let create_btn = gtk::Button::builder()
+                    .label("Create")
+                    .css_classes(["suggested-action"])
+                    .build();
+                header_bar.pack_start(&cancel_btn);
+                header_bar.pack_end(&create_btn);
                 #[cfg(not(target_os = "macos"))]
-                dialog.set_titlebar(&gtk::HeaderBar::new());
+                dialog.set_titlebar(Some(&header_bar));
 
-                dialog.set_transient_for(Some(&self.main_window));
-                dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-                dialog.add_button("Create", gtk::ResponseType::Ok);
-
-                let content_area = dialog.content_area();
                 let content_box = gtk::Box::builder()
                     .orientation(gtk::Orientation::Vertical)
                     .spacing(10)
@@ -407,35 +427,29 @@ impl SimpleComponent for AppModel {
                     .label("Architecture:")
                     .halign(gtk::Align::Start)
                     .build();
-                let arch_combo = gtk::ComboBoxText::builder()
-                    .hexpand(true)
-                    .build();
-                arch_combo.append_text("win32");
-                arch_combo.append_text("win64");
-                arch_combo.set_active(Some(1));
+                let arch_combo = gtk::DropDown::from_strings(&["win32", "win64"]);
+                arch_combo.set_hexpand(true);
+                arch_combo.set_selected(1);
 
                 // Runtime selector
                 let runtime_label = gtk::Label::builder()
                     .label("Wine Runtime:")
                     .halign(gtk::Align::Start)
                     .build();
-                let runtime_combo = gtk::ComboBoxText::builder()
-                    .hexpand(true)
-                    .build();
-                {
+                let runtime_combo = {
                     let rm = self.prefix_manager.runtime_manager();
                     let default_id = &rm.default_id;
-                    let mut default_idx = 0u32;
-                    for (i, rt) in rm.runtimes.iter().enumerate() {
-                        runtime_combo.append_text(&format!("{} ({})", rt.name, rt.wine_version));
-                        if &rt.id == default_id {
-                            default_idx = i as u32;
-                        }
+                    let items: Vec<String> = rm.runtimes.iter()
+                        .map(|rt| format!("{} ({})", rt.name, rt.wine_version))
+                        .collect();
+                    let str_refs: Vec<&str> = items.iter().map(|s| s.as_str()).collect();
+                    let combo = gtk::DropDown::from_strings(&str_refs);
+                    combo.set_hexpand(true);
+                    if let Some(idx) = rm.runtimes.iter().position(|rt| &rt.id == default_id) {
+                        combo.set_selected(idx as u32);
                     }
-                    if !rm.runtimes.is_empty() {
-                        runtime_combo.set_active(Some(default_idx));
-                    }
-                }
+                    combo
+                };
 
                 // Progress bar for prefix creation (hidden until Create is clicked)
                 let progress_bar = gtk::ProgressBar::builder()
@@ -456,35 +470,34 @@ impl SimpleComponent for AppModel {
                 content_box.append(&progress_label);
                 content_box.append(&progress_bar);
 
-                content_area.append(&content_box);
+                dialog.set_child(Some(&content_box));
                 dialog.present();
 
+                let dlg_clone = dialog.clone();
+                cancel_btn.clone().connect_clicked(move |_| dlg_clone.close());
+                let cancel_btn_for_create = cancel_btn.clone();
+
+                let btn_for_create = create_btn.clone();
+                let create_btn_clone = btn_for_create.clone();
                 let prefix_manager = self.prefix_manager.clone();
                 let main_window = self.main_window.clone();
                 let sender_clone = sender.clone();
-                dialog.connect_response(move |dialog, response| {
-                    if response != gtk::ResponseType::Ok {
-                        dialog.close();
-                        return;
-                    }
-
+                create_btn_clone.connect_clicked(move |_| {
                     let name = name_entry.text().to_string();
                     if name.is_empty() {
                         eprintln!("Prefix name cannot be empty");
                         return;
                     }
 
-                    let architecture = arch_combo.active_text()
-                        .map(|t| t.to_string())
-                        .unwrap_or_else(|| "win64".to_string());
+                    let architecture = if arch_combo.selected() == 0 { "win32" } else { "win64" };
 
                     // Get selected runtime id
-                    let runtime_id = runtime_combo.active()
-                        .and_then(|i| {
-                            let rm = prefix_manager.runtime_manager();
-                            rm.runtimes.get(i as usize).map(|r| r.id.clone())
-                        })
-                        .unwrap_or_else(|| prefix_manager.runtime_manager().default_id.clone());
+                    let runtime_id = {
+                        let i = runtime_combo.selected() as usize;
+                        let rm = prefix_manager.runtime_manager();
+                        rm.runtimes.get(i).map(|r| r.id.clone())
+                            .unwrap_or_else(|| rm.default_id.clone())
+                    };
 
                     // Show progress, disable inputs
                     name_entry.set_sensitive(false);
@@ -493,8 +506,8 @@ impl SimpleComponent for AppModel {
                     progress_label.set_visible(true);
                     progress_bar.set_visible(true);
                     progress_bar.pulse();
-                    dialog.set_response_sensitive(gtk::ResponseType::Ok, false);
-                    dialog.set_response_sensitive(gtk::ResponseType::Cancel, false);
+                    cancel_btn_for_create.set_sensitive(false);
+                    btn_for_create.set_sensitive(false);
 
                     let pb = progress_bar.clone();
                     let pulse_id = glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
@@ -510,7 +523,7 @@ impl SimpleComponent for AppModel {
                     let ctx = glib::MainContext::default();
                     ctx.spawn_local(async move {
                         let n = prefix_name.clone();
-                        let a = architecture.clone();
+                        let a = architecture;
                         let rid = runtime_id.clone();
                         let result = tokio::task::spawn_blocking(move || {
                             pm.create_prefix_with_runtime(&n, &a, &rid)
@@ -758,7 +771,7 @@ impl SimpleComponent for AppModel {
             AppMsg::ToggleSidebar => {
                 let visible = !self.sidebar_visible;
                 self.set_sidebar_visible(visible);
-                self.flap.set_reveal_flap(visible);
+                self.flap.set_show_sidebar(visible);
             }
             AppMsg::ShowSettings => {
                 self.settings.widget().present();
@@ -775,7 +788,7 @@ impl SimpleComponent for AppModel {
     }
 }
 
-pub fn initialize_custom_icons() {
+pub fn initialize_custom_resources() {
     gio::resources_register_include!("icons.gresource").unwrap();
     gio::resources_register_include!("css.gresource").unwrap();
 
@@ -873,9 +886,9 @@ static MENU_CALLBACK: OnceLock<Box<dyn Fn(AppMsg) + Send + Sync>> = OnceLock::ne
 #[cfg(target_os = "macos")]
 static MENU_TARGET: OnceLock<objc2::rc::Retained<TequilaMenuHandler>> = OnceLock::new();
 
-/// Objective-C class that acts as the target for native NSMenuItem actions.
-/// Uses a global callback to dispatch AppMsg values to the component.
 #[cfg(target_os = "macos")]
+// Objective-C class that acts as the target for native NSMenuItem actions.
+// Uses a global callback to dispatch AppMsg values to the component.
 objc2::define_class!(
     #[unsafe(super(objc2::runtime::NSObject))]
     #[name = "TequilaMenuHandler"]
@@ -888,13 +901,16 @@ objc2::define_class!(
             let tag: isize = unsafe { msg_send![sender, tag] };
             match tag {
                 1 => {
-                    let about = adw::AboutWindow::new();
+                    let about = adw::AboutDialog::new();
                     about.set_application_name("Tequila");
                     about.set_application_icon("com.github.anson2251.tequila");
                     about.set_version("0.1.0");
                     about.set_comments("Wine Prefix Manager");
                     about.set_developer_name("Anson2251");
-                    about.present();
+                    let parent = gio::Application::default()
+                        .and_then(|a| a.downcast::<gtk::Application>().ok())
+                        .and_then(|app| app.active_window());
+                    about.present(parent.as_ref());
                 }
                 2 => {
                     if let Some(cb) = MENU_CALLBACK.get() {
@@ -934,11 +950,11 @@ impl TequilaMenuHandler {
 
 /// Create a native macOS menu bar using NSMenu / NSMenuItem.
 #[cfg(target_os = "macos")]
-fn setup_macos_native_menu(app: &gtk::Application, sender: ComponentSender<AppModel>) {
+fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<AppModel>) {
     use objc2::runtime::NSObject;
     use objc2::{MainThreadMarker, sel};
     use objc2_foundation::NSString;
-    use objc2_app_kit::{NSApp, NSMenu, NSMenuItem, NSApplication, NSEventModifierFlags};
+    use objc2_app_kit::{NSApp, NSMenu, NSMenuItem, NSEventModifierFlags};
 
     let mtm = unsafe { MainThreadMarker::new_unchecked() };
 

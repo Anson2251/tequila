@@ -44,26 +44,18 @@ impl SimpleComponent for WindowsVersionModel {
                     set_halign: gtk::Align::Start,
                 },
 
-                gtk::ComboBoxText {
-                    append_text: "Default",
-                    append_text: "Windows 10",
-                    append_text: "Windows 8.1",
-                    append_text: "Windows 8",
-                    append_text: "Windows 7",
-                    append_text: "Windows Vista",
-                    append_text: "Windows XP",
-                    append_text: "Windows 2000",
-                    append_text: "Windows ME",
-                    append_text: "Windows 98",
-                    append_text: "Windows 95",
+                gtk::DropDown {
+                    set_model: Some(&gtk::StringList::new(&[
+                        "Default", "Windows 10", "Windows 8.1", "Windows 8",
+                        "Windows 7", "Windows Vista", "Windows XP", "Windows 2000",
+                        "Windows ME", "Windows 98", "Windows 95",
+                    ])),
                     #[track = "model.changed(WindowsVersionModel::windows_version())"]
-                    set_active: win_code_to_index(model.windows_version.as_deref().unwrap_or("")),
+                    set_selected: win_code_to_index(model.windows_version.as_deref().unwrap_or("")).unwrap_or(0),
                     #[track = "model.changed(WindowsVersionModel::editing())"]
                     set_sensitive: model.editing,
-                    connect_changed[sender] => move |combo| {
-                        if let Some(idx) = combo.active() {
-                            sender.input(WindowsVersionMsg::UpdateWindowsVersion(win_index_to_code(idx as u32).to_string()));
-                        }
+                    connect_selected_notify[sender] => move |dd| {
+                        sender.input(WindowsVersionMsg::UpdateWindowsVersion(win_index_to_code(dd.selected()).to_string()));
                     },
                 },
             }

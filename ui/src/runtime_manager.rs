@@ -23,7 +23,7 @@ pub struct RuntimeManagerModel {
     add_popover: gtk::Popover,
     #[tracker::do_not_track]
     #[allow(dead_code)]
-    channel_combo: gtk::ComboBoxText,
+    channel_combo: gtk::DropDown,
     #[tracker::do_not_track]
     progress_bar: gtk::ProgressBar,
     #[tracker::do_not_track]
@@ -304,25 +304,17 @@ impl AsyncComponent for RuntimeManagerModel {
             RuntimeManagerMsg::ImportRuntime => {
                 self.add_popover.popdown();
 
-                let dialog = gtk::FileChooserDialog::builder()
+                let file_dialog = gtk::FileDialog::builder()
                     .title("Select Wine Installation")
-                    .action(gtk::FileChooserAction::SelectFolder)
-                    .modal(true)
                     .build();
-                dialog.set_transient_for(Some(root));
-                dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-                dialog.add_button("Select", gtk::ResponseType::Accept);
-
                 let s = sender.clone();
-                dialog.connect_response(move |dlg, response| {
-                    if response == gtk::ResponseType::Accept {
-                        if let Some(path) = dlg.file().and_then(|f| f.path()) {
+                file_dialog.select_folder(Some(root), None::<&gtk::gio::Cancellable>, move |result| {
+                    if let Ok(file) = result {
+                        if let Some(path) = file.path() {
                             let _ = s.input(RuntimeManagerMsg::ImportFromPath(path));
                         }
                     }
-                    dlg.close();
                 });
-                dialog.present();
             }
             RuntimeManagerMsg::ImportFromPath(path) => {
                 let dir_name = path
@@ -424,13 +416,11 @@ fn build_add_popover(sender: AsyncComponentSender<RuntimeManagerModel>) -> gtk::
             .build(),
     );
 
-    let channel_combo = gtk::ComboBoxText::builder()
-        .hexpand(true)
-        .build();
-    channel_combo.append_text("Stable (wine-stable)");
-    channel_combo.append_text("Devel (wine@devel)");
-    channel_combo.append_text("Staging (wine@staging)");
-    channel_combo.set_active(Some(0));
+    let channel_combo = gtk::DropDown::from_strings(&[
+        "Stable (wine-stable)", "Devel (wine@devel)", "Staging (wine@staging)",
+    ]);
+    channel_combo.set_hexpand(true);
+    channel_combo.set_selected(0);
     download_page.append(&channel_combo);
 
     let progress_bar = gtk::ProgressBar::builder()
@@ -477,10 +467,10 @@ fn build_add_popover(sender: AsyncComponentSender<RuntimeManagerModel>) -> gtk::
             .css_classes(["suggested-action"])
             .build();
         download_btn.connect_clicked(move |_| {
-            let channel = match combo.active() {
-                Some(0) => Channel::Stable,
-                Some(1) => Channel::Devel,
-                Some(2) => Channel::Staging,
+            let channel = match combo.selected() {
+                0 => Channel::Stable,
+                1 => Channel::Devel,
+                2 => Channel::Staging,
                 _ => Channel::Stable,
             };
             s.input(RuntimeManagerMsg::StartDownload(channel));
@@ -507,7 +497,7 @@ fn build_add_popover(sender: AsyncComponentSender<RuntimeManagerModel>) -> gtk::
 /// Extract widget references from the download stack page.
 fn extract_download_widgets(
     stack: &gtk::Stack,
-) -> (gtk::ComboBoxText, gtk::ProgressBar, gtk::Label, gtk::Button) {
+) -> (gtk::DropDown, gtk::ProgressBar, gtk::Label, gtk::Button) {
     // Get the download page (second child of stack)
     let download_page = stack
         .first_child()
@@ -526,8 +516,8 @@ fn extract_download_widgets(
     // [3] = progress_bar, [4] = progress_label, [5] = button_box
     let channel_combo = children
         .get(2)
-        .and_then(|c| c.clone().downcast::<gtk::ComboBoxText>().ok())
-        .unwrap_or_else(|| gtk::ComboBoxText::new());
+        .and_then(|c| c.clone().downcast::<gtk::DropDown>().ok())
+        .unwrap_or_else(|| gtk::DropDown::from_strings(&["Stable", "Devel", "Staging"]));
     let progress_bar = children
         .get(3)
         .and_then(|c| c.clone().downcast::<gtk::ProgressBar>().ok())

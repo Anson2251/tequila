@@ -29,8 +29,8 @@ impl AsyncComponent for ExecutableInfoDialogModel {
     view! {
         gtk::Window {
             set_title: Some("Executable Information"),
-            set_default_width: 500,
-            set_default_height: 600,
+            set_default_width: 480,
+            set_default_height: 640,
             set_modal: true,
             set_resizable: true,
             #[watch]
@@ -102,10 +102,10 @@ impl AsyncComponent for ExecutableInfoDialogModel {
 
                 gtk::Separator {},
 
-                // Information sections in a scrolled window
-                gtk::Box {
-                    set_vexpand: true,
-                    set_orientation: gtk::Orientation::Vertical,
+                // Information sections
+                gtk::ScrolledWindow {
+                    set_hexpand: true,
+                    set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
 
                     gtk::Box {
                         set_orientation: gtk::Orientation::Vertical,
@@ -263,34 +263,25 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                                 .map(|e| !e.imported_modules.is_empty())
                                 .unwrap_or(false),
 
-                            gtk::ScrolledWindow {
-                                set_policy: (gtk::PolicyType::Automatic, gtk::PolicyType::Automatic),
-                                set_min_content_height: 150,
-                                set_max_content_height: 200,
-                                set_margin_all: 10,
-
-                                gtk::Label {
-                                    set_halign: gtk::Align::Start,
-                                    set_valign: gtk::Align::Start,
-                                    set_selectable: true,
-                                    set_wrap: true,
-                                    set_wrap_mode: gtk::pango::WrapMode::WordChar,
-                                    set_xalign: 0.0,
-                                    #[watch]
-                                    set_label: &model.executable.as_ref()
-                                        .map(|e| e.imported_modules.iter()
-                                            .map(|m| format!("\u{2022} {}", m))
-                                            .collect::<Vec<_>>()
-                                            .join("\n")
-                                            .to_uppercase())
-                                        .unwrap_or_default(),
-                                },
+                            gtk::Label {
+                                set_halign: gtk::Align::Start,
+                                set_valign: gtk::Align::Start,
+                                set_selectable: true,
+                                set_wrap: true,
+                                set_wrap_mode: gtk::pango::WrapMode::WordChar,
+                                set_xalign: 0.0,
+                                #[watch]
+                                set_label: &model.executable.as_ref()
+                                    .map(|e| e.imported_modules.iter()
+                                        .map(|m| format!("\u{2022} {}", m))
+                                        .collect::<Vec<_>>()
+                                        .join("\n")
+                                        .to_uppercase())
+                                    .unwrap_or_default(),
                             },
                         },
                     },
                 },
-
-                gtk::Separator {},
 
                 // Close button
                 gtk::Box {

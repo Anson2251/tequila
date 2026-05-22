@@ -25,7 +25,7 @@ pub struct RuntimeSettings {
     #[tracker::do_not_track]
     add_menu: gtk::Popover,
     #[tracker::do_not_track]
-    channel_combo: gtk::ComboBoxText,
+    channel_combo: gtk::DropDown,
     #[tracker::do_not_track]
     list_group: adw::PreferencesGroup,
     #[tracker::do_not_track]
@@ -244,24 +244,21 @@ impl AsyncComponent for RuntimeSettings {
                 macos_import_dialog(&sender);
                 #[cfg(not(target_os = "macos"))]
                 {
-                    let dialog = gtk::FileChooserDialog::builder()
+                    let file_dialog = gtk::FileDialog::builder()
                         .title("Select Wine Installation")
-                        .action(gtk::FileChooserAction::SelectFolder)
-                        .modal(true).build();
-                    dialog.set_transient_for(Some(&self.parent));
-                    dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-                    dialog.add_button("Select", gtk::ResponseType::Accept);
-
+                        .build();
                     let s = sender.clone();
-                    dialog.connect_response(move |dlg, response| {
-                        if response == gtk::ResponseType::Accept {
-                            if let Some(path) = dlg.file().and_then(|f| f.path()) {
-                                let _ = s.input(RuntimeSettingsMsg::ImportFromPath(path));
+                    file_dialog.select_folder(
+                        Some(&self.parent),
+                        None::<&gtk::gio::Cancellable>,
+                        move |result| {
+                            if let Ok(file) = result {
+                                if let Some(path) = file.path() {
+                                    let _ = s.input(RuntimeSettingsMsg::ImportFromPath(path));
+                                }
                             }
-                        }
-                        dlg.close();
-                    });
-                    dialog.present();
+                        },
+                    );
                 }
             }
             RuntimeSettingsMsg::ImportFromPath(path) => {
@@ -293,7 +290,7 @@ impl AsyncComponent for RuntimeSettings {
 
 fn build_download_popover(
     sender: &AsyncComponentSender<RuntimeSettings>,
-) -> (gtk::Popover, gtk::ComboBoxText, gtk::ProgressBar, gtk::Label) {
+) -> (gtk::Popover, gtk::DropDown, gtk::ProgressBar, gtk::Label) {
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(8)
@@ -316,13 +313,11 @@ fn build_download_popover(
             .build(),
     );
 
-    let channel_combo = gtk::ComboBoxText::builder()
-        .hexpand(true)
-        .build();
-    channel_combo.append_text("Stable (wine-stable)");
-    channel_combo.append_text("Devel (wine@devel)");
-    channel_combo.append_text("Staging (wine@staging)");
-    channel_combo.set_active(Some(0));
+    let channel_combo = gtk::DropDown::from_strings(&[
+        "Stable (wine-stable)", "Devel (wine@devel)", "Staging (wine@staging)",
+    ]);
+    channel_combo.set_hexpand(true);
+    channel_combo.set_selected(0);
     content.append(&channel_combo);
 
     let progress_bar = gtk::ProgressBar::builder()
@@ -348,10 +343,10 @@ fn build_download_popover(
         let combo = channel_combo.clone();
         let s = sender.clone();
         download_btn.connect_clicked(move |_| {
-            let channel = match combo.active() {
-                Some(0) => Channel::Stable,
-                Some(1) => Channel::Devel,
-                Some(2) => Channel::Staging,
+            let channel = match combo.selected() {
+                0 => Channel::Stable,
+                1 => Channel::Devel,
+                2 => Channel::Staging,
                 _ => Channel::Stable,
             };
             s.input(RuntimeSettingsMsg::StartDownload(channel));
@@ -381,7 +376,7 @@ fn refresh_runtime_list(
         let is_default = runtime.id == rm.default_id;
         let is_system = matches!(runtime.source, RuntimeSource::System);
 
-        let source = match &runtime.source {
+        let _source = match &runtime.source {
             RuntimeSource::System => "System (PATH)".to_string(),
             RuntimeSource::ManagedChannel { channel, installed_cask_version } => {
                 format!("Homebrew {} — cask {}", channel.display_name(), installed_cask_version)
