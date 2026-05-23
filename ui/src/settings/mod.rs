@@ -2,17 +2,15 @@ use adw::prelude::*;
 use relm4::prelude::*;
 use tracker;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use prefix::{
     Manager as PrefixManager,
     runtime::{RuntimeManager, download, graphics as prefix_graphics},
-    runtime::download::InstallPhase,
     GraphicsBackend,
 };
 
 mod runtime;
 mod graphics;
+pub mod managed_download_row;
 
 // ── Model (data only, no widget references) ──────────────────────────────
 
@@ -24,26 +22,9 @@ pub struct SettingsWindow {
     runtime_subtitle: String,
     graphics_subtitle: String,
 
-    // GStreamer state
-    gst_visible: bool,        // false on non-macOS (hides the entire section)
-    gst_installed: bool,
-    gst_managed: bool,
-    gst_progress: f64,
-    gst_status_text: String,
-    gst_downloading: bool,
-
+    // Managed download row controller for GStreamer
     #[tracker::do_not_track]
-    gst_cancel_flag: Option<Arc<AtomicBool>>,
-
-    #[cfg(target_os = "macos")]
-    #[tracker::do_not_track]
-    gst_last_bytes: u64,
-    #[cfg(target_os = "macos")]
-    #[tracker::do_not_track]
-    gst_last_time: std::time::Instant,
-    #[cfg(target_os = "macos")]
-    #[tracker::do_not_track]
-    gst_current_speed: f64,
+    gst_ctrl: AsyncController<managed_download_row::ManagedDownloadRow>,
 
     // NavigationView kept in model for push/pop actions in update()
     #[tracker::do_not_track]
@@ -69,14 +50,8 @@ pub enum SettingsMsg {
     GraphicsSubtitleChanged(String),
     RuntimesUpdated(RuntimeManager),
 
-    // GStreamer operations
-    InstallGStreamer,
-    BeginGStreamerInstall,
-    CancelGStreamer,
-    GStreamerProgress(u64, u64, InstallPhase),
-    GStreamerComplete,
-    GStreamerFailed(String),
-    RemoveGStreamer,
+    // Forwarded from GStreamer child component
+    GStreamerStatusChanged,
 
     // Window
     Close,
@@ -186,77 +161,28 @@ impl AsyncComponent for SettingsWindow {
                 },
             },
 
-            // ── GStreamer section (visible only on macOS) ──
+            #[name = "gst_group"]
             adw::PreferencesGroup {
                 set_title: "GStreamer",
                 set_description: Some("Audio and video framework required by Wine on macOS"),
                 #[watch]
-                set_visible: model.gst_visible,
+                set_visible: cfg!(target_os = "macos"),
+            },
+        },
 
-                adw::ActionRow {
-                    set_title: "GStreamer",
-                    set_activatable: false,
-                    #[watch]
-                    set_subtitle: &model.gst_status_text,
-                    #[track = "model.changed(SettingsWindow::gst_installed())"]
-                    set_class_active: ("gst-installed", model.gst_installed),
+        #[name = "back_btn"]
+        gtk::Button {
+            set_icon_name: "go-previous-symbolic",
+            set_visible: false,
+        },
 
-                    add_suffix = &gtk::Box {
-                        set_orientation: gtk::Orientation::Horizontal,
-                        set_halign: gtk::Align::End,
-                        set_spacing: 4,
-
-                        // Install button
-                        #[name = "gst_install_btn"]
-                        gtk::Button {
-                            set_icon_name: "document-save-symbolic",
-                            set_tooltip: "Install GStreamer",
-                            add_css_class: "flat",
-                            set_valign: gtk::Align::Center,
-                            add_css_class: "circular",
-                            #[watch]
-                            set_visible: !model.gst_installed && !model.gst_downloading,
-                            connect_clicked => SettingsMsg::InstallGStreamer,
-                        },
-                        // Remove button (only for managed installations)
-                        #[name = "gst_remove_btn"]
-                        gtk::Button {
-                            set_icon_name: "user-trash-symbolic",
-                            set_tooltip: "Remove GStreamer",
-                            add_css_class: "flat",
-                            set_valign: gtk::Align::Center,
-                            add_css_class: "circular",
-                            add_css_class: "destructive-action",
-                            #[watch]
-                            set_visible: model.gst_managed && !model.gst_downloading,
-                            connect_clicked => SettingsMsg::RemoveGStreamer,
-                        },
-                        // Download progress area
-                        gtk::Box {
-                            set_valign: gtk::Align::Center,
-                            set_spacing: 6,
-                            #[watch]
-                            set_visible: model.gst_downloading,
-                            #[name = "gst_progress_bar"]
-                            gtk::LevelBar {
-                                set_valign: gtk::Align::Center,
-                                set_min_value: 0.0,
-                                set_max_value: 1.0,
-                                set_width_request: 80,
-                                #[watch]
-                                set_value: model.gst_progress,
-                            },
-                            #[name = "gst_cancel_btn"]
-                            gtk::Button {
-                                set_icon_name: "window-close-symbolic",
-                                set_tooltip: "Cancel download",
-                                add_css_class: "flat",
-                                add_css_class: "circular",
-                                connect_clicked => SettingsMsg::CancelGStreamer,
-                            },
-                        },
-                    },
-                },
+        #[name = "close_btn"]
+        gtk::Button {
+            set_icon_name: "window-close-symbolic",
+            set_tooltip_text: Some("Close"),
+            set_visible: cfg!(not(target_os = "macos")),
+            connect_clicked[sender] => move |_| {
+                sender.input(SettingsMsg::Close);
             },
         },
     }
@@ -268,44 +194,19 @@ impl AsyncComponent for SettingsWindow {
     ) -> AsyncComponentParts<Self> {
         let prefix_manager = init;
 
-        // ── Build header bar ──
+        // ── Build header bar (must exist before view_output! for the titlebar reference) ──
         let header_bar = gtk::HeaderBar::new();
         #[cfg(target_os = "macos")]
         header_bar.set_property("use-native-controls", true);
-
-        // Navigation back button (hidden until a subpage is pushed)
-        let back_btn = gtk::Button::builder()
-            .icon_name("go-previous-symbolic")
-            .visible(false)
-            .build();
-        header_bar.pack_start(&back_btn);
-
-        #[cfg(not(target_os = "macos"))]
-        {
-            let close_btn = gtk::Button::builder()
-                .icon_name("window-close-symbolic")
-                .tooltip_text("Close")
-                .build();
-            let s = sender.clone();
-            close_btn.connect_clicked(move |_| {
-                let _ = s.input(SettingsMsg::Close);
-            });
-            header_bar.pack_end(&close_btn);
-        }
-
-        // Initialize GStreamer CSS (macOS only)
-        #[cfg(target_os = "macos")]
-        init_gst_css();
 
         // ── Compute model data (before view_output! so #[watch] can reference it) ──
         let rm = prefix_manager.runtime_manager();
         let runtime_subtitle = runtime_subtitle(rm);
         let graphics_subtitle_str = graphics_subtitle();
 
-        #[cfg(target_os = "macos")]
-        let (gst_installed, gst_managed, gst_status_text) = gst_initial_status();
-        #[cfg(not(target_os = "macos"))]
-        let (gst_installed, gst_managed, gst_status_text) = (false, false, String::new());
+        let data_dir = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("tequila");
 
         // Create child subpage controllers (independent of widgets)
         let runtime_ctrl = runtime::RuntimeSettings::builder()
@@ -322,6 +223,38 @@ impl AsyncComponent for SettingsWindow {
                 SettingsMsg::GraphicsSubtitleChanged(graphics_subtitle())
             });
 
+        // ── GStreamer managed download row (macOS only) ──
+        let gst_ctrl = managed_download_row::ManagedDownloadRow::builder()
+            .launch(managed_download_row::ManagedDownloadRowInit {
+                title: "GStreamer".into(),
+                check_status: Box::new(gst_initial_status),
+                check_update: None,
+                start_download: Box::new(|data_dir, progress, cancel| {
+                    Box::pin(async move {
+                        prefix::runtime::download::download_gstreamer(
+                            &data_dir,
+                            progress,
+                            Some(cancel),
+                        )
+                        .await
+                        .map(|_| ())
+                        .map_err(|e| e.to_string())
+                    })
+                }),
+                perform_remove: Box::new(|| {
+                    let gst_dir = prefix::runtime::download::runtimes_dir().join("gstreamer");
+                    if gst_dir.exists() {
+                        std::fs::remove_dir_all(&gst_dir).map_err(|e| e.to_string())
+                    } else {
+                        Ok(())
+                    }
+                }),
+                data_dir,
+            })
+            .forward(sender.input_sender(), |_out| {
+                SettingsMsg::GStreamerStatusChanged
+            });
+
         // Create local widgets referenced by #[local_ref] in view!
         let prefs_page = adw::PreferencesPage::new();
 
@@ -331,22 +264,7 @@ impl AsyncComponent for SettingsWindow {
             prefix_manager,
             runtime_subtitle,
             graphics_subtitle: graphics_subtitle_str,
-            #[cfg(target_os = "macos")]
-            gst_visible: true,
-            #[cfg(not(target_os = "macos"))]
-            gst_visible: false,
-            gst_installed,
-            gst_managed,
-            gst_progress: 0.0,
-            gst_status_text,
-            gst_downloading: false,
-            gst_cancel_flag: None,
-            #[cfg(target_os = "macos")]
-            gst_last_bytes: 0,
-            #[cfg(target_os = "macos")]
-            gst_last_time: std::time::Instant::now(),
-            #[cfg(target_os = "macos")]
-            gst_current_speed: 0.0,
+            gst_ctrl,
             nav: placeholder_nav,
             runtime_ctrl,
             graphics_ctrl,
@@ -359,10 +277,14 @@ impl AsyncComponent for SettingsWindow {
         // Replace placeholder nav with the real one created by view!
         model.nav = widgets.nav.clone();
 
+        // Add buttons to header_bar (must be after view_output! so named widgets exist)
+        header_bar.pack_start(&widgets.back_btn);
+        header_bar.pack_end(&widgets.close_btn);
+
         // Wire up back button to NavigationView
         {
             let nav = widgets.nav.clone();
-            back_btn.connect_clicked(move |_| {
+            widgets.back_btn.connect_clicked(move |_| {
                 nav.pop();
             });
         }
@@ -370,7 +292,7 @@ impl AsyncComponent for SettingsWindow {
         // Show/hide back button when visible page changes
         {
             let nav = widgets.nav.clone();
-            let back = back_btn.clone();
+            let back = widgets.back_btn.clone();
             let root_page = widgets.root_page.clone();
             nav.connect_notify_local(Some("visible-page"), move |nav, _| {
                 let visible = nav.visible_page();
@@ -378,6 +300,9 @@ impl AsyncComponent for SettingsWindow {
                 back.set_visible(!is_root);
             });
         }
+
+        // Add GStreamer ManagedDownloadRow to its group (group declared in view!)
+        widgets.gst_group.add(model.gst_ctrl.widget());
 
         AsyncComponentParts { model, widgets }
     }
@@ -415,141 +340,11 @@ impl AsyncComponent for SettingsWindow {
                 ));
             }
 
-            // ── GStreamer: confirmation dialog ──
-            #[cfg(target_os = "macos")]
-            SettingsMsg::InstallGStreamer => {
-                let alert = adw::AlertDialog::new(
-                    Some("Install GStreamer?"),
-                    Some("GStreamer is required for audio and video support in Wine. This will download and install the GStreamer runtime package (~500 MB)."),
-                );
-                alert.add_response("cancel", "Cancel");
-                alert.add_response("install", "Install");
-                alert.set_response_appearance("install", adw::ResponseAppearance::Suggested);
-                alert.set_default_response(Some("install"));
-                alert.set_close_response("cancel");
-                let s = sender.clone();
-                alert.choose(Some(root), None::<&gtk::gio::Cancellable>, move |response| {
-                    if response == "install" {
-                        let _ = s.input(SettingsMsg::BeginGStreamerInstall);
-                    }
-                });
-            }
-
-            // ── GStreamer: actual download start (after confirmation) ──
-            #[cfg(target_os = "macos")]
-            SettingsMsg::BeginGStreamerInstall => {
-                self.gst_downloading = true;
-                self.gst_progress = 0.0;
-                self.gst_status_text = "Starting download...".into();
-                self.gst_last_bytes = 0;
-                self.gst_last_time = std::time::Instant::now();
-
-                // Cancel previous download if any
-                if let Some(old) = self.gst_cancel_flag.take() {
-                    old.store(true, Ordering::Relaxed);
-                }
-                let cancel = Arc::new(AtomicBool::new(false));
-                self.gst_cancel_flag = Some(cancel.clone());
-
-                let s = sender.clone();
-                gtk::glib::spawn_future_local(async move {
-                    let data_dir = dirs::data_dir()
-                        .unwrap_or_else(|| PathBuf::from(".")).join("tequila");
-                    let progress: download::PhaseProgressFn = Box::new({
-                        let s = s.clone();
-                        move |downloaded, total, phase| {
-                            let _ = s.input(SettingsMsg::GStreamerProgress(downloaded, total, phase));
-                        }
-                    });
-                    match download::download_gstreamer(&data_dir, progress, Some(cancel)).await {
-                        Ok(_) => { let _ = s.input(SettingsMsg::GStreamerComplete); }
-                        Err(e) => { let _ = s.input(SettingsMsg::GStreamerFailed(e.to_string())); }
-                    }
-                });
-            }
-
-            // ── GStreamer: download progress ──
-            #[cfg(target_os = "macos")]
-            SettingsMsg::GStreamerProgress(downloaded, total, phase) => {
-                let now = std::time::Instant::now();
-                let mb = |b: u64| b as f64 / 1_048_576.0;
-
-                match phase {
-                    InstallPhase::Download => {
-                        let elapsed = now.duration_since(self.gst_last_time);
-                        if elapsed.as_secs_f64() > 0.5 {
-                            self.gst_current_speed = (downloaded.saturating_sub(self.gst_last_bytes)) as f64
-                                / elapsed.as_secs_f64();
-                            self.gst_last_bytes = downloaded;
-                            self.gst_last_time = now;
-                        }
-
-                        if total > 0 {
-                            self.gst_progress = (downloaded as f64 / total as f64) * 0.8;
-                            let speed_mb = self.gst_current_speed / 1_048_576.0;
-                            self.gst_status_text = format!(
-                                "Downloading — {:.1} / {:.1} MB ({:.1} MB/s)",
-                                mb(downloaded), mb(total), speed_mb
-                            );
-                        }
-                    }
-                    InstallPhase::Verify => {
-                        self.gst_progress = 0.80 + (downloaded as f64 / total.max(1) as f64) * 0.10;
-                        self.gst_status_text = "Verifying checksum...".into();
-                    }
-                    InstallPhase::Extract => {
-                        self.gst_progress = 0.90 + (downloaded as f64 / total.max(1) as f64) * 0.10;
-                        self.gst_status_text = "Installing GStreamer...".into();
-                    }
-                }
-            }
-
-            #[cfg(target_os = "macos")]
-            SettingsMsg::CancelGStreamer => {
-                if let Some(cancel) = &self.gst_cancel_flag {
-                    cancel.store(true, Ordering::Relaxed);
-                }
-            }
-
-            #[cfg(target_os = "macos")]
-            SettingsMsg::GStreamerComplete => {
-                self.gst_cancel_flag = None;
-                let (inst, mgd, text) = gst_initial_status();
-                self.gst_installed = inst;
-                self.gst_managed = mgd;
-                self.gst_status_text = text;
-                self.gst_downloading = false;
-            }
-
-            #[cfg(target_os = "macos")]
-            SettingsMsg::GStreamerFailed(err) => {
-                self.gst_cancel_flag = None;
-                let (inst, mgd, text) = gst_initial_status();
-                self.gst_installed = inst;
-                self.gst_managed = mgd;
-                self.gst_status_text = text;
-                self.gst_downloading = false;
-
-                let alert = adw::AlertDialog::new(
-                    Some("Download Failed"),
-                    Some(&err),
-                );
-                alert.add_response("ok", "OK");
-                alert.set_default_response(Some("ok"));
-                alert.set_close_response("ok");
-                alert.choose(Some(root), None::<&gtk::gio::Cancellable>, |_| {});
-            }
-
-            #[cfg(target_os = "macos")]
-            SettingsMsg::RemoveGStreamer => {
-                let gst_dir = download::runtimes_dir().join("gstreamer");
-                if gst_dir.exists() {
-                    let _ = std::fs::remove_dir_all(&gst_dir);
-                }
-                let (inst, mgd, text) = gst_initial_status();
-                self.gst_installed = inst;
-                self.gst_managed = mgd;
-                self.gst_status_text = text;
+            // ── Forwarded from GStreamer child component ──
+            SettingsMsg::GStreamerStatusChanged => {
+                // GStreamer component manages its own state internally.
+                // This message is available if the parent needs to react
+                // (e.g., to update a section-level summary).
             }
 
             // ── Window ──
@@ -557,33 +352,13 @@ impl AsyncComponent for SettingsWindow {
                 root.set_visible(false);
             }
 
-            // Non-macOS: GStreamer messages are unreachable but must be exhaustive
-            #[cfg(not(target_os = "macos"))]
-            _ => {}
         }
     }
 }
 
-// ── GStreamer helpers (macOS only) ───────────────────────────────────────
+// ── GStreamer helpers ───────────────────────────────────────────────────
 
-#[cfg(target_os = "macos")]
-fn init_gst_css() {
-    use gtk::gdk::Display;
-    let provider = gtk::CssProvider::new();
-    provider.load_from_data(
-        ".gst-installed { background-color: rgba(76, 175, 80, 0.12); }"
-    );
-    if let Some(display) = Display::default() {
-        gtk::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn gst_initial_status() -> (bool, bool, String) {
+fn gst_initial_status() -> managed_download_row::DownloadRowStatus {
     // Check managed installation (has version.txt)
     let gst_dir = download::runtimes_dir().join("gstreamer");
     let managed = std::fs::read_to_string(gst_dir.join("version.txt"))
@@ -594,7 +369,11 @@ fn gst_initial_status() -> (bool, bool, String) {
         });
 
     if let Some(ver) = managed {
-        return (true, true, format!("✓ Installed ({})", ver));
+        return managed_download_row::DownloadRowStatus {
+            installed: true,
+            managed: true,
+            status_text: format!("✓ Installed ({})", ver),
+        };
     }
 
     // Homebrew GStreamer
@@ -606,7 +385,11 @@ fn gst_initial_status() -> (bool, bool, String) {
             if let Ok(prefix) = String::from_utf8(output.stdout) {
                 let p = std::path::Path::new(prefix.trim());
                 if p.join("bin").join("gst-launch-1.0").exists() {
-                    return (true, false, "✓ Installed (system)".into());
+                    return managed_download_row::DownloadRowStatus {
+                        installed: true,
+                        managed: false,
+                        status_text: "✓ Installed (system)".into(),
+                    };
                 }
             }
         }
@@ -618,9 +401,17 @@ fn gst_initial_status() -> (bool, bool, String) {
         .output()
     {
         if output.status.success() {
-            return (true, false, "✓ Installed (system)".into());
+            return managed_download_row::DownloadRowStatus {
+                installed: true,
+                managed: false,
+                status_text: "✓ Installed (system)".into(),
+            };
         }
     }
 
-    (false, false, "Not installed".into())
+    managed_download_row::DownloadRowStatus {
+        installed: false,
+        managed: false,
+        status_text: "Not installed".into(),
+    }
 }

@@ -8,6 +8,8 @@ use prefix::{
     GraphicsBackend,
 };
 
+use super::managed_download_row;
+
 // ── Model ────────────────────────────────────────────────────────────────
 
 #[tracker::track]
@@ -15,21 +17,12 @@ pub struct RuntimeSettings {
     pub prefix_manager: PrefixManager,
     parent: gtk::Window,
 
-    downloading: bool,
-    download_progress: f64,
-
-    #[tracker::do_not_track]
-    progress_bar: gtk::ProgressBar,
-    #[tracker::do_not_track]
-    progress_label: gtk::Label,
-    #[tracker::do_not_track]
-    add_menu: gtk::Popover,
-    #[tracker::do_not_track]
-    channel_combo: gtk::DropDown,
     #[tracker::do_not_track]
     list_group: adw::PreferencesGroup,
     #[tracker::do_not_track]
     rows: Vec<adw::ActionRow>,
+    #[tracker::do_not_track]
+    available_ctrls: Vec<AsyncController<managed_download_row::ManagedDownloadRow>>,
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────
@@ -39,11 +32,7 @@ pub enum RuntimeSettingsMsg {
     RefreshRuntimes,
     SetDefault(String),
     RemoveRuntime(String),
-    ShowAddMenu,
-    StartDownload(Channel),
-    DownloadProgress(u64, u64),
     DownloadComplete(RuntimeManager),
-    DownloadFailed(String),
     ImportRuntime,
     ImportFromPath(PathBuf),
 }
@@ -64,8 +53,35 @@ impl AsyncComponent for RuntimeSettings {
     type Widgets = RuntimeSettingsWidgets;
 
     view! {
+        #[root]
         adw::NavigationPage {
             set_title: "Wine Runtime",
+            set_child: Some(&prefs_page),
+        },
+
+        #[name = "prefs_page"]
+        adw::PreferencesPage {
+            #[name = "list_group"]
+            adw::PreferencesGroup {
+                set_title: "Installed Runtimes",
+            },
+
+            adw::PreferencesGroup {
+                adw::ActionRow {
+                    set_title: "Import from Disk",
+                    set_subtitle: "Select an existing Wine installation folder",
+                    set_activatable: true,
+                    connect_activated[sender] => move |_| {
+                        sender.input(RuntimeSettingsMsg::ImportRuntime);
+                    },
+                },
+            },
+
+            #[name = "avail_group"]
+            adw::PreferencesGroup {
+                set_title: "Available",
+                set_description: Some("Download Wine runtimes from Homebrew"),
+            },
         }
     }
 
@@ -74,76 +90,25 @@ impl AsyncComponent for RuntimeSettings {
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
-        let prefs_page = adw::PreferencesPage::new();
-
-        // ── Installed runtimes group ──
-        let list_group = adw::PreferencesGroup::builder()
-            .title("Installed Runtimes")
-            .build();
-        let mut rows: Vec<adw::ActionRow> = Vec::new();
-        refresh_runtime_list(&list_group, prefix_manager.runtime_manager(), &sender, &mut rows);
-        prefs_page.add(&list_group);
-
-        // ── Add runtime group ──
-        let add_group = adw::PreferencesGroup::builder()
-            .title("Add Runtime")
-            .build();
-
-        let (add_menu, channel_combo, progress_bar, progress_label) =
-            build_download_popover(&sender);
-
-        let download_row = adw::ActionRow::builder()
-            .title("Download from Homebrew")
-            .subtitle("Stable, Devel, or Staging channel")
-            .activatable(true)
-            .build();
-        {
-            let s = sender.clone();
-            download_row.connect_activated(move |_| {
-                s.input(RuntimeSettingsMsg::ShowAddMenu);
-            });
-        }
-
-        let import_row = adw::ActionRow::builder()
-            .title("Import from Disk")
-            .subtitle("Select an existing Wine installation folder")
-            .activatable(true)
-            .build();
-        {
-            let s = sender.clone();
-            import_row.connect_activated(move |_| {
-                s.input(RuntimeSettingsMsg::ImportRuntime);
-            });
-        }
-
-        let menu_btn = gtk::MenuButton::builder()
-            .icon_name("go-down-symbolic")
-            .css_classes(["flat"])
-            .popover(&add_menu)
-            .build();
-        download_row.add_suffix(&menu_btn);
-
-        add_group.add(&download_row);
-        add_group.add(&import_row);
-        prefs_page.add(&add_group);
-
-        root.set_child(Some(&prefs_page));
+        // Placeholder groups — replaced with real ones from view! after view_output!()
+        let placeholder_group = adw::PreferencesGroup::new();
+        let mut model = RuntimeSettings {
+            prefix_manager,
+            parent,
+            list_group: placeholder_group,
+            rows: Vec::new(),
+            available_ctrls: Vec::new(),
+            tracker: 0,
+        };
 
         let widgets = view_output!();
 
-        let model = RuntimeSettings {
-            prefix_manager,
-            parent,
-            downloading: false,
-            download_progress: 0.0,
-            progress_bar,
-            progress_label,
-            add_menu,
-            channel_combo,
-            list_group,
-            rows,
-            tracker: 0,
-        };
+        // Replace placeholder with the real widget from view!
+        model.list_group = widgets.list_group.clone();
+
+        // Populate the groups
+        refresh_runtime_list(&model.list_group, model.prefix_manager.runtime_manager(), &sender, &mut model.rows);
+        model.available_ctrls = build_available_channels(&widgets.avail_group, &model.prefix_manager, &sender);
 
         AsyncComponentParts { model, widgets }
     }
@@ -167,77 +132,31 @@ impl AsyncComponent for RuntimeSettings {
             }
             RuntimeSettingsMsg::RemoveRuntime(id) => {
                 if id != "wine-system" {
+                    // Delete the runtime directory from disk
+                    let dir = prefix::runtime::download::runtimes_dir().join(&id);
+                    if dir.exists() {
+                        let _ = std::fs::remove_dir_all(&dir);
+                    }
+                    // Remove from the runtime list and save config
                     self.prefix_manager.remove_runtime(&id);
                     refresh_runtime_list(&self.list_group, self.prefix_manager.runtime_manager(), &sender, &mut self.rows);
                     emit_runtimes_updated(&self.prefix_manager, &sender);
-                }
-            }
-            RuntimeSettingsMsg::ShowAddMenu => {
-                self.add_menu.popup();
-            }
-            RuntimeSettingsMsg::StartDownload(channel) => {
-                self.set_downloading(true);
-                self.progress_bar.set_visible(true);
-                self.progress_label.set_visible(true);
-                self.progress_label.set_label("Starting download...");
-                self.progress_bar.set_fraction(0.0);
-                self.add_menu.popdown();
-
-                let mut pm = self.prefix_manager.clone();
-                let s = sender.clone();
-                gtk::glib::spawn_future_local(async move {
-                    let progress: runtime::download::ProgressFn = Box::new({
-                        let s = s.clone();
-                        move |downloaded, total| {
-                            let _ = s.input(RuntimeSettingsMsg::DownloadProgress(downloaded, total));
-                        }
-                    });
-                    match pm.download_channel_runtime(channel, progress).await {
-                        Ok(_runtime) => {
-                            let rm = pm.runtime_manager().clone();
-                            let _ = s.input(RuntimeSettingsMsg::DownloadComplete(rm));
-                        }
-                        Err(e) => {
-                            let _ = s.input(RuntimeSettingsMsg::DownloadFailed(e.to_string()));
-                        }
+                    // Refresh the Available section rows so they show Install again
+                    for ctrl in &self.available_ctrls {
+                        ctrl.emit(managed_download_row::ManagedDownloadRowMsg::RefreshStatus);
                     }
-                });
-            }
-            RuntimeSettingsMsg::DownloadProgress(downloaded, total) => {
-                if total > 0 {
-                    let frac = downloaded as f64 / total as f64;
-                    self.set_download_progress(frac);
-                    self.progress_bar.set_fraction(frac);
-                    let mb = |b: u64| b as f64 / 1_048_576.0;
-                    self.progress_label.set_label(&format!(
-                        "{:.1} / {:.1} MB", mb(downloaded), mb(total)
-                    ));
                 }
             }
             RuntimeSettingsMsg::DownloadComplete(updated_rm) => {
                 let rm_ref = self.prefix_manager.runtime_manager_mut();
                 let _old = std::mem::replace(rm_ref, updated_rm);
                 self.prefix_manager.save_runtime_state();
-
-                self.set_downloading(false);
-                self.set_download_progress(0.0);
-                self.progress_bar.set_visible(false);
-                self.progress_label.set_visible(false);
-
                 refresh_runtime_list(&self.list_group, self.prefix_manager.runtime_manager(), &sender, &mut self.rows);
                 emit_runtimes_updated(&self.prefix_manager, &sender);
-            }
-            RuntimeSettingsMsg::DownloadFailed(err) => {
-                self.set_downloading(false);
-                self.set_download_progress(0.0);
-                self.progress_bar.set_visible(false);
-                self.progress_label.set_visible(false);
-
-                let alert = adw::AlertDialog::new(Some("Download Failed"), Some(&err));
-                alert.add_response("ok", "OK");
-                alert.set_default_response(Some("ok"));
-                alert.set_close_response("ok");
-                alert.choose(Some(&self.parent), None::<&gtk::gio::Cancellable>, |_| {});
+                // Refresh Available rows so their check_status picks up the new state
+                for ctrl in &self.available_ctrls {
+                    ctrl.emit(managed_download_row::ManagedDownloadRowMsg::RefreshStatus);
+                }
             }
             RuntimeSettingsMsg::ImportRuntime => {
                 #[cfg(target_os = "macos")]
@@ -286,78 +205,218 @@ impl AsyncComponent for RuntimeSettings {
     }
 }
 
-// ── Popover builder ──────────────────────────────────────────────────────
+// ── Available channel rows (ManagedDownloadRow per channel) ──────────────
 
-fn build_download_popover(
+fn build_available_channels(
+    group: &adw::PreferencesGroup,
+    prefix_manager: &PrefixManager,
     sender: &AsyncComponentSender<RuntimeSettings>,
-) -> (gtk::Popover, gtk::DropDown, gtk::ProgressBar, gtk::Label) {
-    let content = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(8)
-        .margin_top(10).margin_bottom(10)
-        .margin_start(10).margin_end(10)
-        .width_request(280)
-        .build();
+) -> Vec<AsyncController<managed_download_row::ManagedDownloadRow>> {
+    let mut ctrls: Vec<AsyncController<managed_download_row::ManagedDownloadRow>> = Vec::new();
 
-    content.append(
-        &gtk::Label::builder()
-            .label("Download Wine Runtime")
-            .halign(gtk::Align::Start)
-            .css_classes(["heading"])
-            .build(),
-    );
-    content.append(
-        &gtk::Label::builder()
-            .label("Channel:")
-            .halign(gtk::Align::Start)
-            .build(),
-    );
+    for (channel, display_name, description) in [
+        (Channel::Stable, "Stable", "Latest stable Wine release"),
+        (Channel::Staging, "Staging", "Wine with performance patches"),
+        (Channel::Devel, "Devel", "Development version (unstable)"),
+    ] {
+        let pm = prefix_manager.clone();
+        let runtime_id = channel.runtime_id().to_string();
 
-    let channel_combo = gtk::DropDown::from_strings(&[
-        "Stable (wine-stable)", "Devel (wine@devel)", "Staging (wine@staging)",
-    ]);
-    channel_combo.set_hexpand(true);
-    channel_combo.set_selected(0);
-    content.append(&channel_combo);
-
-    let progress_bar = gtk::ProgressBar::builder()
-        .visible(false)
-        .hexpand(true)
-        .build();
-    content.append(&progress_bar);
-
-    let progress_label = gtk::Label::builder()
-        .visible(false)
-        .halign(gtk::Align::Center)
-        .css_classes(["caption"])
-        .build();
-    content.append(&progress_label);
-
-    let download_btn = gtk::Button::builder()
-        .label("Download")
-        .css_classes(["suggested-action"])
-        .halign(gtk::Align::End)
-        .margin_top(6)
-        .build();
-    {
-        let combo = channel_combo.clone();
-        let s = sender.clone();
-        download_btn.connect_clicked(move |_| {
-            let channel = match combo.selected() {
-                0 => Channel::Stable,
-                1 => Channel::Devel,
-                2 => Channel::Staging,
-                _ => Channel::Stable,
-            };
-            s.input(RuntimeSettingsMsg::StartDownload(channel));
+        // ── check_status (checks filesystem directly, not a stale in-memory snapshot) ──
+        let check_id = runtime_id.clone();
+        let check_status = Box::new(move || {
+            let dir = prefix::runtime::download::runtimes_dir().join(&check_id);
+            let installed = dir.is_dir();
+            managed_download_row::DownloadRowStatus {
+                installed,
+                managed: installed,
+                status_text: if installed {
+                    format!("✓ Installed ({})", display_name)
+                } else {
+                    description.to_string()
+                },
+            }
         });
+
+        // ── start_download (spawns blocking work on a thread to avoid freezing the UI) ──
+        let dl_pm = pm.clone();
+        let dl_sender = sender.clone();
+        let dl_channel = channel;
+        let start_download: managed_download_row::DownloadFn = Box::new(
+            move |_data_dir: PathBuf,
+                  progress: prefix::runtime::download::PhaseProgressFn,
+                  cancel: std::sync::Arc<std::sync::atomic::AtomicBool>| {
+            let pm = dl_pm.clone();
+            let s = dl_sender.clone();
+            let channel = dl_channel.clone();
+            Box::pin(async move {
+                // Shared state: (downloaded_bytes, total_bytes, phase)
+                // phase: 0=Download, 1=Verify, 2=Extract
+                let dl_state = std::sync::Arc::new(std::sync::Mutex::new((0u64, 0u64, 0u8)));
+                let dl_state_t = dl_state.clone();
+
+                let (tx, rx) = std::sync::mpsc::channel::<
+                    Result<RuntimeManager, prefix::base::error::PrefixError>,
+                >();
+
+                let mut pm_thread = pm.clone();
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Runtime::new()
+                        .expect("Failed to create tokio runtime for download thread");
+
+                    // 1. Fetch cask info (needs tokio runtime for reqwest)
+                    let cask = match rt.block_on(
+                        prefix::runtime::homebrew::fetch_cask(channel.cask_name()),
+                    ) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            let _ = tx.send(Err(e.into()));
+                            return;
+                        }
+                    };
+
+                    // 2. Setup temp directory
+                    let runtimes_dir = prefix::runtime::download::runtimes_dir();
+                    let _ = std::fs::create_dir_all(&runtimes_dir);
+                    prefix::runtime::download::cleanup_temp_runtimes(&runtimes_dir);
+                    let runtime_id = channel.runtime_id();
+                    let tmp_dir = runtimes_dir.join(format!(".tmp-{}", runtime_id));
+                    let final_dir = runtimes_dir.join(runtime_id);
+                    let _ = std::fs::remove_dir_all(&tmp_dir);
+                    let _ = std::fs::create_dir_all(&tmp_dir);
+                    let archive_path = tmp_dir.join("wine.tar.xz");
+
+                    // 3. Download (reports phase 0 via simple_prog)
+                    let dl_state_prog = dl_state_t.clone();
+                    let simple_prog: runtime::download::ProgressFn = Box::new(move |d, t| {
+                        *dl_state_prog.lock().unwrap() = (d, t, 0u8);
+                    });
+                    if let Err(e) = rt.block_on(prefix::runtime::download::download_file(
+                        &cask.url,
+                        &archive_path,
+                        &simple_prog,
+                    )) {
+                        let _ = tx.send(Err(e));
+                        return;
+                    }
+
+                    // 4. Verify checksum (slow — UI shows "Verifying checksum...")
+                    *dl_state_t.lock().unwrap() = (1, 1, 1u8);
+                    if let Err(e) = prefix::runtime::download::verify_sha256(
+                        &archive_path,
+                        &cask.sha256,
+                    ) {
+                        let _ = tx.send(Err(e));
+                        return;
+                    }
+
+                    // 5. Extract archive (slow — UI shows "Unpacking...")
+                    *dl_state_t.lock().unwrap() = (1, 1, 2u8);
+                    if let Err(e) = prefix::runtime::download::extract_tar(
+                        &archive_path,
+                        &tmp_dir,
+                    ) {
+                        let _ = tx.send(Err(e));
+                        return;
+                    }
+
+                    // 6. Finalize — verify extraction, clean up, move into place
+                    if let Err(e) = prefix::runtime::download::find_wine_binary(&tmp_dir) {
+                        let _ = tx.send(Err(e));
+                        return;
+                    }
+                    let _ = std::fs::remove_file(&archive_path);
+                    if final_dir.exists() {
+                        let _ = std::fs::remove_dir_all(&final_dir);
+                    }
+                    if let Err(e) = std::fs::rename(&tmp_dir, &final_dir) {
+                        let _ = tx.send(Err(prefix::base::error::PrefixError::Io(e)));
+                        return;
+                    }
+
+                    // 7. Register in runtime manager and save
+                    pm_thread.runtime_manager_mut().register_channel(
+                        channel,
+                        cask.version,
+                        final_dir,
+                    );
+                    pm_thread.save_runtime_state();
+                    let rm = pm_thread.runtime_manager().clone();
+                    let _ = tx.send(Ok(rm));
+                });
+
+                // Poll for completion
+                loop {
+                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        return Err("Download cancelled".into());
+                    }
+
+                    // Bridge progress from shared state (includes phase)
+                    {
+                        let (d, t, phase) = *dl_state.lock().unwrap();
+                        if t > 0 {
+                            let phase = match phase {
+                                1 => runtime::download::InstallPhase::Verify,
+                                2 => runtime::download::InstallPhase::Extract,
+                                _ => runtime::download::InstallPhase::Download,
+                            };
+                            progress(d, t, phase);
+                        }
+                    }
+
+                    match rx.try_recv() {
+                        Ok(Ok(rm)) => {
+                            let _ = s.input(RuntimeSettingsMsg::DownloadComplete(rm));
+                            return Ok(());
+                        }
+                        Ok(Err(e)) => return Err(e.to_string()),
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            gtk::glib::timeout_future(std::time::Duration::from_millis(200)).await;
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                            return Err("Download thread crashed".into());
+                        }
+                    }
+                }
+            })
+        });
+
+        // ── perform_remove ──
+        let remove_id = runtime_id.clone();
+        let mut remove_pm = pm.clone();
+        let remove_sender = sender.clone();
+        let perform_remove = Box::new(move || {
+            // Delete the runtime directory from disk
+            let dir = prefix::runtime::download::runtimes_dir().join(&remove_id);
+            if dir.exists() {
+                std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+            }
+            // Remove from the cloned runtime list
+            remove_pm.remove_runtime(&remove_id);
+            // Sync the parent's prefix_manager with the updated state
+            let rm = remove_pm.runtime_manager().clone();
+            let _ = remove_sender.input(RuntimeSettingsMsg::DownloadComplete(rm));
+            Ok(())
+        });
+
+        let ctrl = managed_download_row::ManagedDownloadRow::builder()
+            .launch(managed_download_row::ManagedDownloadRowInit {
+                title: display_name.to_string(),
+                check_status,
+                check_update: None,
+                start_download,
+                perform_remove,
+                data_dir: Default::default(),
+            })
+            .forward(sender.input_sender(), |_out| {
+                RuntimeSettingsMsg::RefreshRuntimes
+            });
+
+        group.add(ctrl.widget());
+        ctrls.push(ctrl);
     }
-    content.append(&download_btn);
 
-    let popover = gtk::Popover::new();
-    popover.set_child(Some(&content));
-
-    (popover, channel_combo, progress_bar, progress_label)
+    ctrls
 }
 
 // ── Runtime list helpers ─────────────────────────────────────────────────
@@ -470,7 +529,7 @@ fn macos_import_dialog(sender: &AsyncComponentSender<RuntimeSettings>) {
 
     let mtm = unsafe { MainThreadMarker::new_unchecked() };
     let panel = NSOpenPanel::openPanel(mtm);
-    panel.setCanChooseFiles(false);
+    panel.setCanChooseFiles(true);
     panel.setCanChooseDirectories(true);
     panel.setAllowsMultipleSelection(false);
     panel.setTitle(Some(&NSString::from_str("Select Wine Installation")));

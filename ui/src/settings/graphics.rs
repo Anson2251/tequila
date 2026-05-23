@@ -3,6 +3,8 @@ use relm4::prelude::*;
 use tracker;
 use prefix::runtime;
 
+use super::managed_download_row;
+
 // ── Model ────────────────────────────────────────────────────────────────
 
 #[tracker::track]
@@ -11,14 +13,14 @@ pub struct GraphicsSettings {
     installed_group: adw::PreferencesGroup,
     #[tracker::do_not_track]
     rows: Vec<adw::ActionRow>,
+    #[tracker::do_not_track]
+    available_ctrls: Vec<AsyncController<managed_download_row::ManagedDownloadRow>>,
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────
 
 #[derive(Debug)]
-pub enum GraphicsSettingsMsg {
-    InstallBackend(String),
-}
+pub enum GraphicsSettingsMsg {}
 
 #[derive(Debug)]
 pub enum GraphicsSettingsOutput {
@@ -36,43 +38,49 @@ impl AsyncComponent for GraphicsSettings {
     type Widgets = GraphicsSettingsWidgets;
 
     view! {
+        #[root]
         adw::NavigationPage {
             set_title: "Graphics Backends",
+            set_child: Some(&prefs_page),
+        },
+
+        #[name = "prefs_page"]
+        adw::PreferencesPage {
+            #[name = "installed_group"]
+            adw::PreferencesGroup {
+                set_title: "Installed",
+            },
+
+            #[name = "avail_group"]
+            adw::PreferencesGroup {
+                set_title: "Available",
+                set_description: Some("Translation layers that can improve DirectX performance"),
+            },
         }
     }
 
     async fn init(
         _init: Self::Init,
         root: Self::Root,
-        sender: AsyncComponentSender<Self>,
+        _sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
-        let prefs_page = adw::PreferencesPage::new();
-
-        // Installed group
-        let installed_group = adw::PreferencesGroup::builder()
-            .title("Installed")
-            .build();
-        let mut rows: Vec<adw::ActionRow> = Vec::new();
-        refresh_graphics_list(&installed_group, &mut rows);
-        prefs_page.add(&installed_group);
-
-        // Available group
-        let available_group = adw::PreferencesGroup::builder()
-            .title("Available")
-            .description("Translation layers that can improve DirectX performance")
-            .build();
-        build_available_graphics_rows(&available_group, &sender);
-        prefs_page.add(&available_group);
-
-        root.set_child(Some(&prefs_page));
+        // Placeholder groups — replaced with real ones from view! after view_output!()
+        let placeholder_group = adw::PreferencesGroup::new();
+        let mut model = GraphicsSettings {
+            installed_group: placeholder_group,
+            rows: Vec::new(),
+            available_ctrls: Vec::new(),
+            tracker: 0,
+        };
 
         let widgets = view_output!();
 
-        let model = GraphicsSettings {
-            installed_group,
-            rows,
-            tracker: 0,
-        };
+        // Replace placeholder with the real widget from view!
+        model.installed_group = widgets.installed_group.clone();
+
+        // Populate the groups
+        refresh_graphics_list(&model.installed_group, &mut model.rows);
+        model.available_ctrls = build_available_graphics_rows(&widgets.avail_group);
 
         AsyncComponentParts { model, widgets }
     }
@@ -83,12 +91,7 @@ impl AsyncComponent for GraphicsSettings {
         _sender: AsyncComponentSender<Self>,
         _root: &Self::Root,
     ) {
-        match msg {
-            GraphicsSettingsMsg::InstallBackend(_name) => {
-                // TODO: wire up graphics backend download
-                // Use runtime::graphics::fetch_dxmt_release() etc. once implemented
-            }
-        }
+        match msg {}
     }
 }
 
@@ -113,8 +116,13 @@ fn refresh_graphics_list(group: &adw::PreferencesGroup, rows: &mut Vec<adw::Acti
 
     let mut found = false;
     for entry in std::fs::read_dir(&dir).ok().into_iter().flatten() {
-        let entry = match entry { Ok(e) => e, _ => continue };
-        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) { continue; }
+        let entry = match entry {
+            Ok(e) => e,
+            _ => continue,
+        };
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
         found = true;
         let name = entry.file_name().to_string_lossy().to_string();
 
@@ -147,61 +155,262 @@ fn refresh_graphics_list(group: &adw::PreferencesGroup, rows: &mut Vec<adw::Acti
     }
 }
 
+// ── Available backends — each gets its own ManagedDownloadRow ───────────
+
 fn build_available_graphics_rows(
     group: &adw::PreferencesGroup,
-    sender: &AsyncComponentSender<GraphicsSettings>,
-) {
+) -> Vec<AsyncController<managed_download_row::ManagedDownloadRow>> {
+    let mut ctrls: Vec<AsyncController<managed_download_row::ManagedDownloadRow>> = Vec::new();
+
     #[cfg(target_os = "macos")]
     {
-        let dxmt_row = adw::ActionRow::builder()
-            .title("DXMT")
-            .subtitle("DirectX → Metal translation layer (recommended)")
-            .activatable(false)
-            .build();
-        let install_dxmt = gtk::Button::builder()
-            .icon_name("document-save-symbolic")
-            .tooltip_text("Install DXMT")
-            .css_classes(["flat", "circular"])
-            .valign(gtk::Align::Center)
-            .build();
-        {
-            let s = sender.clone();
-            install_dxmt.connect_clicked(move |_| {
-                s.input(GraphicsSettingsMsg::InstallBackend("dxmt".to_string()));
-            });
-        }
-        dxmt_row.add_suffix(&install_dxmt);
-        group.add(&dxmt_row);
+        // ── DXMT ──
+        let dxmt_ctrl = managed_download_row::ManagedDownloadRow::builder()
+            .launch(managed_download_row::ManagedDownloadRowInit {
+                title: "DXMT".into(),
+                check_status: Box::new(|| {
+                    let dir = runtime::graphics::graphics_dir();
+                    let found = std::fs::read_dir(&dir).ok().into_iter().flatten().any(|e| {
+                        e.as_ref()
+                            .ok()
+                            .and_then(|e| e.file_type().ok())
+                            .map(|t| t.is_dir())
+                            .unwrap_or(false)
+                            && e.as_ref()
+                                .ok()
+                                .map(|e| e.file_name().to_string_lossy().starts_with("dxmt-"))
+                                .unwrap_or(false)
+                    });
+                    managed_download_row::DownloadRowStatus {
+                        installed: found,
+                        managed: found,
+                        status_text: if found {
+                            "✓ Installed".into()
+                        } else {
+                            "DirectX → Metal translation layer (recommended)".into()
+                        },
+                    }
+                }),
+                check_update: None,
+                start_download: Box::new(|_data_dir, progress, cancel| {
+                    Box::pin(async move {
+                        let (version, url) =
+                            runtime::graphics::fetch_dxmt_release()
+                                .await
+                                .map_err(|e| e.to_string())?;
+                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                            return Err("Cancelled".into());
+                        }
+                        let simple_prog: runtime::download::ProgressFn =
+                            Box::new(move |d, t| {
+                                progress(
+                                    d,
+                                    t,
+                                    runtime::download::InstallPhase::Download,
+                                );
+                            });
+                        runtime::graphics::download_dxmt(&version, &url, &simple_prog)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        Ok(())
+                    })
+                }),
+                perform_remove: Box::new(|| {
+                    let dir = runtime::graphics::graphics_dir();
+                    if !dir.is_dir() {
+                        return Ok(());
+                    }
+                    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+                        let entry = entry.map_err(|e| e.to_string())?;
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if name.starts_with("dxmt-")
+                            && entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                        {
+                            std::fs::remove_dir_all(&entry.path())
+                                .map_err(|e| e.to_string())?;
+                        }
+                    }
+                    Ok(())
+                }),
+                data_dir: Default::default(),
+            })
+            .detach();
+        group.add(dxmt_ctrl.widget());
+        ctrls.push(dxmt_ctrl);
 
-        let d3d_row = adw::ActionRow::builder()
-            .title("D3DMetal (via GPTK)")
-            .subtitle("Apple's Game Porting Toolkit")
-            .activatable(false)
-            .build();
-        let install_d3d = gtk::Button::builder()
-            .icon_name("document-save-symbolic")
-            .tooltip_text("Install D3DMetal")
-            .css_classes(["flat", "circular"])
-            .valign(gtk::Align::Center)
-            .build();
-        d3d_row.add_suffix(&install_d3d);
-        group.add(&d3d_row);
+        // ── D3DMetal (via GPTK) ──
+        let d3d_ctrl = managed_download_row::ManagedDownloadRow::builder()
+            .launch(managed_download_row::ManagedDownloadRowInit {
+                title: "D3DMetal (via GPTK)".into(),
+                check_status: Box::new(|| {
+                    let dir = runtime::graphics::graphics_dir();
+                    let found = std::fs::read_dir(&dir).ok().into_iter().flatten().any(|e| {
+                        e.as_ref()
+                            .ok()
+                            .and_then(|e| e.file_type().ok())
+                            .map(|t| t.is_dir())
+                            .unwrap_or(false)
+                            && e.as_ref()
+                                .ok()
+                                .map(|e| {
+                                    e.file_name()
+                                        .to_string_lossy()
+                                        .starts_with("d3dmetal-")
+                                })
+                                .unwrap_or(false)
+                    });
+                    managed_download_row::DownloadRowStatus {
+                        installed: found,
+                        managed: found,
+                        status_text: if found {
+                            "✓ Installed".into()
+                        } else {
+                            "Apple's Game Porting Toolkit".into()
+                        },
+                    }
+                }),
+                check_update: None,
+                start_download: Box::new(|_data_dir, progress, cancel| {
+                    Box::pin(async move {
+                        // D3DMetal download not yet implemented – placeholder.
+                        let _ = cancel;
+                        let _ = progress;
+                        Err("D3DMetal download not yet supported".into())
+                    })
+                }),
+                perform_remove: Box::new(|| {
+                    let dir = runtime::graphics::graphics_dir();
+                    if !dir.is_dir() {
+                        return Ok(());
+                    }
+                    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+                        let entry = entry.map_err(|e| e.to_string())?;
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if name.starts_with("d3dmetal-")
+                            && entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                        {
+                            std::fs::remove_dir_all(&entry.path())
+                                .map_err(|e| e.to_string())?;
+                        }
+                    }
+                    Ok(())
+                }),
+                data_dir: Default::default(),
+            })
+            .detach();
+        group.add(d3d_ctrl.widget());
+        ctrls.push(d3d_ctrl);
     }
 
     #[cfg(target_os = "linux")]
     {
-        let dxvk_row = adw::ActionRow::builder()
-            .title("DXVK + VKD3D")
-            .subtitle("DirectX → Vulkan translation layers")
-            .activatable(false)
-            .build();
-        let install_dxvk = gtk::Button::builder()
-            .icon_name("document-save-symbolic")
-            .tooltip_text("Install DXVK + VKD3D")
-            .css_classes(["flat", "circular"])
-            .valign(gtk::Align::Center)
-            .build();
-        dxvk_row.add_suffix(&install_dxvk);
-        group.add(&dxvk_row);
+        // ── DXVK + VKD3D ──
+        let dxvk_ctrl = managed_download_row::ManagedDownloadRow::builder()
+            .launch(managed_download_row::ManagedDownloadRowInit {
+                title: "DXVK + VKD3D".into(),
+                check_status: Box::new(|| {
+                    let dir = runtime::graphics::graphics_dir();
+                    let found = std::fs::read_dir(&dir).ok().into_iter().flatten().any(|e| {
+                        e.as_ref()
+                            .ok()
+                            .and_then(|e| e.file_type().ok())
+                            .map(|t| t.is_dir())
+                            .unwrap_or(false)
+                            && e.as_ref()
+                                .ok()
+                                .map(|e| {
+                                    let n = e.file_name().to_string_lossy();
+                                    n.starts_with("dxvk-") || n.starts_with("vkd3d-")
+                                })
+                                .unwrap_or(false)
+                    });
+                    managed_download_row::DownloadRowStatus {
+                        installed: found,
+                        managed: found,
+                        status_text: if found {
+                            "✓ Installed".into()
+                        } else {
+                            "DirectX → Vulkan translation layers".into()
+                        },
+                    }
+                }),
+                check_update: None,
+                start_download: Box::new(|_data_dir, progress, cancel| {
+                    Box::pin(async move {
+                        let simple_prog: runtime::download::ProgressFn =
+                            Box::new(move |d, t| {
+                                progress(
+                                    d,
+                                    t,
+                                    runtime::download::InstallPhase::Download,
+                                );
+                            });
+
+                        // Download DXVK
+                        let (v_version, v_url) =
+                            runtime::graphics::fetch_dxvk_release()
+                                .await
+                                .map_err(|e| e.to_string())?;
+                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                            return Err("Cancelled".into());
+                        }
+                        runtime::graphics::download_linux_backend(
+                            "dxvk",
+                            &v_version,
+                            &v_url,
+                            false,
+                            &simple_prog,
+                        )
+                        .await
+                        .map_err(|e| e.to_string())?;
+                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                            return Err("Cancelled".into());
+                        }
+
+                        // Download VKD3D-Proton
+                        let (v3_version, v3_url) =
+                            runtime::graphics::fetch_vkd3d_release()
+                                .await
+                                .map_err(|e| e.to_string())?;
+                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                            return Err("Cancelled".into());
+                        }
+                        runtime::graphics::download_linux_backend(
+                            "vkd3d",
+                            &v3_version,
+                            &v3_url,
+                            true,
+                            &simple_prog,
+                        )
+                        .await
+                        .map_err(|e| e.to_string())?;
+
+                        Ok(())
+                    })
+                }),
+                perform_remove: Box::new(|| {
+                    let dir = runtime::graphics::graphics_dir();
+                    if !dir.is_dir() {
+                        return Ok(());
+                    }
+                    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+                        let entry = entry.map_err(|e| e.to_string())?;
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if (name.starts_with("dxvk-") || name.starts_with("vkd3d-"))
+                            && entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                        {
+                            std::fs::remove_dir_all(&entry.path())
+                                .map_err(|e| e.to_string())?;
+                        }
+                    }
+                    Ok(())
+                }),
+                data_dir: Default::default(),
+            })
+            .detach();
+        group.add(dxvk_ctrl.widget());
+        ctrls.push(dxvk_ctrl);
     }
+
+    ctrls
 }
