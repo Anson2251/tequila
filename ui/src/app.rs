@@ -209,7 +209,7 @@ impl SimpleComponent for AppModel {
         let registry_editor = RegistryEditorModel::builder()
             .launch((PathBuf::new(), prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()), Arc::clone(&prefix_store)))
             .forward(sender.input_sender(), |msg| match msg {
-                crate::registry_editor::RegistryEditorMsg::ConfigUpdated(config) => {
+                crate::regconf::RegistryEditorMsg::ConfigUpdated(config) => {
                     AppMsg::ConfigUpdated(0, config)
                 }
                 _ => AppMsg::RefreshPrefixes
@@ -482,7 +482,7 @@ impl SimpleComponent for AppModel {
                     // Emit path first so ConfigUpdated handlers have the correct prefix path
                     self.prefix_details.emit(crate::prefix_details::PrefixDetailsMsg::PrefixPathUpdated(prefix_path.clone()));
                     self.app_manager.emit(crate::app_manager::AppManagerMsg::PrefixPathUpdated(prefix_path.clone()));
-                    self.registry_editor.emit(crate::registry_editor::RegistryEditorMsg::PrefixPathUpdated(prefix_path));
+                    self.registry_editor.emit(crate::regconf::RegistryEditorMsg::PrefixPathUpdated(prefix_path));
 
                     // Resolve runtime display name
                     let runtime_display = config.wine_version.as_ref()
@@ -494,7 +494,7 @@ impl SimpleComponent for AppModel {
                     self.prefix_details.emit(crate::prefix_details::PrefixDetailsMsg::ConfigUpdated(config.clone()));
                     self.prefix_details.emit(crate::prefix_details::PrefixDetailsMsg::SetPrefixIndex(index));
                     self.app_manager.emit(crate::app_manager::AppManagerMsg::ConfigUpdated(config.clone()));
-                    self.registry_editor.emit(crate::registry_editor::RegistryEditorMsg::ConfigUpdated(config.clone()));
+                    self.registry_editor.emit(crate::regconf::RegistryEditorMsg::ConfigUpdated(config.clone()));
                 }
             }
             AppMsg::HideDetails => {
@@ -518,7 +518,7 @@ impl SimpleComponent for AppModel {
                             // Update other components with the new config but don't refresh the entire list
                             self.prefix_details.emit(crate::prefix_details::PrefixDetailsMsg::ConfigUpdated(config.clone()));
                             self.app_manager.emit(crate::app_manager::AppManagerMsg::ConfigUpdated(config.clone()));
-                            self.registry_editor.emit(crate::registry_editor::RegistryEditorMsg::ConfigUpdated(config.clone()));
+                            self.registry_editor.emit(crate::regconf::RegistryEditorMsg::ConfigUpdated(config.clone()));
                         }
                     }
                 }
