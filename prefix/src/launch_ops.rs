@@ -12,8 +12,21 @@ impl Manager {
         }
         let name = prefix_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
         let config = self.load_or_create_config(prefix_path, name, &None)?;
-        self.build_wine_command_with_args(&[&executable.executable_path.to_string_lossy()], &config, prefix_path)
-            .current_dir(prefix_path).spawn()
+        let mut cmd = self.build_wine_command_with_args(&[&executable.executable_path.to_string_lossy()], &config, prefix_path);
+
+        // Apply per-executable environment variables
+        for (key, value) in &executable.env_vars {
+            cmd.env(key, value);
+        }
+
+        // Apply per-executable working directory (fall back to prefix_path)
+        if let Some(cwd) = &executable.cwd {
+            cmd.current_dir(cwd);
+        } else {
+            cmd.current_dir(prefix_path);
+        }
+
+        cmd.spawn()
             .map_err(|e| PrefixError::Process(format!("Failed to launch executable: {}", e)))?;
         Ok(())
     }

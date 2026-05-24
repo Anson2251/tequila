@@ -13,7 +13,7 @@ use crate::{
     registered_apps_list::{RegisteredAppsListModel, RegisteredAppsListMsg, RegisteredAppsListOutput},
     app_actions::{AppActionsModel, AppActionsMsg, AppActionsOutput},
     add_app_popover::{AddAppPopoverModel, AddAppPopoverMsg, AddAppPopoverOutput},
-    executable_info_dialog::{ExecutableInfoDialogModel, ExecutableInfoDialogMsg},
+    executable_info_dialog::{ExecutableInfoDialogModel, ExecutableInfoDialogMsg, ExecutableInfoDialogOutput},
 };
 
 #[tracker::track]
@@ -56,6 +56,7 @@ pub enum AppManagerMsg {
     RegisteredAppsList(RegisteredAppsListOutput),
     AppActions(AppActionsOutput),
     AddAppPopover(AddAppPopoverOutput),
+    ExecutableInfoDialog(ExecutableInfoDialogOutput),
     PollProcesses,
 }
 
@@ -132,8 +133,8 @@ impl AsyncComponent for AppManagerModel {
 
         // Initialize executable info dialog (hidden by default)
         let executable_info_dialog = ExecutableInfoDialogModel::builder()
-            .launch(())
-            .detach();
+            .launch(prefix_path.clone())
+            .forward(sender.input_sender(), |output| AppManagerMsg::ExecutableInfoDialog(output));
 
         let process_tracker = ProcessTracker::shared();
 
@@ -268,13 +269,27 @@ impl AsyncComponent for AppManagerModel {
                 if let Some(executable) = self.config.registered_executables.get(index) {
                     let pp = self.prefix_path.clone();
                     let exe_path = executable.executable_path.clone();
+                    let env_vars = executable.env_vars.clone();
+                    let cwd = executable.cwd.clone();
                     let tracker = Arc::clone(&self.process_tracker);
 
-                    match std::process::Command::new("wine")
-                        .current_dir(&pp)
-                        .env("WINEPREFIX", pp.to_string_lossy().as_ref())
-                        .arg(&exe_path)
-                        .spawn()
+                    let mut cmd = std::process::Command::new("wine");
+                    cmd.env("WINEPREFIX", pp.to_string_lossy().as_ref())
+                        .arg(&exe_path);
+
+                    // Apply per-executable environment variables
+                    for (key, value) in &env_vars {
+                        cmd.env(key, value);
+                    }
+
+                    // Apply per-executable working directory (fall back to prefix path)
+                    if let Some(ref wd) = cwd {
+                        cmd.current_dir(wd);
+                    } else {
+                        cmd.current_dir(&pp);
+                    }
+
+                    match cmd.spawn()
                     {
                         Ok(child) => {
                             println!("Successfully launched: {}", executable.name);
@@ -350,10 +365,34 @@ impl AsyncComponent for AppManagerModel {
             }
             AppManagerMsg::ShowInfoDialog(index) => {
                 if let Some(executable) = self.config.registered_executables.get(index) {
-                    self.executable_info_dialog.emit(ExecutableInfoDialogMsg::ShowInfo(executable.clone()));
+                    self.executable_info_dialog.emit(ExecutableInfoDialogMsg::ShowInfo(executable.clone(), self.prefix_path.clone()));
                 }
             }
             // Handle messages from child components
+            AppManagerMsg::ExecutableInfoDialog(output) => {
+                match output {
+                    ExecutableInfoDialogOutput::ExecutableUpdated(updated_exec) => {
+                        // Find and update the executable in the config
+                        if let Some(pos) = self.config.registered_executables.iter().position(|e| {
+                            e.executable_path == updated_exec.executable_path
+                        }) {
+                            self.config.registered_executables[pos] = updated_exec;
+
+                            // Persist config to disk
+                            if let Err(e) = self.config.save_to_file(&self.prefix_path) {
+                                eprintln!("Failed to save config after updating executable settings: {}", e);
+                            }
+
+                            // Update the registered apps list view
+                            self.registered_apps_list.emit(RegisteredAppsListMsg::UpdateExecutables(
+                                self.config.registered_executables.clone(),
+                            ));
+
+                            let _ = sender.output(AppManagerMsg::ConfigUpdated(self.config.clone()));
+                        }
+                    }
+                }
+            }
             AppManagerMsg::RegisteredAppsList(output) => {
                 println!("DEBUG: Received RegisteredAppsList output: {:?}", output);
                 match output {

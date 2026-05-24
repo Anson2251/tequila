@@ -131,6 +131,8 @@ impl PrefixStore {
                 file_description: row.get("file_description")?,
                 product_name: row.get("product_name")?,
                 imported_modules: Vec::new(),
+                env_vars: std::collections::HashMap::new(),
+                cwd: None,
             })
         }).map_err(map_err)?.collect::<std::result::Result<Vec<_>, _>>().map_err(map_err)?;
         Ok(exes)

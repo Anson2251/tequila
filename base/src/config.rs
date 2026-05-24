@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use crate::error::{Result, PrefixError};
 use crate::traits::{ConfigOperations, ExecutableManager};
@@ -32,6 +33,9 @@ pub struct RegisteredExecutable {
     pub product_name: Option<String>,
     #[serde(default)]
     pub imported_modules: Vec<String>,
+    #[serde(default)]
+    pub env_vars: HashMap<String, String>,
+    pub cwd: Option<PathBuf>,
 }
 
 impl PrefixConfig {
@@ -216,6 +220,8 @@ impl RegisteredExecutable {
             file_description: None,
             product_name: None,
             imported_modules: Vec::new(),
+            env_vars: HashMap::new(),
+            cwd: None,
         }
     }
 
@@ -271,6 +277,8 @@ pub struct RegisteredExecutableBuilder {
     file_description: Option<String>,
     product_name: Option<String>,
     imported_modules: Vec<String>,
+    env_vars: HashMap<String, String>,
+    cwd: Option<PathBuf>,
 }
 
 impl RegisteredExecutableBuilder {
@@ -286,6 +294,8 @@ impl RegisteredExecutableBuilder {
             file_description: None,
             product_name: None,
             imported_modules: Vec::new(),
+            env_vars: HashMap::new(),
+            cwd: None,
         }
     }
 
@@ -339,6 +349,16 @@ impl RegisteredExecutableBuilder {
         self
     }
 
+    pub fn env_vars(mut self, vars: HashMap<String, String>) -> Self {
+        self.env_vars = vars;
+        self
+    }
+
+    pub fn cwd(mut self, cwd: Option<PathBuf>) -> Self {
+        self.cwd = cwd;
+        self
+    }
+
     pub fn build(self) -> std::result::Result<RegisteredExecutable, PrefixError> {
         Ok(RegisteredExecutable {
             name: self.name.ok_or_else(|| PrefixError::Validation("Name is required".to_string()))?,
@@ -351,6 +371,8 @@ impl RegisteredExecutableBuilder {
             file_description: self.file_description,
             product_name: self.product_name,
             imported_modules: self.imported_modules,
+            env_vars: self.env_vars,
+            cwd: self.cwd,
         })
     }
 }

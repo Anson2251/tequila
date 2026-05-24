@@ -10,6 +10,7 @@ pub mod executable_info_dialog;
 pub mod regconf;
 pub mod runtime_manager;
 pub mod settings;
+pub mod utils;
 
 pub use app::{AppModel, AppMsg, initialize_custom_resources};
 pub use prefix_details::PrefixDetailsModel;
