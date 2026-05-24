@@ -2,6 +2,7 @@ use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 use base::error::{Result, PrefixError};
 use base::GraphicsConfig;
 use crate::{Runtime, download};
@@ -368,6 +369,97 @@ fn activate_vkd3d_for_prefix(vkd3d_dir: &Path, prefix_path: &Path) -> Result<()>
         if !src_dir.is_dir() { continue; }
         let target = if arch_dir == "x64" { &system32 } else { &syswow64 };
         for dll in VKD3D_DLLS { let src = src_dir.join(dll); if src.exists() { install_symlink(&src, &target.join(dll))?; } }
+    }
+    Ok(())
+}
+
+/// Import D3DMetal from a GPTK `.dmg` file.
+///
+/// Mounts the DMG, finds the inner evaluation-environment DMG if present,
+/// copies the `lib/` tree to `graphics_dir/d3dmetal-imported-{ts}`, and
+/// unmounts everything.  This is a **blocking** function — call it from a
+/// background thread.
+pub fn import_d3dmetal_from_dmg(dmg_path: &Path) -> Result<PathBuf> {
+    let gfx_dir = graphics_dir();
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let dest_dir = gfx_dir.join(format!("d3dmetal-imported-{}", ts));
+
+    // ── Mount the outer DMG ──
+    let base_mount = PathBuf::from("/tmp").join(format!("gptk_import_{}", std::process::id()));
+    let output = Command::new("hdiutil")
+        .arg("attach")
+        .arg(dmg_path)
+        .arg("-mountpoint")
+        .arg(&base_mount)
+        .arg("-nobrowse")
+        .output()
+        .map_err(|e| PrefixError::Process(format!("Failed to run hdiutil: {}", e)))?;
+    if !output.status.success() {
+        return Err(PrefixError::Process(format!(
+            "hdiutil attach failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    // ── Try inner DMG first (GPTK 3.0 layout) ──
+    let result = (|| -> Result<PathBuf> {
+        if let Some(inner_dmg) = find_inner_dmg(&base_mount) {
+            let inner_mount =
+                PathBuf::from("/tmp").join(format!("gptk_import_inner_{}", std::process::id()));
+            if fs::create_dir(&inner_mount).is_ok() {
+                let ok = Command::new("hdiutil")
+                    .arg("attach")
+                    .arg(&inner_dmg)
+                    .arg("-mountpoint")
+                    .arg(&inner_mount)
+                    .arg("-nobrowse")
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if ok {
+                    let inner_result = copy_lib_dir(&inner_mount, &dest_dir);
+                    let _ = Command::new("hdiutil").arg("detach").arg(&inner_mount).status();
+                    let _ = fs::remove_dir(&inner_mount);
+                    return inner_result.map(|_| dest_dir.clone());
+                }
+                let _ = fs::remove_dir(&inner_mount);
+            }
+        }
+        // No inner DMG — copy from the outer mount directly
+        copy_lib_dir(&base_mount, &dest_dir).map(|_| dest_dir.clone())
+    })();
+
+    let _ = Command::new("hdiutil").arg("detach").arg(&base_mount).status();
+    result
+}
+
+fn copy_lib_dir(mount: &Path, dest: &Path) -> Result<()> {
+    let lib = [mount.join("lib"), mount.join("redist").join("lib")]
+        .iter()
+        .find(|p| p.is_dir())
+        .cloned()
+        .ok_or_else(|| {
+            PrefixError::NotFound(
+                "Could not find lib directory in the DMG. \
+                 Make sure you selected a valid Game Porting Toolkit DMG."
+                    .to_string(),
+            )
+        })?;
+
+    fs::create_dir_all(dest)?;
+    let status = Command::new("cp")
+        .arg("-R")
+        .arg(&lib)
+        .arg(dest)
+        .status()
+        .map_err(|e| PrefixError::Process(format!("cp failed: {}", e)))?;
+    if !status.success() {
+        return Err(PrefixError::Process(
+            "Failed to copy GPTK files to graphics directory.".to_string(),
+        ));
     }
     Ok(())
 }

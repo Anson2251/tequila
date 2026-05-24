@@ -94,12 +94,13 @@ impl AsyncComponent for GraphicsSettings {
     async fn update(
         &mut self,
         msg: Self::Input,
-        _sender: AsyncComponentSender<Self>,
+        sender: AsyncComponentSender<Self>,
         root: &Self::Root,
     ) {
         match msg {
             GraphicsSettingsMsg::RefreshInstalled => {
                 refresh_graphics_list(&self.installed_group, &mut self.rows);
+                let _ = sender.output(GraphicsSettingsOutput::Changed);
             }
             GraphicsSettingsMsg::ShowD3DMetalImportDialog(tx) => {
                 // Lazily initialize the dialog on first use
@@ -339,52 +340,67 @@ fn build_available_graphics_rows(
                                 }
                             };
 
-                            // ── Import the selected folder ──
-                            let src = std::path::Path::new(&selected);
-                            let gfx_dir = runtime::graphics::graphics_dir();
-                            let ts = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs();
-                            let dest = gfx_dir.join(format!("d3dmetal-imported-{}", ts));
-
-                            let ext_dir = [
-                                src.join("lib").join("external"),
-                                src.join("redist").join("lib").join("external"),
-                            ]
-                            .iter()
-                            .find(|p| p.is_dir())
-                            .cloned()
-                            .ok_or_else(|| {
-                                "Could not find Game Porting Toolkit files in the selected folder.\n\
-                                 Make sure you selected the mounted GPTK volume \
-                                 (look for a \"lib/external\" directory inside)."
-                                    .to_string()
-                            })?;
-
-                            std::fs::create_dir_all(&dest).map_err(|e| {
-                                format!("Failed to create directory: {}", e)
-                            })?;
-                            for entry in std::fs::read_dir(&ext_dir).map_err(|e| e.to_string())? {
-                                let entry = entry.map_err(|e| e.to_string())?;
-                                let name = entry.file_name();
-                                let src_path = entry.path();
-                                let dst_path = dest.join(&name);
-                                if src_path.is_dir() {
-                                    let status = std::process::Command::new("cp")
-                                        .arg("-R")
-                                        .arg(&src_path)
-                                        .arg(&dst_path)
-                                        .status()
-                                        .map_err(|e| format!("Failed to run cp: {}", e))?;
-                                    if !status.success() {
-                                        return Err(format!("Failed to copy {:?}", name));
-                                    }
+                            // ── Import (blocking — run on background thread) ──
+                            let path = std::path::PathBuf::from(&selected);
+                            let (tx_import, rx_import) = std::sync::mpsc::channel();
+                            std::thread::spawn(move || {
+                                let result = if path.extension().map(|e| e == "dmg").unwrap_or(false)
+                                {
+                                    runtime::graphics::import_d3dmetal_from_dmg(&path)
+                                        .map(|_| ())
+                                        .map_err(|e| e.to_string())
                                 } else {
-                                    std::fs::copy(&src_path, &dst_path)
-                                        .map_err(|e| format!("Failed to copy {:?}: {}", name, e))?;
+                                    let r = (|| -> Result<(), String> {
+                                        let gfx_dir = runtime::graphics::graphics_dir();
+                                        let ts = std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap()
+                                            .as_secs();
+                                        let dest =
+                                            gfx_dir.join(format!("d3dmetal-imported-{}", ts));
+                                        let lib = [path.join("lib"), path.join("redist").join("lib")]
+                                            .iter()
+                                            .find(|p| p.is_dir())
+                                            .cloned()
+                                            .ok_or_else(|| {
+                                                "Could not find GPTK lib directory in \
+                                                 the selected path."
+                                                    .to_string()
+                                            })?;
+                                        std::fs::create_dir_all(&dest)
+                                            .map_err(|e| format!("Failed to create dir: {}", e))?;
+                                        let status = std::process::Command::new("cp")
+                                            .arg("-R")
+                                            .arg(&lib)
+                                            .arg(&dest)
+                                            .status()
+                                            .map_err(|e| format!("cp failed: {}", e))?;
+                                        if !status.success() {
+                                            return Err("Failed to copy GPTK files.".into());
+                                        }
+                                        Ok(())
+                                    })();
+                                    r
+                                };
+                                let _ = tx_import.send(result);
+                            });
+
+                            // Poll for completion
+                            let result = loop {
+                                match rx_import.try_recv() {
+                                    Ok(r) => break r,
+                                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                                        if cancel.load(Ordering::Relaxed) {
+                                            return Err("Cancelled".into());
+                                        }
+                                        gtk::glib::timeout_future(Duration::from_millis(200)).await;
+                                    }
+                                    Err(_) => {
+                                        break Err("Import thread crashed unexpectedly.".into());
+                                    }
                                 }
-                            }
+                            };
+                            result?;
                             Ok(())
                         })
                     }
@@ -543,7 +559,7 @@ struct D3DMetalImportDialog {
 #[derive(Debug)]
 enum D3DMetalImportMsg {
     Show(std::sync::mpsc::Sender<Option<String>>),
-    SelectFolder,
+    SelectDmg,
     Cancel,
 }
 
@@ -569,14 +585,16 @@ impl SimpleComponent for D3DMetalImportDialog {
                 #[name = "info_label"]
                 gtk::Label {
                     set_use_markup: true,
-                    set_label: "D3DMetal (via GPTK) requires Apple's Game Porting Toolkit (GPTK).\
+                    set_label: "D3DMetal (via GPTK) — compatible with GPTK 3.0.\
                          \n\n\
-                         Download GPTK from the Apple Developer website:\n  \
+                         Download requires an Apple Developer account:\n  \
                          <a href=\"https://developer.apple.com/games/game-porting-toolkit/\">\
                          developer.apple.com/games/game-porting-toolkit/</a>\
                          \n\n\
-                         After downloading, open the DMG and click \"Select Folder\"\
-                         \nto choose the mounted volume.",
+                         Then, click \"Select DMG\" to choose the DMG downloaded.\
+                         \n\n\
+                         By proceeding, you agree to Apple's Software License \
+                         Agreement for Game Porting Toolkit.",
                     set_wrap: true,
                     set_halign: gtk::Align::Start,
                     set_selectable: false,
@@ -600,9 +618,9 @@ impl SimpleComponent for D3DMetalImportDialog {
                         connect_clicked => D3DMetalImportMsg::Cancel,
                     },
                     gtk::Button {
-                        set_label: "Select Folder",
+                        set_label: "Select DMG",
                         add_css_class: "suggested-action",
-                        connect_clicked => D3DMetalImportMsg::SelectFolder,
+                        connect_clicked => D3DMetalImportMsg::SelectDmg,
                     },
                 },
             },
@@ -639,23 +657,18 @@ impl SimpleComponent for D3DMetalImportDialog {
             D3DMetalImportMsg::Show(tx) => {
                 self.result_tx = Some(tx);
                 let show_info = !self.skip_path.exists();
-                self.info_label.set_visible(show_info);
-                self.checkbox.set_visible(show_info);
-                self.dialog.present();
-            }
-            D3DMetalImportMsg::SelectFolder => {
-                if let Some(tx) = self.result_tx.take() {
-                    let skip = self.skip_path.clone();
-                    let dont_ask = self.checkbox.is_active();
-                    let dlg = self.dialog.clone();
-                    crate::utils::pick_folder(&self.dialog, None, move |path| {
-                        if dont_ask {
-                            let _ = std::fs::write(&skip, "1");
-                        }
-                        let _ = tx.send(Some(path));
-                        dlg.set_visible(false);
-                    });
+                if show_info {
+                    self.info_label.set_visible(true);
+                    self.checkbox.set_visible(true);
+                    self.dialog.present();
+                } else {
+                    // "Don't show again" — skip the dialog entirely,
+                    // go straight to the file picker.
+                    self.start_pick_file();
                 }
+            }
+            D3DMetalImportMsg::SelectDmg => {
+                self.start_pick_file();
             }
             D3DMetalImportMsg::Cancel => {
                 if let Some(tx) = self.result_tx.take() {
@@ -663,6 +676,26 @@ impl SimpleComponent for D3DMetalImportDialog {
                 }
                 self.dialog.set_visible(false);
             }
+        }
+    }
+}
+
+impl D3DMetalImportDialog {
+    fn start_pick_file(&mut self) {
+        if let Some(tx) = self.result_tx.take() {
+            let skip = self.skip_path.clone();
+            let dont_ask = self.checkbox.is_active();
+            let dlg = self.dialog.clone();
+            crate::utils::pick_file(&self.dialog, "Select GPTK DMG", &["dmg"], move |path| {
+                if let Some(p) = path {
+                    if dont_ask {
+                        let _ = std::fs::write(&skip, "1");
+                    }
+                    let _ = tx.send(Some(p));
+                }
+                // if cancelled, tx drops (receiver gets Disconnected)
+                dlg.set_visible(false);
+            });
         }
     }
 }
