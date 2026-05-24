@@ -44,11 +44,37 @@ async fn fetch_latest_release(owner: &str, repo: &str) -> Result<GitHubRelease> 
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .build()
         .map_err(|e| PrefixError::Process(format!("Failed to build HTTP client: {}", e)))?;
-    let release = client.get(&url).send().await
-        .map_err(|e| PrefixError::Process(format!("GitHub API request failed: {}", e)))?
-        .json::<GitHubRelease>()
+    let response = client.get(&url).send().await
+        .map_err(|e| PrefixError::Process(format!(
+            "Network error fetching {} release info: {}. \
+             Please check your internet connection or VPN/proxy settings.",
+            repo, e
+        )))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        // Try to extract a human-readable error message from the response body
+        let body_text = response.text().await.unwrap_or_default();
+        let msg = serde_json::from_str::<serde_json::Value>(&body_text)
+            .ok()
+            .and_then(|v| v.get("message")?.as_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| format!("HTTP {}", status));
+
+        return Err(PrefixError::Process(format!(
+            "Failed to fetch {} release information: {}\n\n\
+             If you are using a VPN or proxy, try switching to a different node \
+             or disabling it temporarily, as shared IPs are often rate-limited by GitHub.",
+            repo, msg,
+        )));
+    }
+
+    let release = response.json::<GitHubRelease>()
         .await
-        .map_err(|e| PrefixError::Process(format!("Failed to parse GitHub release: {}", e)))?;
+        .map_err(|e| PrefixError::Process(format!(
+            "Failed to parse {} release data: {}. \
+             If this persists, the release format may have changed.",
+            repo, e,
+        )))?;
     Ok(release)
 }
 
