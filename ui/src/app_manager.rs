@@ -38,6 +38,10 @@ pub struct AppManagerModel {
     #[tracker::do_not_track]
     process_tracker: Arc<Mutex<ProcessTracker>>,
     running_paths: HashSet<PathBuf>,
+    #[tracker::do_not_track]
+    uninstaller_track_path: Option<PathBuf>,
+    #[tracker::do_not_track]
+    external_running: HashSet<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -47,6 +51,7 @@ pub enum AppManagerMsg {
     AddExecutables(Vec<usize>),
     RemoveExecutable(usize),
     LaunchExecutable(usize),
+    LaunchDirectExe(PathBuf),
     UpdateExecutableList(Vec<RegisteredExecutable>),
     SelectExecutable(usize),
     ConfigUpdated(PrefixConfig),
@@ -62,7 +67,7 @@ pub enum AppManagerMsg {
 
 #[relm4::component(pub, async)]
 impl AsyncComponent for AppManagerModel {
-    type Init = (PathBuf, PrefixConfig, Arc<IconCache>, Arc<prefix::PrefixStore>);
+    type Init = (PathBuf, PrefixConfig, Arc<IconCache>, Arc<prefix::PrefixStore>, Arc<Mutex<ProcessTracker>>);
     type Input = AppManagerMsg;
     type Output = AppManagerMsg;
     type CommandOutput = ();
@@ -114,7 +119,7 @@ impl AsyncComponent for AppManagerModel {
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
-        let (prefix_path, config, icon_cache, prefix_store) = init;
+        let (prefix_path, config, icon_cache, prefix_store, process_tracker) = init;
 
         // Initialize registered apps list component with the current registered executables
         let registered_apps_list = RegisteredAppsListModel::builder()
@@ -122,8 +127,9 @@ impl AsyncComponent for AppManagerModel {
             .forward(sender.input_sender(), |output| AppManagerMsg::RegisteredAppsList(output));
 
         // Initialize app actions component
+        let has_prefix = !prefix_path.as_os_str().is_empty();
         let app_actions = AppActionsModel::builder()
-            .launch((false, false)) // (has_selection, is_scanning)
+            .launch((false, false, has_prefix)) // (has_selection, is_scanning, prefix_set)
             .forward(sender.input_sender(), |output| AppManagerMsg::AppActions(output));
 
         // Initialize add app popover (hidden by default) - will be connected to the actual add button later
@@ -135,8 +141,6 @@ impl AsyncComponent for AppManagerModel {
         let executable_info_dialog = ExecutableInfoDialogModel::builder()
             .launch(prefix_path.clone())
             .forward(sender.input_sender(), |output| AppManagerMsg::ExecutableInfoDialog(output));
-
-        let process_tracker = ProcessTracker::shared();
 
         // Poll process status every 5 seconds
         let poll_sender = sender.clone();
@@ -159,6 +163,8 @@ impl AsyncComponent for AppManagerModel {
             prefix_store,
             process_tracker,
             running_paths: HashSet::new(),
+            uninstaller_track_path: None,
+            external_running: HashSet::new(),
             tracker: 0
         };
 
@@ -359,6 +365,8 @@ impl AsyncComponent for AppManagerModel {
                 }
             }
             AppManagerMsg::PrefixPathUpdated(path) => {
+                let has_prefix = !path.as_os_str().is_empty();
+                self.app_actions.emit(AppActionsMsg::SetPrefixSet(has_prefix));
                 self.set_prefix_path(path);
                 self.set_selected_executable(None);
                 self.app_actions.emit(AppActionsMsg::SetSelection(false));
@@ -467,6 +475,44 @@ impl AsyncComponent for AppManagerModel {
                             sender.input(AppManagerMsg::ShowInfoDialog(index));
                         }
                     }
+                    AppActionsOutput::RunUninstaller => {
+                        let pp = self.prefix_path.clone();
+                        let track_path = pp.join("__wine_uninstaller__");
+                        let mut cmd = std::process::Command::new("wine");
+                        cmd.env("WINEPREFIX", pp.to_string_lossy().as_ref())
+                            .arg("uninstaller")
+                            .current_dir(&pp);
+                        match cmd.spawn() {
+                            Ok(child) => {
+                                println!("Launched Wine uninstaller");
+                                let mut t = self.process_tracker.lock().unwrap();
+                                t.register(&track_path, child);
+                                drop(t);
+                                self.uninstaller_track_path = Some(track_path);
+                                self.app_actions.emit(AppActionsMsg::SetUninstallerRunning(true));
+                                sender.input(AppManagerMsg::PollProcesses);
+                            }
+                            Err(e) => eprintln!("Failed to launch uninstaller: {}", e),
+                        }
+                    }
+                    AppActionsOutput::RunExe => {
+                        let sender_clone = sender.clone();
+                        let parent_window = _root
+                            .ancestor(gtk::Window::static_type())
+                            .and_then(|w| w.downcast::<gtk::Window>().ok());
+                        if let Some(window) = parent_window {
+                            crate::utils::pick_file(
+                                &window,
+                                "Select Windows Executable",
+                                &["exe"],
+                                move |path| {
+                                    if let Some(path) = path {
+                                        sender_clone.input(AppManagerMsg::LaunchDirectExe(PathBuf::from(path)));
+                                    }
+                                },
+                            );
+                        }
+                    }
                 }
             }
             AppManagerMsg::AddAppPopover(output) => {
@@ -483,6 +529,25 @@ impl AsyncComponent for AppManagerModel {
                     AddAppPopoverOutput::Scan => {
                         sender.input(AppManagerMsg::ScanForApplications);
                     }
+                }
+            }
+            AppManagerMsg::LaunchDirectExe(exe_path) => {
+                let pp = self.prefix_path.clone();
+                let mut cmd = std::process::Command::new("wine");
+                cmd.env("WINEPREFIX", pp.to_string_lossy().as_ref())
+                    .arg(&exe_path)
+                    .current_dir(exe_path.parent().unwrap_or(&pp));
+                match cmd.spawn() {
+                    Ok(child) => {
+                        println!("Launched exe directly: {}", exe_path.display());
+                        let mut t = self.process_tracker.lock().unwrap();
+                        t.register(&exe_path, child);
+                        drop(t);
+                        self.external_running.insert(exe_path);
+                        self.app_actions.emit(AppActionsMsg::SetExeRunning(true));
+                        sender.input(AppManagerMsg::PollProcesses);
+                    }
+                    Err(e) => eprintln!("Failed to launch exe: {}", e),
                 }
             }
             AppManagerMsg::PollProcesses => {
@@ -503,6 +568,19 @@ impl AsyncComponent for AppManagerModel {
                         self.app_actions.emit(AppActionsMsg::SetSelectedRunning(running));
                     }
                 }
+                // Update uninstaller running state
+                let uninstaller_still_running = self.uninstaller_track_path.as_ref()
+                    .map(|p| self.process_tracker.lock().unwrap().is_running(p))
+                    .unwrap_or(false);
+                if !uninstaller_still_running {
+                    self.uninstaller_track_path = None;
+                }
+                self.app_actions.emit(AppActionsMsg::SetUninstallerRunning(uninstaller_still_running));
+                // Update external (directly-run) exe running state
+                self.external_running.retain(|path| {
+                    self.process_tracker.lock().unwrap().is_running(path)
+                });
+                self.app_actions.emit(AppActionsMsg::SetExeRunning(!self.external_running.is_empty()));
             }
         }
     }

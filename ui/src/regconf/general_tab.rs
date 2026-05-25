@@ -141,6 +141,7 @@ impl SimpleComponent for GeneralTabModel {
                 adw::ActionRow {
                     set_title: "Virtual Desktop",
                     set_subtitle: "Emulate a virtual desktop resolution",
+                    set_visible: cfg!(not(target_os = "macos")),
 
                     add_suffix = &gtk::Switch {
                         set_valign: gtk::Align::Center,

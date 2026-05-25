@@ -1,6 +1,6 @@
 use relm4::{Component, ComponentController, ComponentParts, ComponentSender, Controller, RelmWidgetExt, SimpleComponent, gtk};
 use gtk::prelude::*;
-use prefix::{PrefixError, config::PrefixConfig, registry::{RegistryEditor, RegEditor}};
+use prefix::{PrefixError, ProcessTracker, config::PrefixConfig, registry::{RegistryEditor, RegEditor}};
 use prefix::registry::cache::InMemoryRegistryCache;
 use prefix::registry::keys::*;
 use std::path::PathBuf;
@@ -41,6 +41,8 @@ pub struct RegistryEditorModel {
     #[tracker::do_not_track]
     prefix_store: Arc<prefix::PrefixStore>,
     #[tracker::do_not_track]
+    process_tracker: Arc<std::sync::Mutex<ProcessTracker>>,
+    #[tracker::do_not_track]
     watch_kill: Option<mpsc::Sender<()>>,
 }
 
@@ -70,7 +72,7 @@ pub enum RegistryEditorMsg {
 
 #[relm4::component(pub)]
 impl SimpleComponent for RegistryEditorModel {
-    type Init = (PathBuf, PrefixConfig, Arc<prefix::PrefixStore>);
+    type Init = (PathBuf, PrefixConfig, Arc<prefix::PrefixStore>, Arc<std::sync::Mutex<ProcessTracker>>);
     type Input = RegistryEditorMsg;
     type Output = RegistryEditorMsg;
     type Widgets = RegistryEditorWidgets;
@@ -119,21 +121,15 @@ impl SimpleComponent for RegistryEditorModel {
                         set_margin_all: 10,
 
                         gtk::Button {
-                            set_label: "winecfg",
+                            set_icon_name: "applications-engineering-symbolic",
                             set_tooltip_text: Some("Launch Wine Configuration"),
                             connect_clicked => RegistryEditorMsg::RunWinecfg,
                         },
 
                         gtk::Button {
-                            set_label: "regedit",
+                            set_icon_name: "document-properties-symbolic",
                             set_tooltip_text: Some("Launch Wine Registry Editor"),
                             connect_clicked => RegistryEditorMsg::RunRegedit,
-                        },
-
-                        gtk::Button {
-                            set_label: "Refresh",
-                            set_tooltip_text: Some("Reload registry from disk"),
-                            connect_clicked => RegistryEditorMsg::RefreshReg,
                         },
 
                         gtk::Box {
@@ -141,15 +137,28 @@ impl SimpleComponent for RegistryEditorModel {
                         },
 
                         gtk::Button {
+                            set_icon_name: "view-refresh-symbolic",
+                            set_tooltip_text: Some("Reload registry from disk"),
+                            connect_clicked => RegistryEditorMsg::RefreshReg,
+                        },
+
+                        gtk::Separator {
+                            set_orientation: gtk::Orientation::Vertical,
+                        },
+
+                        gtk::Button {
                             #[watch]
-                            set_label: if model.editing { "Save" } else { "Edit" },
+                            set_icon_name: if model.editing { "object-select-symbolic" } else { "document-edit-symbolic" },
+                            #[watch]
+                            set_tooltip_text: if model.editing { Some("Save") } else { Some("Edit") },
                             #[watch]
                             set_css_classes: if model.editing { &["suggested-action"] } else { &[] },
                             connect_clicked => RegistryEditorMsg::ToggleEdit,
                         },
 
                         gtk::Button {
-                            set_label: "Cancel",
+                            set_icon_name: "edit-undo-symbolic",
+                            set_tooltip_text: Some("Cancel"),
                             #[watch]
                             set_visible: model.editing,
                             connect_clicked[sender] => move |_| {
@@ -184,7 +193,7 @@ impl SimpleComponent for RegistryEditorModel {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let (prefix_path, config, prefix_store) = init;
+        let (prefix_path, config, prefix_store, process_tracker) = init;
 
         // ── Tab controllers ──
         let general_ctrl = GeneralTabModel::builder()
@@ -234,6 +243,7 @@ impl SimpleComponent for RegistryEditorModel {
             graphics_ctrl,
             platform_ctrl,
             prefix_store,
+            process_tracker,
             watch_kill: None,
             tracker: 0,
         };
@@ -348,19 +358,33 @@ impl SimpleComponent for RegistryEditorModel {
 
             RegistryEditorMsg::RunWinecfg => {
                 let pp = self.prefix_path.clone();
-                let _ = std::process::Command::new("winecfg")
+                let track_path = pp.join("__wine_winecfg__");
+                match std::process::Command::new("winecfg")
                     .env("WINEPREFIX", pp.to_string_lossy().as_ref())
                     .spawn()
-                    .map_err(|e| eprintln!("Failed to launch winecfg: {}", e));
+                {
+                    Ok(child) => {
+                        println!("Launched winecfg");
+                        self.process_tracker.lock().unwrap().register(&track_path, child);
+                    }
+                    Err(e) => eprintln!("Failed to launch winecfg: {}", e),
+                }
             }
 
             RegistryEditorMsg::RunRegedit => {
                 let pp = self.prefix_path.clone();
-                let _ = std::process::Command::new("wine")
+                let track_path = pp.join("__wine_regedit__");
+                match std::process::Command::new("wine")
                     .env("WINEPREFIX", pp.to_string_lossy().as_ref())
                     .arg("regedit")
                     .spawn()
-                    .map_err(|e| eprintln!("Failed to launch regedit: {}", e));
+                {
+                    Ok(child) => {
+                        println!("Launched regedit");
+                        self.process_tracker.lock().unwrap().register(&track_path, child);
+                    }
+                    Err(e) => eprintln!("Failed to launch regedit: {}", e),
+                }
             }
 
             RegistryEditorMsg::RefreshReg => {

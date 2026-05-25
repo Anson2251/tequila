@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracker;
 
-use prefix::{Manager as PrefixManager, WinePrefix};
+use prefix::{Manager as PrefixManager, ProcessTracker, WinePrefix};
 use prefix::runtime::RuntimeManager;
 use super::{PrefixListModel, PrefixDetailsModel, AppManagerModel, RegistryEditorModel, SettingsWindow};
 use gtk::gdk;
@@ -153,6 +153,8 @@ impl SimpleComponent for AppModel {
             .unwrap_or_else(|| PathBuf::from("~"))
             .join("Wine");
 
+        let process_tracker = ProcessTracker::shared();
+
         let icon_cache = Arc::new(
             prefix::IconCache::open(
                 dirs::cache_dir()
@@ -198,7 +200,7 @@ impl SimpleComponent for AppModel {
             });
 
         let app_manager = AppManagerModel::builder()
-            .launch((PathBuf::new(), prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()), Arc::clone(&icon_cache), Arc::clone(&prefix_store)))
+            .launch((PathBuf::new(), prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()), Arc::clone(&icon_cache), Arc::clone(&prefix_store), Arc::clone(&process_tracker)))
             .forward(sender.input_sender(), |msg| match msg {
                 crate::app_manager::AppManagerMsg::ConfigUpdated(config) => {
                     AppMsg::ConfigUpdated(0, config)
@@ -207,7 +209,7 @@ impl SimpleComponent for AppModel {
             });
 
         let registry_editor = RegistryEditorModel::builder()
-            .launch((PathBuf::new(), prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()), Arc::clone(&prefix_store)))
+            .launch((PathBuf::new(), prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()), Arc::clone(&prefix_store), Arc::clone(&process_tracker)))
             .forward(sender.input_sender(), |msg| match msg {
                 crate::regconf::RegistryEditorMsg::ConfigUpdated(config) => {
                     AppMsg::ConfigUpdated(0, config)

@@ -11,6 +11,9 @@ pub struct AppActionsModel {
     has_selection: bool,
     is_scanning: bool,
     selected_running: bool,
+    prefix_set: bool,
+    uninstaller_running: bool,
+    exe_running: bool,
 }
 
 #[derive(Debug)]
@@ -18,10 +21,15 @@ pub enum AppActionsMsg {
     SetSelection(bool),
     SetScanning(bool),
     SetSelectedRunning(bool),
-    Launch,
+    SetPrefixSet(bool),
+        SetUninstallerRunning(bool),
+        SetExeRunning(bool),
+        Launch,
     Add,
     Remove,
     ShowInfo,
+    RunUninstaller,
+    RunExe,
 }
 
 #[derive(Debug)]
@@ -31,11 +39,13 @@ pub enum AppActionsOutput {
     Add,
     Remove,
     ShowInfo,
+    RunUninstaller,
+    RunExe,
 }
 
 #[relm4::component(pub, async)]
 impl AsyncComponent for AppActionsModel {
-    type Init = (bool, bool); // (has_selection, is_scanning)
+    type Init = (bool, bool, bool); // (has_selection, is_scanning, prefix_set)
     type Input = AppActionsMsg;
     type Output = AppActionsOutput;
     type CommandOutput = ();
@@ -81,6 +91,77 @@ impl AsyncComponent for AppActionsModel {
                 },
             },
 
+            // Separator
+            gtk::Separator {
+                set_orientation: gtk::Orientation::Vertical,
+                set_margin_start: 5,
+                set_margin_end: 5,
+            },
+
+            gtk::Button {
+                set_tooltip_text: Some("Wine Uninstaller"),
+                #[track = "model.changed(AppActionsModel::prefix_set()) || model.changed(AppActionsModel::is_scanning()) || model.changed(AppActionsModel::uninstaller_running())"]
+                set_sensitive: model.prefix_set && !model.is_scanning && !model.uninstaller_running,
+                connect_clicked[sender] => move |_| {
+                    sender.input(AppActionsMsg::RunUninstaller);
+                },
+
+                #[wrap(Some)]
+                set_child = &gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_spacing: 4,
+                    set_halign: gtk::Align::Center,
+
+                    gtk::Image {
+                        set_icon_name: Some("preferences-other-symbolic"),
+                        #[track = "model.changed(AppActionsModel::uninstaller_running())"]
+                        set_visible: !model.uninstaller_running,
+                    },
+
+                    #[name = "uninstaller_spinner"]
+                    gtk::Spinner {
+                        set_width_request: 16,
+                        set_height_request: 16,
+                        #[track = "model.changed(AppActionsModel::uninstaller_running())"]
+                        set_visible: model.uninstaller_running,
+                        #[track = "model.changed(AppActionsModel::uninstaller_running())"]
+                        set_spinning: model.uninstaller_running,
+                    },
+                },
+            },
+
+            gtk::Button {
+                set_tooltip_text: Some("Run Executable…"),
+                #[track = "model.changed(AppActionsModel::prefix_set()) || model.changed(AppActionsModel::is_scanning()) || model.changed(AppActionsModel::exe_running())"]
+                set_sensitive: model.prefix_set && !model.is_scanning && !model.exe_running,
+                connect_clicked[sender] => move |_| {
+                    sender.input(AppActionsMsg::RunExe);
+                },
+
+                #[wrap(Some)]
+                set_child = &gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_spacing: 4,
+                    set_halign: gtk::Align::Center,
+
+                    gtk::Image {
+                        set_icon_name: Some("document-open-symbolic"),
+                        #[track = "model.changed(AppActionsModel::exe_running())"]
+                        set_visible: !model.exe_running,
+                    },
+
+                    #[name = "exe_spinner"]
+                    gtk::Spinner {
+                        set_width_request: 16,
+                        set_height_request: 16,
+                        #[track = "model.changed(AppActionsModel::exe_running())"]
+                        set_visible: model.exe_running,
+                        #[track = "model.changed(AppActionsModel::exe_running())"]
+                        set_spinning: model.exe_running,
+                    },
+                },
+            },
+
             #[name = "launch_btn"]
             gtk::Button {
                 #[track = "model.changed(AppActionsModel::has_selection()) || model.changed(AppActionsModel::is_scanning()) || model.changed(AppActionsModel::selected_running())"]
@@ -107,12 +188,15 @@ impl AsyncComponent for AppActionsModel {
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
-        let (has_selection, is_scanning) = init;
+        let (has_selection, is_scanning, prefix_set) = init;
 
         let model = AppActionsModel {
             has_selection,
             is_scanning,
             selected_running: false,
+            prefix_set,
+            uninstaller_running: false,
+            exe_running: false,
             tracker: 0
         };
 
@@ -138,6 +222,15 @@ impl AsyncComponent for AppActionsModel {
             AppActionsMsg::SetSelectedRunning(running) => {
                 self.set_selected_running(running);
             }
+            AppActionsMsg::SetPrefixSet(prefix_set) => {
+                self.set_prefix_set(prefix_set);
+            }
+            AppActionsMsg::SetUninstallerRunning(running) => {
+                self.set_uninstaller_running(running);
+            }
+            AppActionsMsg::SetExeRunning(running) => {
+                self.set_exe_running(running);
+            }
             AppActionsMsg::Launch => {
                 if self.selected_running {
                     let _ = sender.output(AppActionsOutput::Kill);
@@ -153,6 +246,12 @@ impl AsyncComponent for AppActionsModel {
             }
             AppActionsMsg::ShowInfo => {
                 let _ = sender.output(AppActionsOutput::ShowInfo);
+            }
+            AppActionsMsg::RunUninstaller => {
+                let _ = sender.output(AppActionsOutput::RunUninstaller);
+            }
+            AppActionsMsg::RunExe => {
+                let _ = sender.output(AppActionsOutput::RunExe);
             }
         }
     }
