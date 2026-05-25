@@ -1,7 +1,6 @@
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, gtk, adw};
 use gtk::prelude::*;
 use adw::prelude::*;
-use gtk::glib;
 use tracker;
 
 #[derive(Debug)]
@@ -154,7 +153,7 @@ impl SimpleComponent for GeneralTabModel {
                             sender.input(GeneralTabInput::UpdateField(
                                 "vd_enabled".into(), state.to_string(),
                             ));
-                            glib::Propagation::Stop
+                            gtk::glib::Propagation::Stop
                         },
                     },
                 },

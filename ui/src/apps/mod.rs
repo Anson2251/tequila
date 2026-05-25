@@ -1,3 +1,8 @@
+pub mod actions;
+pub mod add_popover;
+pub mod info_dialog;
+pub mod list;
+
 use relm4::{
     RelmWidgetExt, component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender, AsyncController}, gtk, prelude::AsyncComponentController, view
 };
@@ -10,10 +15,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tracker;
 use crate::{
-    registered_apps_list::{RegisteredAppsListModel, RegisteredAppsListMsg, RegisteredAppsListOutput},
-    app_actions::{AppActionsModel, AppActionsMsg, AppActionsOutput},
-    add_app_popover::{AddAppPopoverModel, AddAppPopoverMsg, AddAppPopoverOutput},
-    executable_info_dialog::{ExecutableInfoDialogModel, ExecutableInfoDialogMsg, ExecutableInfoDialogOutput},
+    apps::list::{RegisteredAppsListModel, RegisteredAppsListMsg, RegisteredAppsListOutput},
+    apps::actions::{AppActionsModel, AppActionsMsg, AppActionsOutput},
+    apps::add_popover::{AddAppPopoverModel, AddAppPopoverMsg, AddAppPopoverOutput},
+    apps::info_dialog::{ExecutableInfoDialogModel, ExecutableInfoDialogMsg, ExecutableInfoDialogOutput},
 };
 
 #[tracker::track]
@@ -501,7 +506,7 @@ impl AsyncComponent for AppManagerModel {
                             .ancestor(gtk::Window::static_type())
                             .and_then(|w| w.downcast::<gtk::Window>().ok());
                         if let Some(window) = parent_window {
-                            crate::utils::pick_file(
+                            crate::dialogs::pick_file(
                                 &window,
                                 "Select Windows Executable",
                                 &["exe"],

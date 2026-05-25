@@ -554,7 +554,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                     let _current = self.cwd_entry_row.text().to_string();
                     let parent_window = parent.downcast::<gtk::Window>().unwrap();
 
-                    crate::utils::pick_folder(
+                    crate::dialogs::pick_folder(
                         &parent_window,
                         Some(&(&self.prefix_path.join("drive_c")).to_string_lossy().to_string()),
                         move |path| {

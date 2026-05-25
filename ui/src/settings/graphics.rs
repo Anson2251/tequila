@@ -686,7 +686,7 @@ impl D3DMetalImportDialog {
             let skip = self.skip_path.clone();
             let dont_ask = self.checkbox.is_active();
             let dlg = self.dialog.clone();
-            crate::utils::pick_file(&self.dialog, "Select GPTK DMG", &["dmg"], move |path| {
+            crate::dialogs::pick_file(&self.dialog, "Select GPTK DMG", &["dmg"], move |path| {
                 if let Some(p) = path {
                     if dont_ask {
                         let _ = std::fs::write(&skip, "1");

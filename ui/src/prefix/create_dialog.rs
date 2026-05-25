@@ -2,7 +2,7 @@ use gtk::prelude::*;
 use adw::prelude::*;
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, gtk, adw};
 use gtk::glib;
-use prefix::{Manager as PrefixManager, runtime::RuntimeManager};
+use prefix::Manager as PrefixManager;
 use crate::AppMsg;
 
 pub struct CreatePrefixDialog {

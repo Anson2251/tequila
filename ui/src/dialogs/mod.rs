@@ -107,7 +107,6 @@ fn macos_pick_file<F>(
 {
     use std::cell::RefCell;
     use objc2::MainThreadMarker;
-    use objc2_foundation::NSURL;
     use objc2_app_kit::{NSOpenPanel, NSModalResponse, NSModalResponseOK};
     use block2::RcBlock;
 

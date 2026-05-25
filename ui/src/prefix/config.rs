@@ -6,7 +6,7 @@ use prefix::ProcessTracker;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tracker;
-use crate::regconf::{RegistryEditorModel, RegistryEditorMsg};
+use crate::registry_editor::{RegistryEditorModel, RegistryEditorMsg};
 
 // ── Model ────────────────────────────────────────────────────────────────
 
@@ -19,10 +19,6 @@ pub struct PrefixConfigModel {
     editing: bool,
     prefix_index: usize,
     wine_runtime_display: String,
-    #[tracker::do_not_track]
-    prefix_store: Arc<prefix::PrefixStore>,
-    #[tracker::do_not_track]
-    process_tracker: Arc<Mutex<ProcessTracker>>,
     #[tracker::do_not_track]
     nav: adw::NavigationView,
     #[tracker::do_not_track]
@@ -243,8 +239,6 @@ impl SimpleComponent for PrefixConfigModel {
             editing: false,
             prefix_index: 0,
             wine_runtime_display: String::new(),
-            prefix_store,
-            process_tracker,
             nav: placeholder_nav,
             registry_ctrl,
             description_buffer: description_buffer.clone(),
