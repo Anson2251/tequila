@@ -2,6 +2,7 @@ pub mod app;
 pub mod prefix;
 pub mod prefix_list;
 pub mod prefix_details;
+pub mod prefix_config;
 pub mod app_manager;
 pub mod registered_apps_list;
 pub mod app_actions;
@@ -13,7 +14,7 @@ pub mod settings;
 pub mod utils;
 
 pub use app::{AppModel, AppMsg, initialize_custom_resources};
-pub use prefix_details::PrefixDetailsModel;
+pub use prefix_config::PrefixConfigModel;
 pub use app_manager::AppManagerModel;
 pub use prefix_list::{PrefixListModel, PrefixListOutput};
 pub use registered_apps_list::RegisteredAppsListModel;

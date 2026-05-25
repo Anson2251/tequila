@@ -10,7 +10,7 @@ use tracker;
 
 use prefix::{Manager as PrefixManager, ProcessTracker, WinePrefix};
 use prefix::runtime::RuntimeManager;
-use super::{PrefixListModel, PrefixDetailsModel, AppManagerModel, RegistryEditorModel, SettingsWindow};
+use super::{PrefixListModel, PrefixConfigModel, AppManagerModel, SettingsWindow};
 use gtk::gdk;
 
 #[tracker::track]
@@ -21,11 +21,9 @@ pub struct AppModel {
     #[tracker::do_not_track]
     pub prefix_list: Controller<PrefixListModel>,
     #[tracker::do_not_track]
-    pub prefix_details: Controller<PrefixDetailsModel>,
+    pub prefix_config: Controller<PrefixConfigModel>,
     #[tracker::do_not_track]
     pub app_manager: AsyncController<AppManagerModel>,
-    #[tracker::do_not_track]
-    pub registry_editor: Controller<RegistryEditorModel>,
     #[tracker::do_not_track]
     content_stack: adw::ViewStack,
     #[tracker::do_not_track]
@@ -127,6 +125,13 @@ impl SimpleComponent for AppModel {
         sidebar_btn.connect_clicked(move |_| { sb_sender.input(AppMsg::ToggleSidebar); });
         header_bar.pack_start(&sidebar_btn);
 
+        let back_btn = gtk::Button::builder()
+            .icon_name("go-previous-symbolic")
+            .tooltip_text("Back")
+            .visible(false)
+            .build();
+        header_bar.pack_start(&back_btn);
+
         let new_prefix_btn = gtk::Button::builder()
             .icon_name("list-add-symbolic")
             .tooltip_text("New Prefix")
@@ -190,28 +195,18 @@ impl SimpleComponent for AppModel {
                 crate::prefix_list::PrefixListOutput::DeletePrefix(index) => AppMsg::DeletePrefix(index),
             });
 
-        let prefix_details = PrefixDetailsModel::builder()
-            .launch((PathBuf::new(), prefix::config::PrefixConfig::new("".to_string(), "win64".to_string())))
+        let config_tab = PrefixConfigModel::builder()
+            .launch((PathBuf::new(), prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()), Arc::clone(&prefix_store), Arc::clone(&process_tracker), back_btn))
             .forward(sender.input_sender(), |msg| match msg {
-                crate::prefix_details::PrefixDetailsMsg::ConfigUpdated(config) => {
+                crate::prefix_config::PrefixConfigOutput::ConfigUpdated(config) => {
                     AppMsg::ConfigUpdated(0, config)
                 }
-                _ => AppMsg::RefreshPrefixes
             });
 
         let app_manager = AppManagerModel::builder()
             .launch((PathBuf::new(), prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()), Arc::clone(&icon_cache), Arc::clone(&prefix_store), Arc::clone(&process_tracker)))
             .forward(sender.input_sender(), |msg| match msg {
                 crate::app_manager::AppManagerMsg::ConfigUpdated(config) => {
-                    AppMsg::ConfigUpdated(0, config)
-                }
-                _ => AppMsg::RefreshPrefixes
-            });
-
-        let registry_editor = RegistryEditorModel::builder()
-            .launch((PathBuf::new(), prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()), Arc::clone(&prefix_store), Arc::clone(&process_tracker)))
-            .forward(sender.input_sender(), |msg| match msg {
-                crate::regconf::RegistryEditorMsg::ConfigUpdated(config) => {
                     AppMsg::ConfigUpdated(0, config)
                 }
                 _ => AppMsg::RefreshPrefixes
@@ -240,10 +235,8 @@ impl SimpleComponent for AppModel {
         let content_stack = adw::ViewStack::new();
         content_stack.add_titled(app_manager.widget(), Some("apps"), "Apps")
             .set_icon_name(Some("application-x-executable-symbolic"));
-        content_stack.add_titled(prefix_details.widget(), Some("details"), "Details")
+        content_stack.add_titled(config_tab.widget(), Some("config"), "Config")
             .set_icon_name(Some("document-properties-symbolic"));
-        content_stack.add_titled(registry_editor.widget(), Some("registry"), "Registry")
-            .set_icon_name(Some("preferences-system-symbolic"));
         switcher.set_stack(Some(&content_stack));
 
         // Wrapper Stack: show either empty page or tabbed content
@@ -342,9 +335,8 @@ impl SimpleComponent for AppModel {
             prefix_manager,
             selected_prefix: None,
             prefix_list,
-            prefix_details,
+            prefix_config: config_tab,
             app_manager,
-            registry_editor,
             settings,
             create_prefix_dialog: None,
             content_stack,
@@ -482,21 +474,19 @@ impl SimpleComponent for AppModel {
                     let prefix_path = self.prefixes[index].path.clone();
 
                     // Emit path first so ConfigUpdated handlers have the correct prefix path
-                    self.prefix_details.emit(crate::prefix_details::PrefixDetailsMsg::PrefixPathUpdated(prefix_path.clone()));
-                    self.app_manager.emit(crate::app_manager::AppManagerMsg::PrefixPathUpdated(prefix_path.clone()));
-                    self.registry_editor.emit(crate::regconf::RegistryEditorMsg::PrefixPathUpdated(prefix_path));
+                    self.prefix_config.emit(crate::prefix_config::PrefixConfigMsg::PrefixPathUpdated(prefix_path.clone()));
+                    self.app_manager.emit(crate::app_manager::AppManagerMsg::PrefixPathUpdated(prefix_path));
 
                     // Resolve runtime display name
                     let runtime_display = config.wine_version.as_ref()
                         .and_then(|id| self.prefix_manager.runtime_manager().get(id))
                         .map(|r| format!("{} ({})", r.name, r.wine_version))
                         .unwrap_or_else(|| config.wine_version.as_deref().unwrap_or("Unknown").to_string());
-                    self.prefix_details.emit(crate::prefix_details::PrefixDetailsMsg::SetWineVersionDisplay(runtime_display));
+                    self.prefix_config.emit(crate::prefix_config::PrefixConfigMsg::SetWineVersionDisplay(runtime_display));
 
-                    self.prefix_details.emit(crate::prefix_details::PrefixDetailsMsg::ConfigUpdated(config.clone()));
-                    self.prefix_details.emit(crate::prefix_details::PrefixDetailsMsg::SetPrefixIndex(index));
+                    self.prefix_config.emit(crate::prefix_config::PrefixConfigMsg::ConfigUpdated(config.clone()));
+                    self.prefix_config.emit(crate::prefix_config::PrefixConfigMsg::SetPrefixIndex(index));
                     self.app_manager.emit(crate::app_manager::AppManagerMsg::ConfigUpdated(config.clone()));
-                    self.registry_editor.emit(crate::regconf::RegistryEditorMsg::ConfigUpdated(config.clone()));
                 }
             }
             AppMsg::HideDetails => {
@@ -518,9 +508,8 @@ impl SimpleComponent for AppModel {
                             self.prefixes[actual_index].config = config.clone();
 
                             // Update other components with the new config but don't refresh the entire list
-                            self.prefix_details.emit(crate::prefix_details::PrefixDetailsMsg::ConfigUpdated(config.clone()));
+                            self.prefix_config.emit(crate::prefix_config::PrefixConfigMsg::ConfigUpdated(config.clone()));
                             self.app_manager.emit(crate::app_manager::AppManagerMsg::ConfigUpdated(config.clone()));
-                            self.registry_editor.emit(crate::regconf::RegistryEditorMsg::ConfigUpdated(config.clone()));
                         }
                     }
                 }
