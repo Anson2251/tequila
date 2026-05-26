@@ -1,12 +1,12 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-use relm4::{
-    gtk, adw, RelmWidgetExt, Component, Controller,
-    component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
-    ComponentParts, ComponentSender, SimpleComponent,
-};
 use adw::prelude::*;
 use prefix::config::RegisteredExecutable;
+use relm4::{
+    Component, ComponentParts, ComponentSender, Controller, RelmWidgetExt, SimpleComponent, adw,
+    component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
+    gtk,
+};
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 #[derive(Debug)]
 #[tracker::track]
@@ -70,7 +70,11 @@ fn env_vars_subtitle(executable: Option<&RegisteredExecutable>) -> String {
             Some(e.env_vars.len())
         }
     }) {
-        Some(count) => format!("{} variable{} set", count, if count == 1 { "" } else { "s" }),
+        Some(count) => format!(
+            "{} variable{} set",
+            count,
+            if count == 1 { "" } else { "s" }
+        ),
         None => "No environment variables set".to_string(),
     }
 }
@@ -507,9 +511,9 @@ impl AsyncComponent for ExecutableInfoDialogModel {
         model.cwd_entry_row = widgets.cwd_entry_row.clone();
 
         // Set tooltip text on the entry (can't be expressed as a GObject property in view! macro)
-        widgets
-            .cwd_entry_row
-            .set_tooltip_text(Some("Custom working directory for the executable (e.g., /path/to/game)"));
+        widgets.cwd_entry_row.set_tooltip_text(Some(
+            "Custom working directory for the executable (e.g., /path/to/game)",
+        ));
 
         AsyncComponentParts { model, widgets }
     }
@@ -523,7 +527,9 @@ impl AsyncComponent for ExecutableInfoDialogModel {
         self.reset();
         match msg {
             ExecutableInfoDialogMsg::ShowInfo(executable, prefix_path) => {
-                let cwd_str = executable.cwd.as_ref()
+                let cwd_str = executable
+                    .cwd
+                    .as_ref()
                     .map(|p| p.display().to_string())
                     .unwrap_or_default();
                 self.cwd_entry_row.set_text(&cwd_str);
@@ -556,7 +562,11 @@ impl AsyncComponent for ExecutableInfoDialogModel {
 
                     crate::dialogs::pick_folder(
                         &parent_window,
-                        Some(&(&self.prefix_path.join("drive_c")).to_string_lossy().to_string()),
+                        Some(
+                            &(&self.prefix_path.join("drive_c"))
+                                .to_string_lossy()
+                                .to_string(),
+                        ),
                         move |path| {
                             entry.set_text(&path);
                         },
@@ -567,7 +577,9 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                 let parent_root = self.cwd_entry_row.root();
                 if let Some(parent) = parent_root {
                     let parent_window = parent.downcast::<gtk::Window>().unwrap();
-                    let current_text = self.executable.as_ref()
+                    let current_text = self
+                        .executable
+                        .as_ref()
                         .map(|e| env_vars_to_text(&e.env_vars))
                         .unwrap_or_default();
 

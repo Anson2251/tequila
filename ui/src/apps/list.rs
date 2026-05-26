@@ -1,11 +1,11 @@
-use relm4::{
-    gtk,
-    component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
-    RelmWidgetExt,
-};
-use relm4::factory::{FactoryComponent, FactorySender, FactoryVecDeque, DynamicIndex};
 use gtk::prelude::*;
 use prefix::config::RegisteredExecutable;
+use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender, FactoryVecDeque};
+use relm4::{
+    RelmWidgetExt,
+    component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
+    gtk,
+};
 use tracker;
 
 #[derive(Debug)]
@@ -115,11 +115,7 @@ impl FactoryComponent for RegisteredExecutableItem {
         }
     }
 
-    fn init_model(
-        init: Self::Init,
-        _index: &DynamicIndex,
-        _sender: FactorySender<Self>,
-    ) -> Self {
+    fn init_model(init: Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
         let (executable, idx) = init;
         Self {
             executable,
@@ -208,7 +204,7 @@ impl AsyncComponent for RegisteredAppsListModel {
             executables,
             registered_executables: init.clone(),
             selection_handler_id: None,
-            tracker: 0
+            tracker: 0,
         };
 
         // Initialize with provided executables
@@ -248,7 +244,9 @@ impl AsyncComponent for RegisteredAppsListModel {
                 // Block selection-changed signal during clear to avoid panic
                 {
                     let grid = self.executables.widget();
-                    if let Some(ref h) = self.selection_handler_id { grid.block_signal(h); }
+                    if let Some(ref h) = self.selection_handler_id {
+                        grid.block_signal(h);
+                    }
                 }
 
                 let mut guard = self.executables.guard();
@@ -260,7 +258,9 @@ impl AsyncComponent for RegisteredAppsListModel {
 
                 {
                     let grid = self.executables.widget();
-                    if let Some(ref h) = self.selection_handler_id { grid.unblock_signal(h); }
+                    if let Some(ref h) = self.selection_handler_id {
+                        grid.unblock_signal(h);
+                    }
                 }
             }
             RegisteredAppsListMsg::SetRunningPaths(paths) => {

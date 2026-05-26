@@ -1,12 +1,15 @@
+use crate::registry_editor::{RegistryEditorModel, RegistryEditorMsg};
 use adw::prelude::*;
-use relm4::{Component, ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent, gtk, adw};
-use gtk::prelude::*;
-use prefix::config::PrefixConfig;
 use prefix::ProcessTracker;
+use prefix::config::PrefixConfig;
+use prefix::runtime;
+use relm4::{
+    Component, ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent,
+    adw, gtk,
+};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tracker;
-use crate::registry_editor::{RegistryEditorModel, RegistryEditorMsg};
 
 // ── Model ────────────────────────────────────────────────────────────────
 
@@ -19,6 +22,7 @@ pub struct PrefixConfigModel {
     editing: bool,
     prefix_index: usize,
     wine_runtime_display: String,
+    selected_graphics: u32,
     #[tracker::do_not_track]
     nav: adw::NavigationView,
     #[tracker::do_not_track]
@@ -31,6 +35,10 @@ pub struct PrefixConfigModel {
     description_text: gtk::TextView,
     #[tracker::do_not_track]
     back_btn: gtk::Button,
+    #[tracker::do_not_track]
+    graphics_items: gtk::StringList,
+    #[tracker::do_not_track]
+    graphics_backends: Vec<Option<prefix::base::GraphicsBackend>>,
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────
@@ -46,6 +54,7 @@ pub enum PrefixConfigMsg {
     PrefixPathUpdated(PathBuf),
     SetPrefixIndex(usize),
     SetWineVersionDisplay(String),
+    GraphicsBackendChanged(u32),
     ShowAdvancedRegistry,
     RegistryEditor(RegistryEditorMsg),
 }
@@ -55,11 +64,51 @@ pub enum PrefixConfigOutput {
     ConfigUpdated(PrefixConfig),
 }
 
+// ── Helper: build graphics dropdown items + mapping ──────────────────────
+
+fn build_graphics_model() -> (gtk::StringList, Vec<Option<prefix::base::GraphicsBackend>>) {
+    let backends = runtime::graphics::installed_backends();
+    let mut items = vec!["None"];
+    let mut mapping: Vec<Option<prefix::base::GraphicsBackend>> = vec![None];
+    for b in &backends {
+        // Leak the string for a &'static str (the StringList holds its own copy)
+        let label =
+            Box::leak(format!("{} ({})", b.display_name(), b.version_string()).into_boxed_str());
+        items.push(label);
+        mapping.push(Some(b.clone()));
+    }
+    let list = gtk::StringList::new(&items);
+    (list, mapping)
+}
+
+fn graphics_index_for_config(
+    backends: &[Option<prefix::base::GraphicsBackend>],
+    config: &PrefixConfig,
+) -> u32 {
+    config
+        .graphics
+        .as_ref()
+        .and_then(|gfx| {
+            backends.iter().position(|b| {
+                b.as_ref()
+                    .map(|be| be.label() == gfx.backend)
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(0) as u32
+}
+
 // ── Component ────────────────────────────────────────────────────────────
 
 #[relm4::component(pub)]
 impl SimpleComponent for PrefixConfigModel {
-    type Init = (PathBuf, PrefixConfig, Arc<prefix::PrefixStore>, Arc<Mutex<ProcessTracker>>, gtk::Button);
+    type Init = (
+        PathBuf,
+        PrefixConfig,
+        Arc<prefix::PrefixStore>,
+        Arc<Mutex<ProcessTracker>>,
+        gtk::Button,
+    );
     type Input = PrefixConfigMsg;
     type Output = PrefixConfigOutput;
     type Widgets = PrefixConfigWidgets;
@@ -79,13 +128,11 @@ impl SimpleComponent for PrefixConfigModel {
                 push: root_page = &adw::NavigationPage {
                     set_title: "Prefix Config",
                     set_can_pop: false,
-
                     set_child: Some(&page_wrapper),
                 },
             },
         },
 
-        // ── Page wrapper: prefs page + toolbar ──
         #[local_ref]
         page_wrapper -> gtk::Box {
             set_orientation: gtk::Orientation::Vertical,
@@ -120,7 +167,7 @@ impl SimpleComponent for PrefixConfigModel {
                     },
                 },
 
-                // ══ Description (content added in init) ══
+                // ══ Description (populated in init) ══
                 #[name = "description_group"]
                 adw::PreferencesGroup {
                     set_title: "Description",
@@ -153,6 +200,31 @@ impl SimpleComponent for PrefixConfigModel {
                     },
                 },
 
+                // ══ Graphics ══
+                adw::PreferencesGroup {
+                    set_title: "Graphics",
+
+                    adw::ActionRow {
+                        set_title: "Backend",
+                        set_subtitle: "Graphics translation layer for Direct3D",
+
+                        add_suffix = &gtk::DropDown {
+                            set_hexpand: true,
+                            set_valign: gtk::Align::Center,
+                            set_model: Some(&model.graphics_items),
+                            #[track = "model.changed(PrefixConfigModel::selected_graphics())"]
+                            set_selected: model.selected_graphics,
+                            #[track = "model.changed(PrefixConfigModel::editing())"]
+                            set_sensitive: model.editing,
+                            connect_selected_notify[sender] => move |combo| {
+                                sender.input(PrefixConfigMsg::GraphicsBackendChanged(
+                                    combo.selected(),
+                                ));
+                            },
+                        },
+                    },
+                },
+
                 // ══ Tools ══
                 adw::PreferencesGroup {
                     set_title: "Tools",
@@ -166,7 +238,7 @@ impl SimpleComponent for PrefixConfigModel {
                 },
             },
 
-            // ══ Edit / Save / Cancel toolbar ══
+            // ══ Toolbar ══
             gtk::Box {
                 set_orientation: gtk::Orientation::Horizontal,
                 set_spacing: 10,
@@ -203,19 +275,27 @@ impl SimpleComponent for PrefixConfigModel {
     ) -> ComponentParts<Self> {
         let (prefix_path, config, prefix_store, process_tracker, back_btn) = init;
 
-        // ── Child components ──
+        // ── Registry editor ──
         let registry_ctrl = RegistryEditorModel::builder()
-            .launch((prefix_path.clone(), config.clone(), Arc::clone(&prefix_store), Arc::clone(&process_tracker)))
+            .launch((
+                prefix_path.clone(),
+                config.clone(),
+                Arc::clone(&prefix_store),
+                Arc::clone(&process_tracker),
+            ))
             .forward(sender.input_sender(), |output| {
                 PrefixConfigMsg::RegistryEditor(output)
             });
-
         let registry_page = adw::NavigationPage::builder()
             .title("Advanced Registry Settings")
             .child(registry_ctrl.widget())
             .build();
 
-        // ── Model ──
+        // ── Graphics dropdown model ──
+        let (graphics_items, graphics_backends) = build_graphics_model();
+        let selected_graphics = graphics_index_for_config(&graphics_backends, &config);
+
+        // ── Page wrapper ──
         let page_wrapper = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let prefs_page = adw::PreferencesPage::new();
         page_wrapper.append(&prefs_page);
@@ -239,16 +319,18 @@ impl SimpleComponent for PrefixConfigModel {
             editing: false,
             prefix_index: 0,
             wine_runtime_display: String::new(),
+            selected_graphics,
             nav: placeholder_nav,
             registry_ctrl,
             description_buffer: description_buffer.clone(),
             registry_page,
             description_text,
             back_btn,
+            graphics_items,
+            graphics_backends,
             tracker: 0,
         };
 
-        // Initialize description text
         if let Some(ref desc) = model.config.description {
             model.description_buffer.set_text(desc);
         }
@@ -256,7 +338,7 @@ impl SimpleComponent for PrefixConfigModel {
         let widgets = view_output!();
         model.nav = widgets.nav.clone();
 
-        // Add description text view to the description group
+        // ── Build description row (programmatic — needs ScrolledWindow) ──
         let desc_scroll = gtk::ScrolledWindow::builder()
             .hexpand(true)
             .min_content_height(80)
@@ -270,43 +352,40 @@ impl SimpleComponent for PrefixConfigModel {
         desc_row.set_child(Some(&desc_scroll));
         widgets.description_group.add(&desc_row);
 
-        // Track description changes
+        // ── Track description changes ──
+        let s = sender.clone();
         let buf = model.description_buffer.clone();
-        let sender_clone = sender.clone();
         buf.connect_changed(move |_buf| {
             let (start, end) = _buf.bounds();
-            let text = _buf.text(&start, &end, true);
-            sender_clone.input(PrefixConfigMsg::UpdateDescription(text.to_string()));
+            s.input(PrefixConfigMsg::UpdateDescription(
+                _buf.text(&start, &end, true).to_string(),
+            ));
         });
 
-        // Wire up back button
+        // ── Back button ──
         {
             let nav = widgets.nav.clone();
-            let back_btn = model.back_btn.clone();
-            back_btn.connect_clicked(move |_| {
+            let bb = model.back_btn.clone();
+            bb.connect_clicked(move |_| {
                 nav.pop();
             });
         }
-
-        // Show/hide back button
         {
             let nav = widgets.nav.clone();
-            let back_btn = model.back_btn.clone();
-            let root_page = widgets.root_page.clone();
+            let bb = model.back_btn.clone();
+            let rp = widgets.root_page.clone();
             nav.connect_notify_local(Some("visible-page"), move |nav, _| {
-                let visible = nav.visible_page();
-                let is_root = visible.as_ref().map_or(false, |p| *p == root_page);
-                back_btn.set_visible(!is_root);
+                bb.set_visible(nav.visible_page().as_ref().map_or(false, |p| *p != rp));
             });
         }
 
-        // Track name entry changes
+        // ── Track name changes ──
         {
-            let sender_clone = sender.clone();
-            let name_row = widgets.name_row.clone();
-            let name_row_clone = name_row.clone();
-            name_row.connect_changed(move |_| {
-                sender_clone.input(PrefixConfigMsg::UpdateName(name_row_clone.text().to_string()));
+            let s = sender.clone();
+            let nr = widgets.name_row.clone();
+            nr.clone().connect_changed(move |_| {
+                let text = nr.text().to_string();
+                s.input(PrefixConfigMsg::UpdateName(text));
             });
         }
 
@@ -326,40 +405,21 @@ impl SimpleComponent for PrefixConfigModel {
                 }
             }
             PrefixConfigMsg::SaveConfig => {
-                // Capture description from buffer
-                let (start, end) = self.description_buffer.bounds();
-                let text = self.description_buffer.text(&start, &end, true);
-                self.config.description = if text.is_empty() { None } else { Some(text.to_string()) };
-
-                self.set_editing(false);
-                self.description_text.set_editable(false);
-                self.config.update_last_modified();
-
-                // Save config to file
-                if let Err(e) = self.config.save_to_file(&self.prefix_path) {
-                    eprintln!("Failed to save config: {}", e);
-                } else {
-                    println!("Config saved successfully");
-                }
-
-                let _ = sender.output(PrefixConfigOutput::ConfigUpdated(self.config.clone()));
+                self.save_config(sender);
             }
             PrefixConfigMsg::CancelEdit => {
                 self.description_text.set_editable(false);
-                // Restore description buffer
-                let text = self.saved_config.description.as_deref().unwrap_or("");
-                self.description_buffer.set_text(text);
+                self.description_buffer
+                    .set_text(self.saved_config.description.as_deref().unwrap_or(""));
                 self.set_config(self.saved_config.clone());
                 self.set_editing(false);
+                self.sync_selected_graphics();
             }
-            PrefixConfigMsg::UpdateName(name) => {
-                self.config.name = name;
-            }
+            PrefixConfigMsg::UpdateName(name) => self.config.name = name,
             PrefixConfigMsg::UpdateDescription(desc) => {
                 self.config.description = if desc.is_empty() { None } else { Some(desc) };
             }
             PrefixConfigMsg::ConfigUpdated(config) => {
-                // Restore description into buffer
                 if let Some(ref desc) = config.description {
                     self.description_buffer.set_text(desc);
                 } else {
@@ -369,41 +429,74 @@ impl SimpleComponent for PrefixConfigModel {
                 self.saved_config = config;
                 self.set_editing(false);
                 self.description_text.set_editable(false);
+                self.sync_selected_graphics();
             }
             PrefixConfigMsg::PrefixPathUpdated(path) => {
                 self.set_prefix_path(path.clone());
-                self.registry_ctrl.emit(RegistryEditorMsg::PrefixPathUpdated(path));
+                if let Ok(Some(config)) = PrefixConfig::load_from_file(&path) {
+                    self.set_config(config);
+                    self.sync_selected_graphics();
+                }
+                self.registry_ctrl
+                    .emit(RegistryEditorMsg::PrefixPathUpdated(path));
             }
-            PrefixConfigMsg::SetPrefixIndex(index) => {
-                self.set_prefix_index(index);
+            PrefixConfigMsg::SetPrefixIndex(index) => self.set_prefix_index(index),
+            PrefixConfigMsg::SetWineVersionDisplay(d) => self.set_wine_runtime_display(d),
+            PrefixConfigMsg::GraphicsBackendChanged(idx) => {
+                // Only update in-memory config — actual save happens on SaveConfig.
+                let backend = self
+                    .graphics_backends
+                    .get(idx as usize)
+                    .and_then(|b| b.clone());
+                let new_gfx = backend.as_ref().map(|b| prefix::base::GraphicsConfig {
+                    backend: b.label().to_string(),
+                    version: b.version_string(),
+                });
+                self.config.graphics = new_gfx;
             }
-            PrefixConfigMsg::SetWineVersionDisplay(display) => {
-                self.set_wine_runtime_display(display);
-            }
-            PrefixConfigMsg::ShowAdvancedRegistry => {
-                self.nav.push(&self.registry_page);
-            }
+            PrefixConfigMsg::ShowAdvancedRegistry => self.nav.push(&self.registry_page),
             PrefixConfigMsg::RegistryEditor(output) => {
-                match output {
-                    RegistryEditorMsg::ConfigUpdated(config) => {
-                        self.set_config(config.clone());
-                        self.saved_config = config.clone();
-                        self.set_editing(false);
-
-                        // Sync description buffer
-                        if let Some(ref desc) = config.description {
-                            self.description_buffer.set_text(desc);
-                        } else {
-                            self.description_buffer.set_text("");
-                        }
-
-                        let _ = sender.output(PrefixConfigOutput::ConfigUpdated(config));
+                if let RegistryEditorMsg::ConfigUpdated(config) = output {
+                    self.set_config(config.clone());
+                    self.saved_config = config.clone();
+                    self.set_editing(false);
+                    if let Some(ref desc) = config.description {
+                        self.description_buffer.set_text(desc);
+                    } else {
+                        self.description_buffer.set_text("");
                     }
-                    _ => {
-                        // Other registry editor messages are handled internally
-                    }
+                    self.sync_selected_graphics();
+                    let _ = sender.output(PrefixConfigOutput::ConfigUpdated(config));
                 }
             }
         }
+    }
+}
+
+// ── Impl ─────────────────────────────────────────────────────────────────
+
+impl PrefixConfigModel {
+    fn save_config(&mut self, sender: ComponentSender<Self>) {
+        let (start, end) = self.description_buffer.bounds();
+        let text = self.description_buffer.text(&start, &end, true);
+        self.config.description = if text.is_empty() {
+            None
+        } else {
+            Some(text.to_string())
+        };
+        self.set_editing(false);
+        self.description_text.set_editable(false);
+        self.config.update_last_modified();
+        if let Err(e) = self.config.save_to_file(&self.prefix_path) {
+            eprintln!("Failed to save config: {}", e);
+        }
+        let _ = sender.output(PrefixConfigOutput::ConfigUpdated(self.config.clone()));
+    }
+
+    fn sync_selected_graphics(&mut self) {
+        let idx = graphics_index_for_config(&self.graphics_backends, &self.config);
+        // set_selected with same value is a no-op in GTK4,
+        // so no infinite loop when ConfigUpdated comes back from our own change.
+        self.set_selected_graphics(idx);
     }
 }

@@ -1,4 +1,4 @@
-pub mod create_dialog;
-pub mod list;
 pub mod config;
+pub mod create_dialog;
 pub mod details;
+pub mod list;

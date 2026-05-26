@@ -16,4 +16,4 @@ pub use prefix::config::PrefixConfigModel;
 pub use prefix::list::{PrefixListModel, PrefixListOutput};
 pub use registry_editor::RegistryEditorModel;
 pub use runtime::{RuntimeManagerModel, RuntimeManagerMsg, RuntimeManagerOutput};
-pub use settings::{SettingsWindow, SettingsMsg, SettingsOutput};
+pub use settings::{SettingsMsg, SettingsOutput, SettingsWindow};

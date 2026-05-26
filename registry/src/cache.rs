@@ -1,6 +1,6 @@
-use base::error::Result;
-use crate::traits::RegistryCache;
 use crate::WineRegistry;
+use crate::traits::RegistryCache;
+use base::error::Result;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,7 +18,11 @@ struct CacheEntry {
 
 impl CacheEntry {
     fn new(registry: WineRegistry, ttl: Duration) -> Self {
-        Self { registry, created_at: Instant::now(), ttl }
+        Self {
+            registry,
+            created_at: Instant::now(),
+            ttl,
+        }
     }
 
     fn is_expired(&self) -> bool {
@@ -48,9 +52,8 @@ impl InMemoryRegistryCache {
         let cache = self.cache.clone();
         tokio::spawn(async move {
             let mut cache_guard = cache.write().await;
-            cache_guard.retain(|_, entry| {
-                Instant::now().duration_since(entry.created_at) < entry.ttl
-            });
+            cache_guard
+                .retain(|_, entry| Instant::now().duration_since(entry.created_at) < entry.ttl);
         });
         Ok(())
     }
@@ -65,7 +68,11 @@ impl InMemoryRegistryCache {
                 expired_entries += 1;
             }
         }
-        CacheStats { total_entries, expired_entries, valid_entries: total_entries - expired_entries }
+        CacheStats {
+            total_entries,
+            expired_entries,
+            valid_entries: total_entries - expired_entries,
+        }
     }
 }
 
@@ -83,7 +90,10 @@ impl RegistryCache for InMemoryRegistryCache {
 
     async fn cache_registry(&self, prefix_path: &PathBuf, registry: WineRegistry) -> Result<()> {
         let mut cache = self.cache.write().await;
-        cache.insert(prefix_path.clone(), CacheEntry::new(registry, self.default_ttl));
+        cache.insert(
+            prefix_path.clone(),
+            CacheEntry::new(registry, self.default_ttl),
+        );
         Ok(())
     }
 

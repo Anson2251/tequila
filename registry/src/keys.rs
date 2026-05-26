@@ -176,7 +176,10 @@ pub struct FontReplacement {
 
 impl FontReplacement {
     pub fn new(original: String, replacement: String) -> Self {
-        Self { original, replacement }
+        Self {
+            original,
+            replacement,
+        }
     }
 }
 
@@ -250,7 +253,11 @@ pub struct VirtualDesktopSettings {
 
 impl VirtualDesktopSettings {
     pub fn new(enabled: bool, width: u32, height: u32) -> Self {
-        Self { enabled, width, height }
+        Self {
+            enabled,
+            width,
+            height,
+        }
     }
 }
 
@@ -286,7 +293,11 @@ pub struct ValidationError {
 
 impl ValidationError {
     pub fn new(key_path: String, value_name: Option<String>, error_message: String) -> Self {
-        Self { key_path, value_name, error_message }
+        Self {
+            key_path,
+            value_name,
+            error_message,
+        }
     }
 }
 
@@ -390,7 +401,9 @@ impl DpiSettings {
     }
 
     pub fn new_with_dpi(dpi: u32) -> Self {
-        Self { log_pixels: Some(dpi) }
+        Self {
+            log_pixels: Some(dpi),
+        }
     }
 }
 

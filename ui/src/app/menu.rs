@@ -1,10 +1,10 @@
+use crate::app::AppMsg;
+use adw::prelude::*;
+use gtk::glib;
 use gtk::prelude::*;
 use gtk4::gio;
-use gtk::glib;
-use adw::prelude::*;
-use relm4::{ComponentSender, gtk, adw};
+use relm4::{ComponentSender, adw, gtk};
 use std::sync::OnceLock;
-use crate::app::AppMsg;
 
 /// Configure the application menu bar with platform-appropriate menus.
 ///
@@ -151,8 +151,8 @@ impl TequilaMenuHandler {
 fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<crate::app::AppModel>) {
     use objc2::runtime::NSObject;
     use objc2::{MainThreadMarker, sel};
+    use objc2_app_kit::{NSApp, NSEventModifierFlags, NSMenu, NSMenuItem};
     use objc2_foundation::NSString;
-    use objc2_app_kit::{NSApp, NSMenu, NSMenuItem, NSEventModifierFlags};
 
     let mtm = unsafe { MainThreadMarker::new_unchecked() };
 
@@ -281,7 +281,9 @@ fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<crat
         redo_item.setAction(Some(sel!(redo:)));
         redo_item.setTarget(None);
         redo_item.setKeyEquivalent(&NSString::from_str("z"));
-        redo_item.setKeyEquivalentModifierMask(NSEventModifierFlags::Command | NSEventModifierFlags::Shift);
+        redo_item.setKeyEquivalentModifierMask(
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
+        );
         edit_menu.addItem(&redo_item);
 
         // Separator

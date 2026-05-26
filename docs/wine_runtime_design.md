@@ -256,7 +256,7 @@ User picks a Wine directory (or `.app` bundle) via file chooser. The app discove
 Modify `src/prefix/wine_processes.rs` to inject environment variables:
 
 ```rust
-fn apply_runtime_env(cmd: &mut Command, runtime: &Runtime) {
+fn apply_runtime_env(cmd: &mut Command, runtime: &Runtime, prefix_path: &Path) {
     cmd.env("WINEPREFIX", prefix_path);
 
     let system_path = env::var("PATH").unwrap_or_default();
@@ -281,6 +281,33 @@ fn apply_runtime_env(cmd: &mut Command, runtime: &Runtime) {
     cmd.env("PATH", &path);
 }
 ```
+
+### Graphics Backend: WINEDLLPATH + WINEDLLOVERRIDES
+
+At spawn time, inject the graphics backend's `.so` search path via `WINEDLLPATH` (no `.so` files are copied or symlinked into the runtime). DLL overrides use both registry (persistent) and `WINEDLLOVERRIDES` (env var fallback).
+
+```rust
+// Inside apply_runtime_env, after PATH setup:
+fn apply_graphics_env(cmd: &mut Command, prefix_path: &Path) {
+    // Read graphics config from prefix
+    let config = PrefixConfig::load_from_file(prefix_path).ok()??;
+    let gfx = config.graphics.as_ref()?;
+
+    // WINEDLLPATH: tell Wine's module loader where to find .so files
+    let so_dir = graphics_dir()
+        .join(format!("{}-{}", gfx.backend, gfx.version))
+        .join("lib").join("wine").join("x86_64-unix");
+    if so_dir.exists() {
+        cmd.env("WINEDLLPATH", so_dir.to_string_lossy().as_ref());
+    }
+
+    // WINEDLLOVERRIDES: ensure native DLLs are loaded before builtin
+    let overrides = gfx.override_string();  // e.g. "d3d11,dxgi,winemetal=native,builtin"
+    cmd.env("WINEDLLOVERRIDES", overrides);
+}
+```
+
+> **Why not symlink `.so` into runtime?** Multiple prefixes using the same runtime can require different graphics backends (DXMT vs D3DMetal). Symlinking `.so` into the shared runtime `lib/` creates conflicts. `WINEDLLPATH` avoids this entirely — it's a Wine-standard environment variable for extending the module search path. When the path doesn't exist or the `.so` isn't found, Wine gracefully falls back to the runtime's built-in libraries.
 
 ### macOS: Rosetta Check
 
@@ -311,9 +338,9 @@ Graphics translation layers bridge Direct3D to the platform's native graphics AP
 
 On macOS, DXMT and D3DMetal are alternatives — the user picks one per prefix. On Linux, DXVK and VKD3D are installed together as a full D3D translation stack.
 
-### Installation via Symlinks
+### Storage Layout
 
-Graphics backend files are extracted into `graphics/{backend}-{version}/`, then symlinked into the runtime's `lib/` and each prefix's `system32`. This keeps the original files untouched and makes deactivation trivial.
+Graphics backend files are extracted into `graphics/{backend}-{version}/` (the "pool"). No files are symlinked or copied into the runtime — `.so` files are found at spawn time via `WINEDLLPATH`. DLLs are symlinked per-prefix into `system32/` (and `syswow64/` where applicable) to make them visible to the Windows PE loader.
 
 Conflict handling when creating a symlink:
 
@@ -327,11 +354,10 @@ fn install_symlink(src: &Path, target: &Path) {
             std::fs::remove_file(target);
         }
         Ok(_) => {
-            // regular file — back it up
             let backup = target.with_extension("old");
             std::fs::rename(target, &backup);
         }
-        Err(_) => {} // doesn't exist, fine
+        Err(_) => {}
     }
     std::os::unix::fs::symlink(src, target);
 }
@@ -343,26 +369,86 @@ fn install_symlink(src: &Path, target: &Path) {
 | Source | GitHub Releases | Apple Developer DMG | GitHub Releases |
 | License | LGPL | Proprietary | LGPL |
 
+### Per-backend DLL Overrides
+
+Each backend specifies which DLLs need native override entries. These are written to `user.reg` under `Software\\Wine\\DllOverrides` when the backend is activated for a prefix. At spawn time, `WINEDLLOVERRIDES` is also set as a safety net (registry may be stale after manual edits).
+
+| Backend | DLL Override Keys |
+|---|---|
+| **DXMT** | `winemetal`=`native,builtin`, `d3d11`=`native,builtin`, `dxgi`=`native,builtin`, `d3d10core`=`native,builtin` |
+| **D3DMetal** | `d3d11`=`native,builtin`, `d3d12`=`native,builtin`, `dxgi`=`native,builtin` |
+| **DXVK+VKD3D** | `d3d8`=`native,builtin`, `d3d9`=`native,builtin`, `d3d10core`=`native,builtin`, `d3d11`=`native,builtin`, `dxgi`=`native,builtin`, `d3d12`=`native,builtin`, `d3d12core`=`native,builtin` |
+
+### Activation/Deactivation Flow
+
+```rust
+fn activate_backend(backend: &GraphicsBackend, prefix_path: &Path) -> Result<GraphicsConfig> {
+    // Step 1: Symlink .dll files into prefix's system32 (and syswow64 for 32-bit)
+    symlink_dll_to_prefix(backend, prefix_path)?;
+
+    // Step 2: Write DLL override registry entries to user.reg
+    apply_dll_overrides(prefix_path, backend.override_entries())?;
+
+    // Step 3: Save graphics field to tequila-config.json
+    let config = load_or_create_config(prefix_path);
+    config.graphics = Some(GraphicsConfig { backend: backend.label(), version: backend.version_string() });
+    config.save();
+
+    Ok(config.graphics.unwrap())
+}
+
+fn deactivate_backend(config: &GraphicsConfig, prefix_path: &Path) -> Result<()> {
+    // Step 1: Remove DLL symlinks
+    remove_symlinks(prefix_path, config.override_dlls())?;
+
+    // Step 2: Clean up registry overrides
+    remove_dll_overrides(prefix_path, config.override_dlls())?;
+
+    // Step 3: Clear graphics field from tequila-config.json
+    let mut config = load_or_create_config(prefix_path);
+    config.graphics = None;
+    config.save();
+
+    Ok(())
+}
+```
+
+**.so loading at runtime** (not part of activation — happens at every spawn via `apply_runtime_env`):
+- `WINEDLLPATH` → point to `graphics/{backend}-{version}/lib/wine/x86_64-unix/`
+- `WINEDLLOVERRIDES` → same entries as registry
+
+#### Prefix Bootstrap Integration
+
+When a new prefix is created with a graphics backend selected:
+
+1. `wineboot -u` / `wine cmd /c echo hello` — creates `user.reg`, `system.reg` etc. (no graphics override active during bootstrap)
+2. Symlink `.dll` files into prefix's `system32/`
+3. Write DLL override registry entries to `user.reg`
+4. Write `tequila-config.json` with `graphics` field
+
+#### 32-bit Prefix Support (syswow64)
+
+For **DXVK+VKD3D** on Linux, 32-bit DLLs in `x32/` are symlinked into `prefix/drive_c/windows/syswow64/` and the same override entries apply. **DXMT** and **D3DMetal** are 64-bit only — activation must fail with a clear error for `win32` prefixes.
+
 ### DXMT
 
-Prebuilt binaries from `github.com/3Shain/dxmt/releases`. Each DXMT version may be tied to a specific Wine ABI, so installation is per-runtime.
+Prebuilt binaries from `github.com/3Shain/dxmt/releases`. Each DXMT version may be tied to a specific Wine ABI.
 
 **Install** — extracts into the global `graphics/` pool:
 ```
 graphics/dxmt-1.x/
-  lib/wine/x86_64-unix/winemetal.so
-  lib/wine/x86_64-windows/winemetal.dll d3d11.dll dxgi.dll
+  lib/wine/x86_64-unix/winemetal.so   ← found via WINEDLLPATH at spawn time
+  lib/wine/x86_64-windows/winemetal.dll d3d11.dll dxgi.dll  ← symlinked per-prefix
 ```
 
-When activating DXMT for a specific runtime, the `.so` files are symlinked from `graphics/dxmt-1.x/` into the runtime's `lib/`. DLLs are symlinked per-prefix into `drive_c/windows/system32/`. The symlink conflict logic (backup `.old` / replace symlink) handles pre-existing files.
+**Per-prefix activation**:
+- Symlink `winemetal.dll`, `d3d11.dll`, `dxgi.dll`, `d3d10core.dll` into `prefix/drive_c/windows/system32/`
+- Write DLL overrides in `user.reg`
+- Save `graphics` field in `tequila-config.json`
 
-**System Wine**: DXMT `.so` cannot be injected into system Wine (Wine uses its own loader). Only available if manually installed. Detection checks for `winemetal.so` in the system Wine `lib/`.
+**64-bit only**: DXMT does not ship 32-bit builds. Activation must fail with a clear error for `win32` prefixes.
 
-**Per-prefix** (always, files already in runtime's lib/):
-```
-prefix/drive_c/windows/system32/
-  winemetal.dll d3d11.dll dxgi.dll
-```
+**System Wine**: `WINEDLLPATH` still works — DXMT `.so` is found from the pool even without a Tequila-managed runtime.
 
 ### GPTK / D3DMetal
 
@@ -375,7 +461,14 @@ cp -r /tmp/gptk_mount/lib/external/ graphics/d3dmetal-{version}/
 hdiutil detach /tmp/gptk_mount
 ```
 
-The extracted `graphics/d3dmetal-{version}/` contains `D3DMetal.framework/` and `libxremetal.so`. These are then symlinked into the runtime's `lib/` and prefix's `system32`.
+The extracted `graphics/d3dmetal-{version}/` contains `D3DMetal.framework/` (found via `DYLD_*` path or copied) and `libxremetal.so` (found via `WINEDLLPATH`).
+
+**Per-prefix activation**:
+- Symlink `d3d11.dll`, `d3d12.dll`, `dxgi.dll` (from backend's bundle) into prefix's `system32/`
+- Write DLL overrides in `user.reg`
+- Save config
+
+**64-bit only**: Activation must fail for `win32` prefixes.
 
 ### DXVK + VKD3D (Linux)
 
@@ -386,11 +479,19 @@ Prebuilt binaries from GitHub Releases, always installed together as a full D3D 
 | DXVK | `github.com/doitsujin/dxvk/releases` |
 | VKD3D-Proton | `github.com/HansKristian-Work/vkd3d-proton/releases` |
 
-Extracted into the global `graphics/` pool as `dxvk-vkd3d-{version}/`, then symlinked into the runtime's `lib/` and each prefix's `system32`.
+Extracted into individual directories under the global `graphics/` pool (`dxvk-{version}/`, `vkd3d-{version}/`). `.so` files are found via `WINEDLLPATH` at spawn time.
+
+**Per-prefix activation**:
+- Symlink DLLs from `dxvk-{v}/x64/` and `vkd3d-{v}/x64/` into `system32/`
+- Symlink from `x32/` into `syswow64/` for 32-bit support
+- Write DLL overrides in `user.reg`
+- Save config
+
+**Setup script alternative**: Upstream projects ship `setup_dxvk.sh` and `setup_vkd3d_proton.sh`. Tequila does **not** invoke these — implements the equivalent natively in Rust for consistency.
 
 ### Per-prefix Setting
 
-Stored as part of `tequila-config.json` under a `graphics` key. Since the runtime is fixed per prefix, no runtime-switch degradation logic is needed.
+Stored as part of `tequila-config.json` under a `graphics` key.
 
 ```rust
 struct GraphicsConfig {
@@ -399,7 +500,19 @@ struct GraphicsConfig {
 }
 ```
 
-Activation is done via DLL override registry keys in the prefix's `user.reg` (the existing registry editor already handles DLL overrides). The `.so` files are symlinked from `graphics/{backend}/` into the runtime's `lib/`, and `.dll` files into the prefix's `system32`.
+**At activation time**:
+1. Symlink `.dll` files into prefix's `system32/` (and `syswow64/` where applicable)
+2. Write DLL overrides to prefix's `user.reg`
+3. Save `graphics` field to `tequila-config.json`
+
+**At spawn time** (every launch, via `apply_runtime_env`):
+1. `WINEDLLPATH` → points to backend's `.so` directory in the graphics pool
+2. `WINEDLLOVERRIDES` → ensures native DLLs are preferred
+
+**On deactivation**:
+1. Remove DLL symlinks (restore `.old` backups)
+2. Remove DLL override entries from `user.reg`
+3. Clear `graphics` field from `tequila-config.json`
 
 ## UI
 

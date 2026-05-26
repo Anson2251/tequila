@@ -1,6 +1,6 @@
-use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, gtk, adw};
-use gtk::prelude::*;
 use adw::prelude::*;
+use gtk::prelude::*;
+use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
 use tracker;
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -466,20 +466,54 @@ impl SimpleComponent for PlatformTabModel {
                 let v = value == "true";
                 let section = "Software\\Wine";
                 let (key, reg_section, reg_key) = match field.as_str() {
-                    "mac_allow_vertical_sync" => ("mac_allow_vertical_sync", "Mac Driver", "AllowVerticalSync"),
-                    "mac_capture_displays" => ("mac_capture_displays", "Mac Driver", "CaptureDisplaysForFullscreen"),
-                    "mac_precise_scrolling" => ("mac_precise_scrolling", "Mac Driver", "UsePreciseScrolling"),
+                    "mac_allow_vertical_sync" => {
+                        ("mac_allow_vertical_sync", "Mac Driver", "AllowVerticalSync")
+                    }
+                    "mac_capture_displays" => (
+                        "mac_capture_displays",
+                        "Mac Driver",
+                        "CaptureDisplaysForFullscreen",
+                    ),
+                    "mac_precise_scrolling" => {
+                        ("mac_precise_scrolling", "Mac Driver", "UsePreciseScrolling")
+                    }
                     "mac_retina_mode" => ("mac_retina_mode", "Mac Driver", "RetinaMode"),
-                    "mac_left_option_alt" => ("mac_left_option_alt", "Mac Driver", "LeftOptionIsAlt"),
-                    "mac_right_option_alt" => ("mac_right_option_alt", "Mac Driver", "RightOptionIsAlt"),
-                    "mac_left_command_ctrl" => ("mac_left_command_ctrl", "Mac Driver", "LeftCommandIsCtrl"),
-                    "mac_right_command_ctrl" => ("mac_right_command_ctrl", "Mac Driver", "RightCommandIsCtrl"),
+                    "mac_left_option_alt" => {
+                        ("mac_left_option_alt", "Mac Driver", "LeftOptionIsAlt")
+                    }
+                    "mac_right_option_alt" => {
+                        ("mac_right_option_alt", "Mac Driver", "RightOptionIsAlt")
+                    }
+                    "mac_left_command_ctrl" => {
+                        ("mac_left_command_ctrl", "Mac Driver", "LeftCommandIsCtrl")
+                    }
+                    "mac_right_command_ctrl" => {
+                        ("mac_right_command_ctrl", "Mac Driver", "RightCommandIsCtrl")
+                    }
                     "x11_decorated" => ("x11_decorated", "X11 Driver", "Decorated"),
-                    "x11_client_side_graphics" => ("x11_client_side_graphics", "X11 Driver", "ClientSideGraphics"),
-                    "x11_client_side_with_render" => ("x11_client_side_with_render", "X11 Driver", "ClientSideWithRender"),
-                    "x11_client_side_antialias_with_render" => ("x11_client_side_antialias_with_render", "X11 Driver", "ClientSideAntiAliasWithRender"),
-                    "x11_client_side_antialias_with_core" => ("x11_client_side_antialias_with_core", "X11 Driver", "ClientSideAntiAliasWithCore"),
-                    "x11_grab_fullscreen" => ("x11_grab_fullscreen", "X11 Driver", "GrabFullscreen"),
+                    "x11_client_side_graphics" => (
+                        "x11_client_side_graphics",
+                        "X11 Driver",
+                        "ClientSideGraphics",
+                    ),
+                    "x11_client_side_with_render" => (
+                        "x11_client_side_with_render",
+                        "X11 Driver",
+                        "ClientSideWithRender",
+                    ),
+                    "x11_client_side_antialias_with_render" => (
+                        "x11_client_side_antialias_with_render",
+                        "X11 Driver",
+                        "ClientSideAntiAliasWithRender",
+                    ),
+                    "x11_client_side_antialias_with_core" => (
+                        "x11_client_side_antialias_with_core",
+                        "X11 Driver",
+                        "ClientSideAntiAliasWithCore",
+                    ),
+                    "x11_grab_fullscreen" => {
+                        ("x11_grab_fullscreen", "X11 Driver", "GrabFullscreen")
+                    }
                     "x11_grab_pointer" => ("x11_grab_pointer", "X11 Driver", "GrabPointer"),
                     "x11_managed" => ("x11_managed", "X11 Driver", "Managed"),
                     "x11_use_xrandr" => ("x11_use_xrandr", "X11 Driver", "UseXRandR"),
@@ -488,30 +522,103 @@ impl SimpleComponent for PlatformTabModel {
                 };
 
                 match key {
-                    "mac_allow_vertical_sync" => { let mut m = self.mac.clone(); m.allow_vertical_sync = Some(v); self.set_mac(m); }
-                    "mac_capture_displays" => { let mut m = self.mac.clone(); m.capture_displays = Some(v); self.set_mac(m); }
-                    "mac_precise_scrolling" => { let mut m = self.mac.clone(); m.precise_scrolling = Some(v); self.set_mac(m); }
-                    "mac_retina_mode" => { let mut m = self.mac.clone(); m.retina_mode = Some(v); self.set_mac(m); }
-                    "mac_left_option_alt" => { let mut m = self.mac.clone(); m.left_option_alt = Some(v); self.set_mac(m); }
-                    "mac_right_option_alt" => { let mut m = self.mac.clone(); m.right_option_alt = Some(v); self.set_mac(m); }
-                    "mac_left_command_ctrl" => { let mut m = self.mac.clone(); m.left_command_ctrl = Some(v); self.set_mac(m); }
-                    "mac_right_command_ctrl" => { let mut m = self.mac.clone(); m.right_command_ctrl = Some(v); self.set_mac(m); }
-                    "x11_decorated" => { let mut x = self.x11.clone(); x.decorated = Some(v); self.set_x11(x); }
-                    "x11_client_side_graphics" => { let mut x = self.x11.clone(); x.client_side_graphics = Some(v); self.set_x11(x); }
-                    "x11_client_side_with_render" => { let mut x = self.x11.clone(); x.client_side_with_render = Some(v); self.set_x11(x); }
-                    "x11_client_side_antialias_with_render" => { let mut x = self.x11.clone(); x.client_side_antialias_with_render = Some(v); self.set_x11(x); }
-                    "x11_client_side_antialias_with_core" => { let mut x = self.x11.clone(); x.client_side_antialias_with_core = Some(v); self.set_x11(x); }
-                    "x11_grab_fullscreen" => { let mut x = self.x11.clone(); x.grab_fullscreen = Some(v); self.set_x11(x); }
-                    "x11_grab_pointer" => { let mut x = self.x11.clone(); x.grab_pointer = Some(v); self.set_x11(x); }
-                    "x11_managed" => { let mut x = self.x11.clone(); x.managed = Some(v); self.set_x11(x); }
-                    "x11_use_xrandr" => { let mut x = self.x11.clone(); x.use_xrandr = Some(v); self.set_x11(x); }
-                    "x11_use_xvid_mode" => { let mut x = self.x11.clone(); x.use_xvid_mode = Some(v); self.set_x11(x); }
+                    "mac_allow_vertical_sync" => {
+                        let mut m = self.mac.clone();
+                        m.allow_vertical_sync = Some(v);
+                        self.set_mac(m);
+                    }
+                    "mac_capture_displays" => {
+                        let mut m = self.mac.clone();
+                        m.capture_displays = Some(v);
+                        self.set_mac(m);
+                    }
+                    "mac_precise_scrolling" => {
+                        let mut m = self.mac.clone();
+                        m.precise_scrolling = Some(v);
+                        self.set_mac(m);
+                    }
+                    "mac_retina_mode" => {
+                        let mut m = self.mac.clone();
+                        m.retina_mode = Some(v);
+                        self.set_mac(m);
+                    }
+                    "mac_left_option_alt" => {
+                        let mut m = self.mac.clone();
+                        m.left_option_alt = Some(v);
+                        self.set_mac(m);
+                    }
+                    "mac_right_option_alt" => {
+                        let mut m = self.mac.clone();
+                        m.right_option_alt = Some(v);
+                        self.set_mac(m);
+                    }
+                    "mac_left_command_ctrl" => {
+                        let mut m = self.mac.clone();
+                        m.left_command_ctrl = Some(v);
+                        self.set_mac(m);
+                    }
+                    "mac_right_command_ctrl" => {
+                        let mut m = self.mac.clone();
+                        m.right_command_ctrl = Some(v);
+                        self.set_mac(m);
+                    }
+                    "x11_decorated" => {
+                        let mut x = self.x11.clone();
+                        x.decorated = Some(v);
+                        self.set_x11(x);
+                    }
+                    "x11_client_side_graphics" => {
+                        let mut x = self.x11.clone();
+                        x.client_side_graphics = Some(v);
+                        self.set_x11(x);
+                    }
+                    "x11_client_side_with_render" => {
+                        let mut x = self.x11.clone();
+                        x.client_side_with_render = Some(v);
+                        self.set_x11(x);
+                    }
+                    "x11_client_side_antialias_with_render" => {
+                        let mut x = self.x11.clone();
+                        x.client_side_antialias_with_render = Some(v);
+                        self.set_x11(x);
+                    }
+                    "x11_client_side_antialias_with_core" => {
+                        let mut x = self.x11.clone();
+                        x.client_side_antialias_with_core = Some(v);
+                        self.set_x11(x);
+                    }
+                    "x11_grab_fullscreen" => {
+                        let mut x = self.x11.clone();
+                        x.grab_fullscreen = Some(v);
+                        self.set_x11(x);
+                    }
+                    "x11_grab_pointer" => {
+                        let mut x = self.x11.clone();
+                        x.grab_pointer = Some(v);
+                        self.set_x11(x);
+                    }
+                    "x11_managed" => {
+                        let mut x = self.x11.clone();
+                        x.managed = Some(v);
+                        self.set_x11(x);
+                    }
+                    "x11_use_xrandr" => {
+                        let mut x = self.x11.clone();
+                        x.use_xrandr = Some(v);
+                        self.set_x11(x);
+                    }
+                    "x11_use_xvid_mode" => {
+                        let mut x = self.x11.clone();
+                        x.use_xvid_mode = Some(v);
+                        self.set_x11(x);
+                    }
                     _ => unreachable!(),
                 }
 
                 let reg_val = if v { "Y" } else { "N" };
                 let _ = sender.output(PlatformTabOutput::SettingChanged(
-                    format!("{}\\{}", section, reg_section), format!("{}={}", reg_key, reg_val),
+                    format!("{}\\{}", section, reg_section),
+                    format!("{}={}", reg_key, reg_val),
                 ));
             }
         }

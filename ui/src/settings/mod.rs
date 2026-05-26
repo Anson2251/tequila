@@ -1,16 +1,15 @@
 use adw::prelude::*;
-use relm4::prelude::*;
-use tracker;
-use std::path::PathBuf;
 use prefix::{
-    Manager as PrefixManager,
+    GraphicsBackend, Manager as PrefixManager,
     runtime::{RuntimeManager, download, graphics as prefix_graphics},
-    GraphicsBackend,
 };
+use relm4::prelude::*;
+use std::path::PathBuf;
+use tracker;
 
-mod runtime;
 mod graphics;
 pub mod managed_download_row;
+mod runtime;
 
 // ── Model (data only, no widget references) ──────────────────────────────
 
@@ -70,15 +69,25 @@ fn runtime_subtitle(rm: &RuntimeManager) -> String {
             let graphics = if rt.graphics.is_empty() {
                 String::new()
             } else {
-                let names: Vec<&str> = rt.graphics.iter().map(|g| match g {
-                    GraphicsBackend::Dxmt { .. } => "DXMT",
-                    GraphicsBackend::D3DMetal { .. } => "D3DMetal",
-                    GraphicsBackend::DxvkVkd3d { .. } => "DXVK+VKD3D",
-                }).collect();
+                let names: Vec<&str> = rt
+                    .graphics
+                    .iter()
+                    .map(|g| match g {
+                        GraphicsBackend::Dxmt { .. } => "DXMT",
+                        GraphicsBackend::D3DMetal { .. } => "D3DMetal",
+                        GraphicsBackend::DxvkVkd3d { .. } => "DXVK+VKD3D",
+                    })
+                    .collect();
                 format!(" · {}", names.join(", "))
             };
             let count = rm.runtimes.len();
-            format!("{}{} · {} runtime{}", rt.wine_version, graphics, count, if count == 1 { "" } else { "s" })
+            format!(
+                "{}{} · {} runtime{}",
+                rt.wine_version,
+                graphics,
+                count,
+                if count == 1 { "" } else { "s" }
+            )
         }
         None => "No runtimes installed".to_string(),
     }
@@ -89,7 +98,8 @@ fn graphics_subtitle() -> String {
     if !dir.is_dir() {
         return "No backends installed".to_string();
     }
-    let backends: Vec<String> = std::fs::read_dir(&dir).ok()
+    let backends: Vec<String> = std::fs::read_dir(&dir)
+        .ok()
         .into_iter()
         .flatten()
         .filter_map(|e| e.ok())
@@ -351,7 +361,6 @@ impl AsyncComponent for SettingsWindow {
             SettingsMsg::Close => {
                 root.set_visible(false);
             }
-
         }
     }
 }

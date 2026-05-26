@@ -1,7 +1,7 @@
 use adw::prelude::*;
+use prefix::runtime;
 use relm4::prelude::*;
 use tracker;
-use prefix::runtime;
 
 use super::managed_download_row;
 
@@ -105,12 +105,9 @@ impl AsyncComponent for GraphicsSettings {
             GraphicsSettingsMsg::ShowD3DMetalImportDialog(tx) => {
                 // Lazily initialize the dialog on first use
                 if self.d3dmetal_dialog.is_none() {
-                    if let Some(parent) = root
-                        .root()
-                        .and_then(|s| s.downcast::<gtk::Window>().ok())
+                    if let Some(parent) = root.root().and_then(|s| s.downcast::<gtk::Window>().ok())
                     {
-                        let skip = runtime::graphics::graphics_dir()
-                            .join(".d3dmetal_skip_dialog");
+                        let skip = runtime::graphics::graphics_dir().join(".d3dmetal_skip_dialog");
                         let ctrl = D3DMetalImportDialog::builder()
                             .launch((parent, skip))
                             .detach();
@@ -225,21 +222,15 @@ fn build_available_graphics_rows(
                 check_update: None,
                 start_download: Box::new(|_data_dir, progress, cancel| {
                     Box::pin(async move {
-                        let (version, url) =
-                            runtime::graphics::fetch_dxmt_release()
-                                .await
-                                .map_err(|e| e.to_string())?;
+                        let (version, url) = runtime::graphics::fetch_dxmt_release()
+                            .await
+                            .map_err(|e| e.to_string())?;
                         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                             return Err("Cancelled".into());
                         }
-                        let simple_prog: runtime::download::ProgressFn =
-                            Box::new(move |d, t| {
-                                progress(
-                                    d,
-                                    t,
-                                    runtime::download::InstallPhase::Download,
-                                );
-                            });
+                        let simple_prog: runtime::download::ProgressFn = Box::new(move |d, t| {
+                            progress(d, t, runtime::download::InstallPhase::Download);
+                        });
                         runtime::graphics::download_dxmt(&version, &url, &simple_prog)
                             .await
                             .map_err(|e| e.to_string())?;
@@ -257,8 +248,7 @@ fn build_available_graphics_rows(
                         if name.starts_with("dxmt-")
                             && entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
                         {
-                            std::fs::remove_dir_all(&entry.path())
-                                .map_err(|e| e.to_string())?;
+                            std::fs::remove_dir_all(&entry.path()).map_err(|e| e.to_string())?;
                         }
                     }
                     Ok(())
@@ -286,11 +276,7 @@ fn build_available_graphics_rows(
                             .unwrap_or(false)
                             && e.as_ref()
                                 .ok()
-                                .map(|e| {
-                                    e.file_name()
-                                        .to_string_lossy()
-                                        .starts_with("d3dmetal-")
-                                })
+                                .map(|e| e.file_name().to_string_lossy().starts_with("d3dmetal-"))
                                 .unwrap_or(false)
                     });
                     managed_download_row::DownloadRowStatus {
@@ -310,7 +296,7 @@ fn build_available_graphics_rows(
                         let gs = gs_sender.clone();
                         Box::pin(async move {
                             use std::sync::atomic::Ordering;
-                            use std::sync::mpsc::{channel, TryRecvError};
+                            use std::sync::mpsc::{TryRecvError, channel};
                             use std::time::Duration;
 
                             let (tx, rx) = channel::<Option<String>>();
@@ -344,44 +330,46 @@ fn build_available_graphics_rows(
                             let path = std::path::PathBuf::from(&selected);
                             let (tx_import, rx_import) = std::sync::mpsc::channel();
                             std::thread::spawn(move || {
-                                let result = if path.extension().map(|e| e == "dmg").unwrap_or(false)
-                                {
-                                    runtime::graphics::import_d3dmetal_from_dmg(&path)
-                                        .map(|_| ())
-                                        .map_err(|e| e.to_string())
-                                } else {
-                                    let r = (|| -> Result<(), String> {
-                                        let gfx_dir = runtime::graphics::graphics_dir();
-                                        let ts = std::time::SystemTime::now()
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .unwrap()
-                                            .as_secs();
-                                        let dest =
-                                            gfx_dir.join(format!("d3dmetal-imported-{}", ts));
-                                        let lib = [path.join("lib"), path.join("redist").join("lib")]
-                                            .iter()
-                                            .find(|p| p.is_dir())
-                                            .cloned()
-                                            .ok_or_else(|| {
-                                                "Could not find GPTK lib directory in \
+                                let result =
+                                    if path.extension().map(|e| e == "dmg").unwrap_or(false) {
+                                        runtime::graphics::import_d3dmetal_from_dmg(&path)
+                                            .map(|_| ())
+                                            .map_err(|e| e.to_string())
+                                    } else {
+                                        let r = (|| -> Result<(), String> {
+                                            let gfx_dir = runtime::graphics::graphics_dir();
+                                            let ts = std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap()
+                                                .as_secs();
+                                            let dest =
+                                                gfx_dir.join(format!("d3dmetal-imported-{}", ts));
+                                            let lib =
+                                                [path.join("lib"), path.join("redist").join("lib")]
+                                                    .iter()
+                                                    .find(|p| p.is_dir())
+                                                    .cloned()
+                                                    .ok_or_else(|| {
+                                                        "Could not find GPTK lib directory in \
                                                  the selected path."
-                                                    .to_string()
+                                                            .to_string()
+                                                    })?;
+                                            std::fs::create_dir_all(&dest).map_err(|e| {
+                                                format!("Failed to create dir: {}", e)
                                             })?;
-                                        std::fs::create_dir_all(&dest)
-                                            .map_err(|e| format!("Failed to create dir: {}", e))?;
-                                        let status = std::process::Command::new("cp")
-                                            .arg("-R")
-                                            .arg(&lib)
-                                            .arg(&dest)
-                                            .status()
-                                            .map_err(|e| format!("cp failed: {}", e))?;
-                                        if !status.success() {
-                                            return Err("Failed to copy GPTK files.".into());
-                                        }
-                                        Ok(())
-                                    })();
-                                    r
-                                };
+                                            let status = std::process::Command::new("cp")
+                                                .arg("-R")
+                                                .arg(&lib)
+                                                .arg(&dest)
+                                                .status()
+                                                .map_err(|e| format!("cp failed: {}", e))?;
+                                            if !status.success() {
+                                                return Err("Failed to copy GPTK files.".into());
+                                            }
+                                            Ok(())
+                                        })();
+                                        r
+                                    };
                                 let _ = tx_import.send(result);
                             });
 
@@ -416,8 +404,7 @@ fn build_available_graphics_rows(
                         if name.starts_with("d3dmetal-")
                             && entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
                         {
-                            std::fs::remove_dir_all(&entry.path())
-                                .map_err(|e| e.to_string())?;
+                            std::fs::remove_dir_all(&entry.path()).map_err(|e| e.to_string())?;
                         }
                     }
                     Ok(())
@@ -466,20 +453,14 @@ fn build_available_graphics_rows(
                 check_update: None,
                 start_download: Box::new(|_data_dir, progress, cancel| {
                     Box::pin(async move {
-                        let simple_prog: runtime::download::ProgressFn =
-                            Box::new(move |d, t| {
-                                progress(
-                                    d,
-                                    t,
-                                    runtime::download::InstallPhase::Download,
-                                );
-                            });
+                        let simple_prog: runtime::download::ProgressFn = Box::new(move |d, t| {
+                            progress(d, t, runtime::download::InstallPhase::Download);
+                        });
 
                         // Download DXVK
-                        let (v_version, v_url) =
-                            runtime::graphics::fetch_dxvk_release()
-                                .await
-                                .map_err(|e| e.to_string())?;
+                        let (v_version, v_url) = runtime::graphics::fetch_dxvk_release()
+                            .await
+                            .map_err(|e| e.to_string())?;
                         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                             return Err("Cancelled".into());
                         }
@@ -497,10 +478,9 @@ fn build_available_graphics_rows(
                         }
 
                         // Download VKD3D-Proton
-                        let (v3_version, v3_url) =
-                            runtime::graphics::fetch_vkd3d_release()
-                                .await
-                                .map_err(|e| e.to_string())?;
+                        let (v3_version, v3_url) = runtime::graphics::fetch_vkd3d_release()
+                            .await
+                            .map_err(|e| e.to_string())?;
                         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                             return Err("Cancelled".into());
                         }
@@ -528,8 +508,7 @@ fn build_available_graphics_rows(
                         if (name.starts_with("dxvk-") || name.starts_with("vkd3d-"))
                             && entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
                         {
-                            std::fs::remove_dir_all(&entry.path())
-                                .map_err(|e| e.to_string())?;
+                            std::fs::remove_dir_all(&entry.path()).map_err(|e| e.to_string())?;
                         }
                     }
                     Ok(())

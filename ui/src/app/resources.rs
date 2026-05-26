@@ -1,6 +1,6 @@
+use gtk::gdk;
 use gtk4::gio;
 use relm4::gtk;
-use gtk::gdk;
 
 pub fn initialize_custom_resources() {
     gio::resources_register_include!("icons.gresource").unwrap();

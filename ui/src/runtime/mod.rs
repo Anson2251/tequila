@@ -1,15 +1,16 @@
-use relm4::{
-    gtk, adw,
-    component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender}, RelmWidgetExt,
-};
-use gtk::prelude::*;
 use adw::prelude::*;
+use gtk::prelude::*;
 use prefix::{
     Manager as PrefixManager,
-    runtime::{RuntimeSource, Channel, RuntimeManager},
+    runtime::{Channel, RuntimeManager, RuntimeSource},
 };
-use tracker;
+use relm4::{
+    RelmWidgetExt, adw,
+    component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
+    gtk,
+};
 use std::path::PathBuf;
+use tracker;
 
 #[tracker::track]
 pub struct RuntimeManagerModel {
@@ -130,7 +131,9 @@ impl AsyncComponent for RuntimeManagerModel {
         let widgets = view_output!();
 
         // Title widget
-        widgets.header_bar.set_title_widget(Some(&adw::WindowTitle::new("Runtimes", "")));
+        widgets
+            .header_bar
+            .set_title_widget(Some(&adw::WindowTitle::new("Runtimes", "")));
 
         // Close button
         {
@@ -308,13 +311,17 @@ impl AsyncComponent for RuntimeManagerModel {
                     .title("Select Wine Installation")
                     .build();
                 let s = sender.clone();
-                file_dialog.select_folder(Some(root), None::<&gtk::gio::Cancellable>, move |result| {
-                    if let Ok(file) = result {
-                        if let Some(path) = file.path() {
-                            let _ = s.input(RuntimeManagerMsg::ImportFromPath(path));
+                file_dialog.select_folder(
+                    Some(root),
+                    None::<&gtk::gio::Cancellable>,
+                    move |result| {
+                        if let Ok(file) = result {
+                            if let Some(path) = file.path() {
+                                let _ = s.input(RuntimeManagerMsg::ImportFromPath(path));
+                            }
                         }
-                    }
-                });
+                    },
+                );
             }
             RuntimeManagerMsg::ImportFromPath(path) => {
                 let dir_name = path
@@ -358,8 +365,10 @@ fn build_add_popover(sender: AsyncComponentSender<RuntimeManagerModel>) -> gtk::
     let menu_page = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(6)
-        .margin_top(10).margin_bottom(10)
-        .margin_start(10).margin_end(10)
+        .margin_top(10)
+        .margin_bottom(10)
+        .margin_start(10)
+        .margin_end(10)
         .build();
     menu_page.append(
         &gtk::Label::builder()
@@ -399,8 +408,10 @@ fn build_add_popover(sender: AsyncComponentSender<RuntimeManagerModel>) -> gtk::
     let download_page = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(8)
-        .margin_top(10).margin_bottom(10)
-        .margin_start(10).margin_end(10)
+        .margin_top(10)
+        .margin_bottom(10)
+        .margin_start(10)
+        .margin_end(10)
         .build();
     download_page.append(
         &gtk::Label::builder()
@@ -417,7 +428,9 @@ fn build_add_popover(sender: AsyncComponentSender<RuntimeManagerModel>) -> gtk::
     );
 
     let channel_combo = gtk::DropDown::from_strings(&[
-        "Stable (wine-stable)", "Devel (wine@devel)", "Staging (wine@staging)",
+        "Stable (wine-stable)",
+        "Devel (wine@devel)",
+        "Staging (wine@staging)",
     ]);
     channel_combo.set_hexpand(true);
     channel_combo.set_selected(0);
@@ -573,13 +586,21 @@ fn populate_runtime_list(
 
         let source_str = match &runtime.source {
             RuntimeSource::System => "System (PATH)".to_string(),
-            RuntimeSource::ManagedChannel { channel, installed_cask_version } => {
-                format!("Homebrew {} — cask {}", channel.display_name(), installed_cask_version)
+            RuntimeSource::ManagedChannel {
+                channel,
+                installed_cask_version,
+            } => {
+                format!(
+                    "Homebrew {} — cask {}",
+                    channel.display_name(),
+                    installed_cask_version
+                )
             }
-            RuntimeSource::ManagedVersion { source_url: _ } => {
-                "Managed (versioned)".to_string()
-            }
-            RuntimeSource::Imported { label, original_path } => {
+            RuntimeSource::ManagedVersion { source_url: _ } => "Managed (versioned)".to_string(),
+            RuntimeSource::Imported {
+                label,
+                original_path,
+            } => {
                 format!("Imported: {} ({})", label, original_path.display())
             }
         };
@@ -600,8 +621,10 @@ fn populate_runtime_list(
             .orientation(gtk::Orientation::Vertical)
             .spacing(2)
             .hexpand(true)
-            .margin_start(8).margin_end(8)
-            .margin_top(4).margin_bottom(4)
+            .margin_start(8)
+            .margin_end(8)
+            .margin_top(4)
+            .margin_bottom(4)
             .build();
         info_box.append(&name_label);
         info_box.append(&version_label);
@@ -647,8 +670,10 @@ fn populate_runtime_list(
         let row_box = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .spacing(8)
-            .margin_top(4).margin_bottom(4)
-            .margin_start(4).margin_end(4)
+            .margin_top(4)
+            .margin_bottom(4)
+            .margin_start(4)
+            .margin_end(4)
             .build();
         row_box.append(&default_btn);
         row_box.append(&info_box);
@@ -674,13 +699,14 @@ fn populate_runtime_list(
 
 fn update_count_label(label: &gtk::Label, rm: &RuntimeManager) {
     let count = rm.runtimes.len();
-    label.set_label(&format!("{} runtime{}", count, if count == 1 { "" } else { "s" }));
+    label.set_label(&format!(
+        "{} runtime{}",
+        count,
+        if count == 1 { "" } else { "s" }
+    ));
 }
 
-fn emit_updated(
-    pm: &PrefixManager,
-    sender: &AsyncComponentSender<RuntimeManagerModel>,
-) {
+fn emit_updated(pm: &PrefixManager, sender: &AsyncComponentSender<RuntimeManagerModel>) {
     let _ = sender.output(RuntimeManagerOutput::RuntimesUpdated(
         pm.runtime_manager().clone(),
     ));

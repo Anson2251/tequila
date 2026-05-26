@@ -1,4 +1,4 @@
-use base::error::{Result, PrefixError};
+use base::error::{PrefixError, Result};
 use regashii::{Format, Key, Registry, Value, ValueName};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -23,8 +23,9 @@ impl WineRegistry {
     pub async fn load_from_file(path: &PathBuf) -> Result<Self> {
         let path_clone = path.clone();
         tokio::task::spawn_blocking(move || {
-            let registry = Registry::deserialize_file(&path_clone)
-                .map_err(|e| PrefixError::RegistryError(format!("Failed to load registry: {}", e)))?;
+            let registry = Registry::deserialize_file(&path_clone).map_err(|e| {
+                PrefixError::RegistryError(format!("Failed to load registry: {}", e))
+            })?;
             Ok::<Self, PrefixError>(WineRegistry {
                 registry: Arc::new(RwLock::new(registry)),
                 path: Some(path_clone),
@@ -74,7 +75,9 @@ impl WineRegistry {
 
         let mut merged_registry = Registry::new(Format::Regedit5);
 
-        match system_result.map_err(|e| PrefixError::RegistryError(format!("System registry task error: {}", e)))? {
+        match system_result
+            .map_err(|e| PrefixError::RegistryError(format!("System registry task error: {}", e)))?
+        {
             Ok(Some(system_registry)) => {
                 merged_registry = system_registry;
             }
@@ -82,7 +85,9 @@ impl WineRegistry {
             Err(e) => eprintln!("Warning: Failed to load system.reg: {}", e),
         }
 
-        match userdef_result.map_err(|e| PrefixError::RegistryError(format!("Userdef registry task error: {}", e)))? {
+        match userdef_result.map_err(|e| {
+            PrefixError::RegistryError(format!("Userdef registry task error: {}", e))
+        })? {
             Ok(Some(userdef_registry)) => {
                 if merged_registry.keys().is_empty() {
                     merged_registry = userdef_registry;
@@ -92,7 +97,9 @@ impl WineRegistry {
             Err(e) => eprintln!("Warning: Failed to load userdef.reg: {}", e),
         }
 
-        match user_result.map_err(|e| PrefixError::RegistryError(format!("User registry task error: {}", e)))? {
+        match user_result
+            .map_err(|e| PrefixError::RegistryError(format!("User registry task error: {}", e)))?
+        {
             Ok(Some(user_registry)) => {
                 merged_registry = user_registry;
             }
@@ -111,8 +118,9 @@ impl WineRegistry {
         let path_clone = path.clone();
         tokio::task::spawn_blocking(move || {
             let reg = registry.blocking_read();
-            reg.serialize_file(&path_clone)
-                .map_err(|e| PrefixError::RegistryError(format!("Failed to save registry: {}", e)))?;
+            reg.serialize_file(&path_clone).map_err(|e| {
+                PrefixError::RegistryError(format!("Failed to save registry: {}", e))
+            })?;
             Ok::<(), PrefixError>(())
         })
         .await

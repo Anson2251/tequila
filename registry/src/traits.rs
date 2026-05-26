@@ -1,6 +1,6 @@
-use base::error::Result;
 use crate::keys::*;
 use async_trait::async_trait;
+use base::error::Result;
 use std::path::PathBuf;
 
 #[async_trait]
@@ -50,8 +50,15 @@ pub trait RegEditor: Send + Sync {
 
 #[async_trait]
 pub trait RegistryCache: Send + Sync {
-    async fn get_cached_registry(&self, prefix_path: &PathBuf) -> Result<Option<crate::WineRegistry>>;
-    async fn cache_registry(&self, prefix_path: &PathBuf, registry: crate::WineRegistry) -> Result<()>;
+    async fn get_cached_registry(
+        &self,
+        prefix_path: &PathBuf,
+    ) -> Result<Option<crate::WineRegistry>>;
+    async fn cache_registry(
+        &self,
+        prefix_path: &PathBuf,
+        registry: crate::WineRegistry,
+    ) -> Result<()>;
     async fn invalidate_cache(&self, prefix_path: &PathBuf) -> Result<()>;
     async fn clear_all_cache(&self) -> Result<()>;
 }

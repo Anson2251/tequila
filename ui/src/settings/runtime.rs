@@ -1,12 +1,11 @@
 use adw::prelude::*;
-use relm4::prelude::*;
-use tracker;
-use std::path::PathBuf;
 use prefix::{
-    Manager as PrefixManager,
-    runtime::{self, RuntimeManager, Channel, RuntimeSource},
-    GraphicsBackend,
+    GraphicsBackend, Manager as PrefixManager,
+    runtime::{self, Channel, RuntimeManager, RuntimeSource},
 };
+use relm4::prelude::*;
+use std::path::PathBuf;
+use tracker;
 
 use super::managed_download_row;
 
@@ -107,8 +106,14 @@ impl AsyncComponent for RuntimeSettings {
         model.list_group = widgets.list_group.clone();
 
         // Populate the groups
-        refresh_runtime_list(&model.list_group, model.prefix_manager.runtime_manager(), &sender, &mut model.rows);
-        model.available_ctrls = build_available_channels(&widgets.avail_group, &model.prefix_manager, &sender);
+        refresh_runtime_list(
+            &model.list_group,
+            model.prefix_manager.runtime_manager(),
+            &sender,
+            &mut model.rows,
+        );
+        model.available_ctrls =
+            build_available_channels(&widgets.avail_group, &model.prefix_manager, &sender);
 
         AsyncComponentParts { model, widgets }
     }
@@ -122,12 +127,24 @@ impl AsyncComponent for RuntimeSettings {
         self.reset();
         match msg {
             RuntimeSettingsMsg::RefreshRuntimes => {
-                refresh_runtime_list(&self.list_group, self.prefix_manager.runtime_manager(), &sender, &mut self.rows);
+                // Re-detect system Wine in case it was installed/uninstalled/updated
+                self.prefix_manager.runtime_manager_mut().ensure_system_runtime();
+                refresh_runtime_list(
+                    &self.list_group,
+                    self.prefix_manager.runtime_manager(),
+                    &sender,
+                    &mut self.rows,
+                );
             }
             RuntimeSettingsMsg::SetDefault(id) => {
                 self.prefix_manager.set_default_runtime(&id);
                 self.prefix_manager.save_runtime_state();
-                refresh_runtime_list(&self.list_group, self.prefix_manager.runtime_manager(), &sender, &mut self.rows);
+                refresh_runtime_list(
+                    &self.list_group,
+                    self.prefix_manager.runtime_manager(),
+                    &sender,
+                    &mut self.rows,
+                );
                 emit_runtimes_updated(&self.prefix_manager, &sender);
             }
             RuntimeSettingsMsg::RemoveRuntime(id) => {
@@ -139,7 +156,12 @@ impl AsyncComponent for RuntimeSettings {
                     }
                     // Remove from the runtime list and save config
                     self.prefix_manager.remove_runtime(&id);
-                    refresh_runtime_list(&self.list_group, self.prefix_manager.runtime_manager(), &sender, &mut self.rows);
+                    refresh_runtime_list(
+                        &self.list_group,
+                        self.prefix_manager.runtime_manager(),
+                        &sender,
+                        &mut self.rows,
+                    );
                     emit_runtimes_updated(&self.prefix_manager, &sender);
                     // Refresh the Available section rows so they show Install again
                     for ctrl in &self.available_ctrls {
@@ -151,7 +173,12 @@ impl AsyncComponent for RuntimeSettings {
                 let rm_ref = self.prefix_manager.runtime_manager_mut();
                 let _old = std::mem::replace(rm_ref, updated_rm);
                 self.prefix_manager.save_runtime_state();
-                refresh_runtime_list(&self.list_group, self.prefix_manager.runtime_manager(), &sender, &mut self.rows);
+                refresh_runtime_list(
+                    &self.list_group,
+                    self.prefix_manager.runtime_manager(),
+                    &sender,
+                    &mut self.rows,
+                );
                 emit_runtimes_updated(&self.prefix_manager, &sender);
                 // Refresh Available rows so their check_status picks up the new state
                 for ctrl in &self.available_ctrls {
@@ -181,12 +208,20 @@ impl AsyncComponent for RuntimeSettings {
                 }
             }
             RuntimeSettingsMsg::ImportFromPath(path) => {
-                let dir_name = path.file_name()
-                    .and_then(|n| n.to_str()).unwrap_or("imported").to_string();
+                let dir_name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("imported")
+                    .to_string();
                 match self.prefix_manager.import_runtime(&path, &dir_name) {
                     Ok(_runtime) => {
                         self.prefix_manager.save_runtime_state();
-                        refresh_runtime_list(&self.list_group, self.prefix_manager.runtime_manager(), &sender, &mut self.rows);
+                        refresh_runtime_list(
+                            &self.list_group,
+                            self.prefix_manager.runtime_manager(),
+                            &sender,
+                            &mut self.rows,
+                        );
                         emit_runtimes_updated(&self.prefix_manager, &sender);
                     }
                     Err(e) => {
@@ -246,140 +281,140 @@ fn build_available_channels(
             move |_data_dir: PathBuf,
                   progress: prefix::runtime::download::PhaseProgressFn,
                   cancel: std::sync::Arc<std::sync::atomic::AtomicBool>| {
-            let pm = dl_pm.clone();
-            let s = dl_sender.clone();
-            let channel = dl_channel.clone();
-            Box::pin(async move {
-                // Shared state: (downloaded_bytes, total_bytes, phase)
-                // phase: 0=Download, 1=Verify, 2=Extract
-                let dl_state = std::sync::Arc::new(std::sync::Mutex::new((0u64, 0u64, 0u8)));
-                let dl_state_t = dl_state.clone();
+                let pm = dl_pm.clone();
+                let s = dl_sender.clone();
+                let channel = dl_channel.clone();
+                Box::pin(async move {
+                    // Shared state: (downloaded_bytes, total_bytes, phase)
+                    // phase: 0=Download, 1=Verify, 2=Extract
+                    let dl_state = std::sync::Arc::new(std::sync::Mutex::new((0u64, 0u64, 0u8)));
+                    let dl_state_t = dl_state.clone();
 
-                let (tx, rx) = std::sync::mpsc::channel::<
-                    Result<RuntimeManager, prefix::base::error::PrefixError>,
-                >();
+                    let (tx, rx) = std::sync::mpsc::channel::<
+                        Result<RuntimeManager, prefix::base::error::PrefixError>,
+                    >();
 
-                let mut pm_thread = pm.clone();
-                std::thread::spawn(move || {
-                    let rt = tokio::runtime::Runtime::new()
-                        .expect("Failed to create tokio runtime for download thread");
+                    let mut pm_thread = pm.clone();
+                    std::thread::spawn(move || {
+                        let rt = tokio::runtime::Runtime::new()
+                            .expect("Failed to create tokio runtime for download thread");
 
-                    // 1. Fetch cask info (needs tokio runtime for reqwest)
-                    let cask = match rt.block_on(
-                        prefix::runtime::homebrew::fetch_cask(channel.cask_name()),
-                    ) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let _ = tx.send(Err(e.into()));
+                        // 1. Fetch cask info (needs tokio runtime for reqwest)
+                        let cask = match rt
+                            .block_on(prefix::runtime::homebrew::fetch_cask(channel.cask_name()))
+                        {
+                            Ok(c) => c,
+                            Err(e) => {
+                                let _ = tx.send(Err(e.into()));
+                                return;
+                            }
+                        };
+
+                        // 2. Setup temp directory
+                        let runtimes_dir = prefix::runtime::download::runtimes_dir();
+                        let _ = std::fs::create_dir_all(&runtimes_dir);
+                        prefix::runtime::download::cleanup_temp_runtimes(&runtimes_dir);
+                        let runtime_id = channel.runtime_id();
+                        let tmp_dir = runtimes_dir.join(format!(".tmp-{}", runtime_id));
+                        let final_dir = runtimes_dir.join(runtime_id);
+                        let _ = std::fs::remove_dir_all(&tmp_dir);
+                        let _ = std::fs::create_dir_all(&tmp_dir);
+                        let archive_path = tmp_dir.join("wine.tar.xz");
+
+                        // 3. Download (reports phase 0 via simple_prog)
+                        let dl_state_prog = dl_state_t.clone();
+                        let simple_prog: runtime::download::ProgressFn = Box::new(move |d, t| {
+                            *dl_state_prog.lock().unwrap() = (d, t, 0u8);
+                        });
+                        if let Err(e) = rt.block_on(prefix::runtime::download::download_file(
+                            &cask.url,
+                            &archive_path,
+                            &simple_prog,
+                        )) {
+                            let _ = tx.send(Err(e));
                             return;
                         }
-                    };
 
-                    // 2. Setup temp directory
-                    let runtimes_dir = prefix::runtime::download::runtimes_dir();
-                    let _ = std::fs::create_dir_all(&runtimes_dir);
-                    prefix::runtime::download::cleanup_temp_runtimes(&runtimes_dir);
-                    let runtime_id = channel.runtime_id();
-                    let tmp_dir = runtimes_dir.join(format!(".tmp-{}", runtime_id));
-                    let final_dir = runtimes_dir.join(runtime_id);
-                    let _ = std::fs::remove_dir_all(&tmp_dir);
-                    let _ = std::fs::create_dir_all(&tmp_dir);
-                    let archive_path = tmp_dir.join("wine.tar.xz");
+                        // 4. Verify checksum (slow — UI shows "Verifying checksum...")
+                        *dl_state_t.lock().unwrap() = (1, 1, 1u8);
+                        if let Err(e) =
+                            prefix::runtime::download::verify_sha256(&archive_path, &cask.sha256)
+                        {
+                            let _ = tx.send(Err(e));
+                            return;
+                        }
 
-                    // 3. Download (reports phase 0 via simple_prog)
-                    let dl_state_prog = dl_state_t.clone();
-                    let simple_prog: runtime::download::ProgressFn = Box::new(move |d, t| {
-                        *dl_state_prog.lock().unwrap() = (d, t, 0u8);
+                        // 5. Extract archive (slow — UI shows "Unpacking...")
+                        *dl_state_t.lock().unwrap() = (1, 1, 2u8);
+                        if let Err(e) =
+                            prefix::runtime::download::extract_tar(&archive_path, &tmp_dir)
+                        {
+                            let _ = tx.send(Err(e));
+                            return;
+                        }
+
+                        // 6. Finalize — verify extraction, clean up, move into place
+                        if let Err(e) = prefix::runtime::download::find_wine_binary(&tmp_dir) {
+                            let _ = tx.send(Err(e));
+                            return;
+                        }
+                        let _ = std::fs::remove_file(&archive_path);
+                        if final_dir.exists() {
+                            let _ = std::fs::remove_dir_all(&final_dir);
+                        }
+                        if let Err(e) = std::fs::rename(&tmp_dir, &final_dir) {
+                            let _ = tx.send(Err(prefix::base::error::PrefixError::Io(e)));
+                            return;
+                        }
+
+                        // 7. Register in runtime manager and save
+                        pm_thread.runtime_manager_mut().register_channel(
+                            channel,
+                            cask.version,
+                            final_dir,
+                        );
+                        pm_thread.save_runtime_state();
+                        let rm = pm_thread.runtime_manager().clone();
+                        let _ = tx.send(Ok(rm));
                     });
-                    if let Err(e) = rt.block_on(prefix::runtime::download::download_file(
-                        &cask.url,
-                        &archive_path,
-                        &simple_prog,
-                    )) {
-                        let _ = tx.send(Err(e));
-                        return;
-                    }
 
-                    // 4. Verify checksum (slow — UI shows "Verifying checksum...")
-                    *dl_state_t.lock().unwrap() = (1, 1, 1u8);
-                    if let Err(e) = prefix::runtime::download::verify_sha256(
-                        &archive_path,
-                        &cask.sha256,
-                    ) {
-                        let _ = tx.send(Err(e));
-                        return;
-                    }
+                    // Poll for completion
+                    loop {
+                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                            return Err("Download cancelled".into());
+                        }
 
-                    // 5. Extract archive (slow — UI shows "Unpacking...")
-                    *dl_state_t.lock().unwrap() = (1, 1, 2u8);
-                    if let Err(e) = prefix::runtime::download::extract_tar(
-                        &archive_path,
-                        &tmp_dir,
-                    ) {
-                        let _ = tx.send(Err(e));
-                        return;
-                    }
+                        // Bridge progress from shared state (includes phase)
+                        {
+                            let (d, t, phase) = *dl_state.lock().unwrap();
+                            if t > 0 {
+                                let phase = match phase {
+                                    1 => runtime::download::InstallPhase::Verify,
+                                    2 => runtime::download::InstallPhase::Extract,
+                                    _ => runtime::download::InstallPhase::Download,
+                                };
+                                progress(d, t, phase);
+                            }
+                        }
 
-                    // 6. Finalize — verify extraction, clean up, move into place
-                    if let Err(e) = prefix::runtime::download::find_wine_binary(&tmp_dir) {
-                        let _ = tx.send(Err(e));
-                        return;
-                    }
-                    let _ = std::fs::remove_file(&archive_path);
-                    if final_dir.exists() {
-                        let _ = std::fs::remove_dir_all(&final_dir);
-                    }
-                    if let Err(e) = std::fs::rename(&tmp_dir, &final_dir) {
-                        let _ = tx.send(Err(prefix::base::error::PrefixError::Io(e)));
-                        return;
-                    }
-
-                    // 7. Register in runtime manager and save
-                    pm_thread.runtime_manager_mut().register_channel(
-                        channel,
-                        cask.version,
-                        final_dir,
-                    );
-                    pm_thread.save_runtime_state();
-                    let rm = pm_thread.runtime_manager().clone();
-                    let _ = tx.send(Ok(rm));
-                });
-
-                // Poll for completion
-                loop {
-                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                        return Err("Download cancelled".into());
-                    }
-
-                    // Bridge progress from shared state (includes phase)
-                    {
-                        let (d, t, phase) = *dl_state.lock().unwrap();
-                        if t > 0 {
-                            let phase = match phase {
-                                1 => runtime::download::InstallPhase::Verify,
-                                2 => runtime::download::InstallPhase::Extract,
-                                _ => runtime::download::InstallPhase::Download,
-                            };
-                            progress(d, t, phase);
+                        match rx.try_recv() {
+                            Ok(Ok(rm)) => {
+                                let _ = s.input(RuntimeSettingsMsg::DownloadComplete(rm));
+                                return Ok(());
+                            }
+                            Ok(Err(e)) => return Err(e.to_string()),
+                            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                                gtk::glib::timeout_future(std::time::Duration::from_millis(200))
+                                    .await;
+                            }
+                            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                                return Err("Download thread crashed".into());
+                            }
                         }
                     }
-
-                    match rx.try_recv() {
-                        Ok(Ok(rm)) => {
-                            let _ = s.input(RuntimeSettingsMsg::DownloadComplete(rm));
-                            return Ok(());
-                        }
-                        Ok(Err(e)) => return Err(e.to_string()),
-                        Err(std::sync::mpsc::TryRecvError::Empty) => {
-                            gtk::glib::timeout_future(std::time::Duration::from_millis(200)).await;
-                        }
-                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                            return Err("Download thread crashed".into());
-                        }
-                    }
-                }
-            })
-        });
+                })
+            },
+        );
 
         // ── perform_remove ──
         let remove_id = runtime_id.clone();
@@ -437,22 +472,40 @@ fn refresh_runtime_list(
 
         let _source = match &runtime.source {
             RuntimeSource::System => "System (PATH)".to_string(),
-            RuntimeSource::ManagedChannel { channel, installed_cask_version } => {
-                format!("Homebrew {} — cask {}", channel.display_name(), installed_cask_version)
+            RuntimeSource::ManagedChannel {
+                channel,
+                installed_cask_version,
+            } => {
+                format!(
+                    "Homebrew {} — cask {}",
+                    channel.display_name(),
+                    installed_cask_version
+                )
             }
             RuntimeSource::ManagedVersion { source_url: _ } => "Managed (versioned)".to_string(),
-            RuntimeSource::Imported { label, original_path } => {
+            RuntimeSource::Imported {
+                label,
+                original_path,
+            } => {
                 format!("Imported: {} ({})", label, original_path.display())
             }
         };
 
-        let mut subtitle = format!("{} · Installed {}", runtime.wine_version, &runtime.installed_at[..10]);
+        let mut subtitle = format!(
+            "{} · Installed {}",
+            runtime.wine_version,
+            &runtime.installed_at[..10]
+        );
 
-        let gfx_names: Vec<&str> = runtime.graphics.iter().map(|g| match g {
-            GraphicsBackend::Dxmt { .. } => "DXMT",
-            GraphicsBackend::D3DMetal { .. } => "D3DMetal",
-            GraphicsBackend::DxvkVkd3d { .. } => "DXVK+VKD3D",
-        }).collect();
+        let gfx_names: Vec<&str> = runtime
+            .graphics
+            .iter()
+            .map(|g| match g {
+                GraphicsBackend::Dxmt { .. } => "DXMT",
+                GraphicsBackend::D3DMetal { .. } => "D3DMetal",
+                GraphicsBackend::DxvkVkd3d { .. } => "DXVK+VKD3D",
+            })
+            .collect();
         if !gfx_names.is_empty() {
             subtitle.push_str(&format!(" · {}", gfx_names.join(", ")));
         }
@@ -509,10 +562,7 @@ fn refresh_runtime_list(
     }
 }
 
-fn emit_runtimes_updated(
-    pm: &PrefixManager,
-    sender: &AsyncComponentSender<RuntimeSettings>,
-) {
+fn emit_runtimes_updated(pm: &PrefixManager, sender: &AsyncComponentSender<RuntimeSettings>) {
     let _ = sender.output(RuntimeSettingsOutput::RuntimesUpdated(
         pm.runtime_manager().clone(),
     ));
@@ -522,10 +572,10 @@ fn emit_runtimes_updated(
 
 #[cfg(target_os = "macos")]
 fn macos_import_dialog(sender: &AsyncComponentSender<RuntimeSettings>) {
-    use objc2::MainThreadMarker;
-    use objc2_foundation::NSString;
-    use objc2_app_kit::{NSOpenPanel, NSModalResponse, NSModalResponseOK};
     use block2::RcBlock;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSModalResponse, NSModalResponseOK, NSOpenPanel};
+    use objc2_foundation::NSString;
 
     let mtm = unsafe { MainThreadMarker::new_unchecked() };
     let panel = NSOpenPanel::openPanel(mtm);

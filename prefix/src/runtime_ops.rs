@@ -1,8 +1,8 @@
-use base::config::PrefixConfig;
-use base::error::{Result, PrefixError};
-use runtime::{Runtime, Channel};
-use std::path::PathBuf;
 use crate::Manager;
+use base::config::PrefixConfig;
+use base::error::{PrefixError, Result};
+use runtime::{Channel, Runtime};
+use std::path::PathBuf;
 
 impl Manager {
     pub fn save_runtime_state(&self) {
@@ -23,14 +23,23 @@ impl Manager {
         let cask = runtime::homebrew::fetch_cask(channel.cask_name())
             .await
             .map_err(|e| PrefixError::Process(e))?;
-        let runtime = self.runtime_manager.register_channel(channel, cask.version, bundle_dir).clone();
+        let runtime = self
+            .runtime_manager
+            .register_channel(channel, cask.version, bundle_dir)
+            .clone();
         self.save_runtime_state();
         Ok(runtime)
     }
 
-    pub fn import_runtime(&mut self, source_path: &PathBuf, label: &str) -> std::result::Result<Runtime, String> {
+    pub fn import_runtime(
+        &mut self,
+        source_path: &PathBuf,
+        label: &str,
+    ) -> std::result::Result<Runtime, String> {
         let runtimes = runtime::download::runtimes_dir();
-        let runtime = self.runtime_manager.import_runtime(source_path, label, &runtimes)?;
+        let runtime = self
+            .runtime_manager
+            .import_runtime(source_path, label, &runtimes)?;
         self.save_runtime_state();
         Ok(runtime)
     }

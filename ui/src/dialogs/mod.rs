@@ -7,11 +7,8 @@ use gtk4::prelude::*;
 ///
 /// On macOS this uses `NSOpenPanel` (native), on other platforms it falls back
 /// to `gtk4::FileDialog`.
-pub fn pick_folder<F>(
-    parent: &gtk4::Window,
-    initial_path: Option<&str>,
-    callback: F,
-) where
+pub fn pick_folder<F>(parent: &gtk4::Window, initial_path: Option<&str>, callback: F)
+where
     F: Fn(String) + 'static,
 {
     println!("{:?}", &initial_path);
@@ -27,12 +24,8 @@ pub fn pick_folder<F>(
 /// On macOS this uses `NSOpenPanel` (native), on other platforms it falls back
 /// to `gtk4::FileDialog`.  `extensions` is a list of allowed suffixes
 /// (e.g. `["dmg"]`, `["png", "jpg"]`).  Pass an empty slice to allow all files.
-pub fn pick_file<F>(
-    parent: &gtk4::Window,
-    title: &str,
-    extensions: &[&str],
-    callback: F,
-) where
+pub fn pick_file<F>(parent: &gtk4::Window, title: &str, extensions: &[&str], callback: F)
+where
     F: Fn(Option<String>) + 'static,
 {
     #[cfg(target_os = "macos")]
@@ -45,31 +38,32 @@ pub fn pick_file<F>(
 // ── macOS native implementation ──────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
-fn macos_pick_folder<F>(
-    _parent: &gtk4::Window,
-    initial_path: Option<&str>,
-    callback: F,
-) where
+fn macos_pick_folder<F>(_parent: &gtk4::Window, initial_path: Option<&str>, callback: F)
+where
     F: Fn(String) + 'static,
 {
-    use std::cell::RefCell;
-    use objc2::MainThreadMarker;
-    use objc2_foundation::NSURL;
-    use objc2_app_kit::{NSOpenPanel, NSModalResponse, NSModalResponseOK};
     use block2::RcBlock;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSModalResponse, NSModalResponseOK, NSOpenPanel};
+    use objc2_foundation::NSURL;
+    use std::cell::RefCell;
 
     let mtm = unsafe { MainThreadMarker::new_unchecked() };
     let panel = NSOpenPanel::openPanel(mtm);
     panel.setCanChooseFiles(false);
     panel.setCanChooseDirectories(true);
     panel.setAllowsMultipleSelection(false);
-    panel.setTitle(Some(&objc2_foundation::NSString::from_str("Choose Working Directory")));
+    panel.setTitle(Some(&objc2_foundation::NSString::from_str(
+        "Choose Working Directory",
+    )));
 
     // Set initial directory if provided
     if let Some(path) = initial_path {
         if let Ok(canonical) = PathBuf::from(path).canonicalize() {
             if canonical.is_dir() {
-                let url = NSURL::fileURLWithPath(&objc2_foundation::NSString::from_str(&canonical.display().to_string()));
+                let url = NSURL::fileURLWithPath(&objc2_foundation::NSString::from_str(
+                    &canonical.display().to_string(),
+                ));
                 panel.setDirectoryURL(Some(&url));
             }
         }
@@ -97,18 +91,14 @@ fn macos_pick_folder<F>(
 // ── macOS file picker ────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
-fn macos_pick_file<F>(
-    _parent: &gtk4::Window,
-    title: &str,
-    _extensions: &[&str],
-    callback: F,
-) where
+fn macos_pick_file<F>(_parent: &gtk4::Window, title: &str, _extensions: &[&str], callback: F)
+where
     F: Fn(Option<String>) + 'static,
 {
-    use std::cell::RefCell;
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSOpenPanel, NSModalResponse, NSModalResponseOK};
     use block2::RcBlock;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSModalResponse, NSModalResponseOK, NSOpenPanel};
+    use std::cell::RefCell;
 
     let mtm = unsafe { MainThreadMarker::new_unchecked() };
     let panel = NSOpenPanel::openPanel(mtm);
@@ -144,11 +134,8 @@ fn macos_pick_file<F>(
 // ── GTK fallback implementation ──────────────────────────────────────────
 
 #[cfg(not(target_os = "macos"))]
-fn gtk_pick_folder<F>(
-    parent: &gtk4::Window,
-    initial_path: Option<&str>,
-    callback: F,
-) where
+fn gtk_pick_folder<F>(parent: &gtk4::Window, initial_path: Option<&str>, callback: F)
+where
     F: Fn(String) + 'static,
 {
     let dialog = gtk4::FileDialog::builder()
@@ -177,17 +164,11 @@ fn gtk_pick_folder<F>(
 }
 
 #[cfg(not(target_os = "macos"))]
-fn gtk_pick_file<F>(
-    parent: &gtk4::Window,
-    title: &str,
-    extensions: &[&str],
-    callback: F,
-) where
+fn gtk_pick_file<F>(parent: &gtk4::Window, title: &str, extensions: &[&str], callback: F)
+where
     F: Fn(Option<String>) + 'static,
 {
-    let dialog = gtk4::FileDialog::builder()
-        .title(title)
-        .build();
+    let dialog = gtk4::FileDialog::builder().title(title).build();
 
     let filter = if !extensions.is_empty() {
         let filter = gtk4::FileFilter::new();
@@ -205,11 +186,9 @@ fn gtk_pick_file<F>(
     dialog.open(
         Some(parent),
         None::<&gtk4::gio::Cancellable>,
-        move |result| {
-            match result {
-                Ok(file) => callback(file.path().map(|p| p.display().to_string())),
-                Err(_) => callback(None),
-            }
+        move |result| match result {
+            Ok(file) => callback(file.path().map(|p| p.display().to_string())),
+            Err(_) => callback(None),
         },
     );
 }

@@ -1,8 +1,8 @@
-use base::error::{Result, PrefixError};
-use crate::traits::{RegEditor, RegistryCache};
-use crate::keys::*;
 use crate::WineRegistry;
+use crate::keys::*;
+use crate::traits::{RegEditor, RegistryCache};
 use async_trait::async_trait;
+use base::error::{PrefixError, Result};
 use regashii::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -33,10 +33,7 @@ impl RegistryEditor {
         }
     }
 
-    pub async fn with_prefix(
-        cache: Arc<dyn RegistryCache>,
-        prefix_path: &PathBuf,
-    ) -> Result<Self> {
+    pub async fn with_prefix(cache: Arc<dyn RegistryCache>, prefix_path: &PathBuf) -> Result<Self> {
         if let Some(cached_registry) = cache.get_cached_registry(prefix_path).await? {
             return Ok(Self {
                 registry: cached_registry,
@@ -73,9 +70,16 @@ impl RegistryEditor {
         }
     }
 
-    async fn set_string_value(&mut self, key_path: &str, value_name: &str, value: &str) -> Result<()> {
+    async fn set_string_value(
+        &mut self,
+        key_path: &str,
+        value_name: &str,
+        value: &str,
+    ) -> Result<()> {
         let reg_value = Value::Sz(value.to_string());
-        self.registry.set_value(key_path, value_name, reg_value).await
+        self.registry
+            .set_value(key_path, value_name, reg_value)
+            .await
     }
 
     async fn get_dword_value(&self, key_path: &str, value_name: &str) -> Result<Option<u32>> {
@@ -89,14 +93,23 @@ impl RegistryEditor {
         }
     }
 
-    async fn set_dword_value(&mut self, key_path: &str, value_name: &str, value: u32) -> Result<()> {
+    async fn set_dword_value(
+        &mut self,
+        key_path: &str,
+        value_name: &str,
+        value: u32,
+    ) -> Result<()> {
         let reg_value = Value::Dword(value);
-        self.registry.set_value(key_path, value_name, reg_value).await
+        self.registry
+            .set_value(key_path, value_name, reg_value)
+            .await
     }
 
     fn validate_key_path(key_path: &str) -> Result<()> {
         if key_path.is_empty() {
-            return Err(PrefixError::ValidationError("Key path cannot be empty".to_string()));
+            return Err(PrefixError::ValidationError(
+                "Key path cannot be empty".to_string(),
+            ));
         }
         if !key_path.starts_with("Software") && !key_path.starts_with("Control Panel") {
             return Err(PrefixError::ValidationError(format!(
@@ -109,13 +122,16 @@ impl RegistryEditor {
 
     fn validate_value_name(value_name: &str) -> Result<()> {
         if value_name.is_empty() {
-            return Err(PrefixError::ValidationError("Value name cannot be empty".to_string()));
+            return Err(PrefixError::ValidationError(
+                "Value name cannot be empty".to_string(),
+            ));
         }
         let invalid_chars = ['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
         for c in value_name.chars() {
             if invalid_chars.contains(&c) {
                 return Err(PrefixError::ValidationError(format!(
-                    "Invalid character '{}' in value name", c
+                    "Invalid character '{}' in value name",
+                    c
                 )));
             }
         }
@@ -133,7 +149,9 @@ impl RegEditor for RegistryEditor {
         let registry_path = Self::get_registry_path(prefix_path)?;
         self.registry = WineRegistry::load_from_file(&registry_path).await?;
         self.prefix_path = Some(prefix_path.clone());
-        self.cache.cache_registry(prefix_path, self.registry.clone()).await?;
+        self.cache
+            .cache_registry(prefix_path, self.registry.clone())
+            .await?;
         Ok(())
     }
 
@@ -153,14 +171,19 @@ impl RegEditor for RegistryEditor {
         Self::validate_key_path(key_path)?;
         Self::validate_value_name("Version")?;
         if let Some(parsed_version) = WindowsVersion::from_string(version) {
-            self.set_string_value(key_path, "Version", parsed_version.to_string()).await
+            self.set_string_value(key_path, "Version", parsed_version.to_string())
+                .await
         } else {
-            Err(PrefixError::ValidationError(format!("Invalid Windows version: {}", version)))
+            Err(PrefixError::ValidationError(format!(
+                "Invalid Windows version: {}",
+                version
+            )))
         }
     }
 
     async fn get_d3d_renderer(&self) -> Result<Option<String>> {
-        self.get_string_value("Software\\Wine\\Direct3D", "renderer").await
+        self.get_string_value("Software\\Wine\\Direct3D", "renderer")
+            .await
     }
 
     async fn set_d3d_renderer(&mut self, renderer: &str) -> Result<()> {
@@ -168,14 +191,19 @@ impl RegEditor for RegistryEditor {
         Self::validate_key_path(key_path)?;
         Self::validate_value_name("renderer")?;
         if let Some(parsed_renderer) = D3DRenderer::from_string(renderer) {
-            self.set_string_value(key_path, "renderer", parsed_renderer.to_string()).await
+            self.set_string_value(key_path, "renderer", parsed_renderer.to_string())
+                .await
         } else {
-            Err(PrefixError::ValidationError(format!("Invalid Direct3D renderer: {}", renderer)))
+            Err(PrefixError::ValidationError(format!(
+                "Invalid Direct3D renderer: {}",
+                renderer
+            )))
         }
     }
 
     async fn get_d3d_csmt(&self) -> Result<Option<u32>> {
-        self.get_dword_value("Software\\Wine\\Direct3D", "csmt").await
+        self.get_dword_value("Software\\Wine\\Direct3D", "csmt")
+            .await
     }
 
     async fn set_d3d_csmt(&mut self, enabled: bool) -> Result<()> {
@@ -187,7 +215,8 @@ impl RegEditor for RegistryEditor {
     }
 
     async fn get_offscreen_rendering_mode(&self) -> Result<Option<String>> {
-        self.get_string_value("Software\\Wine\\Direct3D", "OffscreenRenderingMode").await
+        self.get_string_value("Software\\Wine\\Direct3D", "OffscreenRenderingMode")
+            .await
     }
 
     async fn set_offscreen_rendering_mode(&mut self, mode: &str) -> Result<()> {
@@ -195,14 +224,19 @@ impl RegEditor for RegistryEditor {
         Self::validate_key_path(key_path)?;
         Self::validate_value_name("OffscreenRenderingMode")?;
         if let Some(parsed_mode) = OffscreenRenderingMode::from_string(mode) {
-            self.set_string_value(key_path, "OffscreenRenderingMode", parsed_mode.to_string()).await
+            self.set_string_value(key_path, "OffscreenRenderingMode", parsed_mode.to_string())
+                .await
         } else {
-            Err(PrefixError::ValidationError(format!("Invalid offscreen rendering mode: {}", mode)))
+            Err(PrefixError::ValidationError(format!(
+                "Invalid offscreen rendering mode: {}",
+                mode
+            )))
         }
     }
 
     async fn get_mouse_warp_override(&self) -> Result<Option<String>> {
-        self.get_string_value("Software\\Wine\\DirectInput", "MouseWarpOverride").await
+        self.get_string_value("Software\\Wine\\DirectInput", "MouseWarpOverride")
+            .await
     }
 
     async fn set_mouse_warp_override(&mut self, mode: &str) -> Result<()> {
@@ -210,14 +244,19 @@ impl RegEditor for RegistryEditor {
         Self::validate_key_path(key_path)?;
         Self::validate_value_name("MouseWarpOverride")?;
         if let Some(parsed_mode) = MouseWarpOverride::from_string(mode) {
-            self.set_string_value(key_path, "MouseWarpOverride", parsed_mode.to_string()).await
+            self.set_string_value(key_path, "MouseWarpOverride", parsed_mode.to_string())
+                .await
         } else {
-            Err(PrefixError::ValidationError(format!("Invalid mouse warp override: {}", mode)))
+            Err(PrefixError::ValidationError(format!(
+                "Invalid mouse warp override: {}",
+                mode
+            )))
         }
     }
 
     async fn get_audio_driver(&self) -> Result<Option<String>> {
-        self.get_string_value("Software\\Wine\\Drivers\\Audio", "").await
+        self.get_string_value("Software\\Wine\\Drivers\\Audio", "")
+            .await
     }
 
     async fn set_audio_driver(&mut self, driver: &str) -> Result<()> {
@@ -225,14 +264,19 @@ impl RegEditor for RegistryEditor {
         Self::validate_key_path(key_path)?;
         Self::validate_value_name("")?;
         if let Some(parsed_driver) = AudioDriver::from_string(driver) {
-            self.set_string_value(key_path, "", parsed_driver.to_string()).await
+            self.set_string_value(key_path, "", parsed_driver.to_string())
+                .await
         } else {
-            Err(PrefixError::ValidationError(format!("Invalid audio driver: {}", driver)))
+            Err(PrefixError::ValidationError(format!(
+                "Invalid audio driver: {}",
+                driver
+            )))
         }
     }
 
     async fn get_graphics_driver(&self) -> Result<Option<String>> {
-        self.get_string_value("Software\\Wine\\Drivers\\Graphics", "").await
+        self.get_string_value("Software\\Wine\\Drivers\\Graphics", "")
+            .await
     }
 
     async fn set_graphics_driver(&mut self, driver: &str) -> Result<()> {
@@ -240,16 +284,24 @@ impl RegEditor for RegistryEditor {
         Self::validate_key_path(key_path)?;
         Self::validate_value_name("")?;
         if let Some(parsed_driver) = GraphicsDriver::from_string(driver) {
-            self.set_string_value(key_path, "", parsed_driver.to_string()).await
+            self.set_string_value(key_path, "", parsed_driver.to_string())
+                .await
         } else {
-            Err(PrefixError::ValidationError(format!("Invalid graphics driver: {}", driver)))
+            Err(PrefixError::ValidationError(format!(
+                "Invalid graphics driver: {}",
+                driver
+            )))
         }
     }
 
     async fn get_desktop_settings(&self) -> Result<Option<DesktopSettings>> {
         let key_path = "Software\\Wine\\Explorer";
         let desktop = self.get_string_value(key_path, "Desktop").await?;
-        let show_systray = self.get_dword_value(key_path, "ShowSystray").await?.unwrap_or(1) != 0;
+        let show_systray = self
+            .get_dword_value(key_path, "ShowSystray")
+            .await?
+            .unwrap_or(1)
+            != 0;
         let desktops_path = format!("{}\\Desktops", key_path);
         let mut desktops = HashMap::new();
         let values = self.registry.get_key_values(&desktops_path).await?;
@@ -262,7 +314,11 @@ impl RegEditor for RegistryEditor {
                 }
             }
         }
-        Ok(Some(DesktopSettings { desktop, desktops, show_systray }))
+        Ok(Some(DesktopSettings {
+            desktop,
+            desktops,
+            show_systray,
+        }))
     }
 
     async fn set_desktop_settings(&mut self, settings: &DesktopSettings) -> Result<()> {
@@ -272,11 +328,13 @@ impl RegEditor for RegistryEditor {
             self.set_string_value(key_path, "Desktop", desktop).await?;
         }
         let systray_value = if settings.show_systray { 1 } else { 0 };
-        self.set_dword_value(key_path, "ShowSystray", systray_value).await?;
+        self.set_dword_value(key_path, "ShowSystray", systray_value)
+            .await?;
         let desktops_path = format!("{}\\Desktops", key_path);
         for (name, size) in &settings.desktops {
             Self::validate_value_name(name)?;
-            self.set_string_value(&desktops_path, name, &size.to_string()).await?;
+            self.set_string_value(&desktops_path, name, &size.to_string())
+                .await?;
         }
         Ok(())
     }
@@ -325,7 +383,8 @@ impl RegEditor for RegistryEditor {
         let key_path = "Software\\Wine\\DllOverrides";
         Self::validate_key_path(key_path)?;
         Self::validate_value_name(dll)?;
-        self.set_string_value(key_path, dll, setting.to_string()).await
+        self.set_string_value(key_path, dll, setting.to_string())
+            .await
     }
 
     async fn remove_dll_override(&mut self, dll: &str) -> Result<()> {
@@ -336,7 +395,8 @@ impl RegEditor for RegistryEditor {
     }
 
     async fn get_video_memory_size(&self) -> Result<Option<u32>> {
-        self.get_dword_value("Software\\Wine\\Direct3D", "VideoMemorySize").await
+        self.get_dword_value("Software\\Wine\\Direct3D", "VideoMemorySize")
+            .await
     }
 
     async fn set_video_memory_size(&mut self, size_mb: u32) -> Result<()> {
@@ -348,7 +408,8 @@ impl RegEditor for RegistryEditor {
                 "Video memory size must be between 1 and 16384 MB".to_string(),
             ));
         }
-        self.set_dword_value(key_path, "VideoMemorySize", size_mb).await
+        self.set_dword_value(key_path, "VideoMemorySize", size_mb)
+            .await
     }
 
     async fn get_shader_model_settings(&self) -> Result<Option<ShaderModelSettings>> {
@@ -359,13 +420,22 @@ impl RegEditor for RegistryEditor {
         let max_shader_model_hs = self.get_dword_value(key_path, "MaxShaderModelHS").await?;
         let max_shader_model_ds = self.get_dword_value(key_path, "MaxShaderModelDS").await?;
         let max_shader_model_cs = self.get_dword_value(key_path, "MaxShaderModelCS").await?;
-        if max_shader_model_vs.is_none() && max_shader_model_ps.is_none() && max_shader_model_gs.is_none()
-            && max_shader_model_hs.is_none() && max_shader_model_ds.is_none() && max_shader_model_cs.is_none() {
+        if max_shader_model_vs.is_none()
+            && max_shader_model_ps.is_none()
+            && max_shader_model_gs.is_none()
+            && max_shader_model_hs.is_none()
+            && max_shader_model_ds.is_none()
+            && max_shader_model_cs.is_none()
+        {
             return Ok(None);
         }
         Ok(Some(ShaderModelSettings {
-            max_shader_model_vs, max_shader_model_ps, max_shader_model_gs,
-            max_shader_model_hs, max_shader_model_ds, max_shader_model_cs,
+            max_shader_model_vs,
+            max_shader_model_ps,
+            max_shader_model_gs,
+            max_shader_model_hs,
+            max_shader_model_ds,
+            max_shader_model_cs,
         }))
     }
 
@@ -374,27 +444,33 @@ impl RegEditor for RegistryEditor {
         Self::validate_key_path(key_path)?;
         if let Some(vs) = settings.max_shader_model_vs {
             Self::validate_value_name("MaxShaderModelVS")?;
-            self.set_dword_value(key_path, "MaxShaderModelVS", vs).await?;
+            self.set_dword_value(key_path, "MaxShaderModelVS", vs)
+                .await?;
         }
         if let Some(ps) = settings.max_shader_model_ps {
             Self::validate_value_name("MaxShaderModelPS")?;
-            self.set_dword_value(key_path, "MaxShaderModelPS", ps).await?;
+            self.set_dword_value(key_path, "MaxShaderModelPS", ps)
+                .await?;
         }
         if let Some(gs) = settings.max_shader_model_gs {
             Self::validate_value_name("MaxShaderModelGS")?;
-            self.set_dword_value(key_path, "MaxShaderModelGS", gs).await?;
+            self.set_dword_value(key_path, "MaxShaderModelGS", gs)
+                .await?;
         }
         if let Some(hs) = settings.max_shader_model_hs {
             Self::validate_value_name("MaxShaderModelHS")?;
-            self.set_dword_value(key_path, "MaxShaderModelHS", hs).await?;
+            self.set_dword_value(key_path, "MaxShaderModelHS", hs)
+                .await?;
         }
         if let Some(ds) = settings.max_shader_model_ds {
             Self::validate_value_name("MaxShaderModelDS")?;
-            self.set_dword_value(key_path, "MaxShaderModelDS", ds).await?;
+            self.set_dword_value(key_path, "MaxShaderModelDS", ds)
+                .await?;
         }
         if let Some(cs) = settings.max_shader_model_cs {
             Self::validate_value_name("MaxShaderModelCS")?;
-            self.set_dword_value(key_path, "MaxShaderModelCS", cs).await?;
+            self.set_dword_value(key_path, "MaxShaderModelCS", cs)
+                .await?;
         }
         Ok(())
     }
@@ -421,7 +497,10 @@ impl RegEditor for RegistryEditor {
                 desktop: Some("Default".to_string()),
                 desktops: {
                     let mut desktops = HashMap::new();
-                    desktops.insert("Default".to_string(), DesktopSize::new(settings.width, settings.height));
+                    desktops.insert(
+                        "Default".to_string(),
+                        DesktopSize::new(settings.width, settings.height),
+                    );
                     desktops
                 },
                 show_systray: false,
@@ -432,7 +511,9 @@ impl RegEditor for RegistryEditor {
             Self::validate_key_path(key_path)?;
             self.registry.delete_value(key_path, "Desktop").await?;
             let desktops_path = format!("{}\\Desktops", key_path);
-            self.registry.delete_value(&desktops_path, "Default").await?;
+            self.registry
+                .delete_value(&desktops_path, "Default")
+                .await?;
             Ok(())
         }
     }
@@ -448,16 +529,24 @@ impl RegEditor for RegistryEditor {
         for (dll, value) in values {
             if let Value::Sz(setting_str) = value {
                 if let Some(setting) = DllOverrideSetting::from_string(&setting_str) {
-                    app_settings.dll_overrides.push(DllOverride { dll, setting });
+                    app_settings
+                        .dll_overrides
+                        .push(DllOverride { dll, setting });
                 }
             }
         }
-        if let Some(renderer_str) = self.get_string_value(&format!("{}\\Direct3D", key_path), "renderer").await? {
+        if let Some(renderer_str) = self
+            .get_string_value(&format!("{}\\Direct3D", key_path), "renderer")
+            .await?
+        {
             if let Some(renderer) = D3DRenderer::from_string(&renderer_str) {
                 app_settings.d3d_renderer = Some(renderer);
             }
         }
-        if let Some(mode_str) = self.get_string_value(&format!("{}\\Direct3D", key_path), "OffscreenRenderingMode").await? {
+        if let Some(mode_str) = self
+            .get_string_value(&format!("{}\\Direct3D", key_path), "OffscreenRenderingMode")
+            .await?
+        {
             if let Some(mode) = OffscreenRenderingMode::from_string(&mode_str) {
                 app_settings.offscreen_rendering_mode = Some(mode);
             }
@@ -472,18 +561,25 @@ impl RegEditor for RegistryEditor {
             let dll_overrides_path = format!("{}\\DllOverrides", base_key_path);
             for dll_override in &settings.dll_overrides {
                 Self::validate_value_name(&dll_override.dll)?;
-                self.set_string_value(&dll_overrides_path, &dll_override.dll, dll_override.setting.to_string()).await?;
+                self.set_string_value(
+                    &dll_overrides_path,
+                    &dll_override.dll,
+                    dll_override.setting.to_string(),
+                )
+                .await?;
             }
         }
         if let Some(renderer) = &settings.d3d_renderer {
             let d3d_path = format!("{}\\Direct3D", base_key_path);
             Self::validate_value_name("renderer")?;
-            self.set_string_value(&d3d_path, "renderer", renderer.to_string()).await?;
+            self.set_string_value(&d3d_path, "renderer", renderer.to_string())
+                .await?;
         }
         if let Some(mode) = &settings.offscreen_rendering_mode {
             let d3d_path = format!("{}\\Direct3D", base_key_path);
             Self::validate_value_name("OffscreenRenderingMode")?;
-            self.set_string_value(&d3d_path, "OffscreenRenderingMode", mode.to_string()).await?;
+            self.set_string_value(&d3d_path, "OffscreenRenderingMode", mode.to_string())
+                .await?;
         }
         for (key, value) in &settings.custom_settings {
             Self::validate_value_name(key)?;
@@ -501,55 +597,140 @@ impl RegEditor for RegistryEditor {
     async fn get_x11_driver_settings(&self) -> Result<Option<X11DriverSettings>> {
         let key_path = "Software\\Wine\\X11 Driver";
         let decorated = self.get_string_value(key_path, "Decorated").await?;
-        let client_side_graphics = self.get_string_value(key_path, "ClientSideGraphics").await?;
-        let client_side_with_render = self.get_string_value(key_path, "ClientSideWithRender").await?;
-        let client_side_antialias_with_render = self.get_string_value(key_path, "ClientSideAntiAliasWithRender").await?;
-        let client_side_antialias_with_core = self.get_string_value(key_path, "ClientSideAntiAliasWithCore").await?;
+        let client_side_graphics = self
+            .get_string_value(key_path, "ClientSideGraphics")
+            .await?;
+        let client_side_with_render = self
+            .get_string_value(key_path, "ClientSideWithRender")
+            .await?;
+        let client_side_antialias_with_render = self
+            .get_string_value(key_path, "ClientSideAntiAliasWithRender")
+            .await?;
+        let client_side_antialias_with_core = self
+            .get_string_value(key_path, "ClientSideAntiAliasWithCore")
+            .await?;
         let grab_fullscreen = self.get_string_value(key_path, "GrabFullscreen").await?;
         let grab_pointer = self.get_string_value(key_path, "GrabPointer").await?;
         let managed = self.get_string_value(key_path, "Managed").await?;
         let use_xrandr = self.get_string_value(key_path, "UseXRandR").await?;
         let use_xvid_mode = self.get_string_value(key_path, "UseXVidMode").await?;
-        if decorated.is_none() && client_side_graphics.is_none() && client_side_with_render.is_none()
-            && client_side_antialias_with_render.is_none() && client_side_antialias_with_core.is_none()
-            && grab_fullscreen.is_none() && grab_pointer.is_none() && managed.is_none()
-            && use_xrandr.is_none() && use_xvid_mode.is_none() {
+        if decorated.is_none()
+            && client_side_graphics.is_none()
+            && client_side_with_render.is_none()
+            && client_side_antialias_with_render.is_none()
+            && client_side_antialias_with_core.is_none()
+            && grab_fullscreen.is_none()
+            && grab_pointer.is_none()
+            && managed.is_none()
+            && use_xrandr.is_none()
+            && use_xvid_mode.is_none()
+        {
             return Ok(None);
         }
         let mut settings = X11DriverSettings::new();
-        if let Some(v) = decorated { settings.decorated = Some(v != "N"); }
-        if let Some(v) = client_side_graphics { settings.client_side_graphics = Some(v != "N"); }
-        if let Some(v) = client_side_with_render { settings.client_side_with_render = Some(v != "N"); }
-        if let Some(v) = client_side_antialias_with_render { settings.client_side_antialias_with_render = Some(v != "N"); }
-        if let Some(v) = client_side_antialias_with_core { settings.client_side_antialias_with_core = Some(v != "N"); }
-        if let Some(v) = grab_fullscreen { settings.grab_fullscreen = Some(v == "Y"); }
-        if let Some(v) = grab_pointer { settings.grab_pointer = Some(v != "N"); }
-        if let Some(v) = managed { settings.managed = Some(v != "N"); }
-        if let Some(v) = use_xrandr { settings.use_xrandr = Some(v != "N"); }
-        if let Some(v) = use_xvid_mode { settings.use_xvid_mode = Some(v == "Y"); }
+        if let Some(v) = decorated {
+            settings.decorated = Some(v != "N");
+        }
+        if let Some(v) = client_side_graphics {
+            settings.client_side_graphics = Some(v != "N");
+        }
+        if let Some(v) = client_side_with_render {
+            settings.client_side_with_render = Some(v != "N");
+        }
+        if let Some(v) = client_side_antialias_with_render {
+            settings.client_side_antialias_with_render = Some(v != "N");
+        }
+        if let Some(v) = client_side_antialias_with_core {
+            settings.client_side_antialias_with_core = Some(v != "N");
+        }
+        if let Some(v) = grab_fullscreen {
+            settings.grab_fullscreen = Some(v == "Y");
+        }
+        if let Some(v) = grab_pointer {
+            settings.grab_pointer = Some(v != "N");
+        }
+        if let Some(v) = managed {
+            settings.managed = Some(v != "N");
+        }
+        if let Some(v) = use_xrandr {
+            settings.use_xrandr = Some(v != "N");
+        }
+        if let Some(v) = use_xvid_mode {
+            settings.use_xvid_mode = Some(v == "Y");
+        }
         Ok(Some(settings))
     }
 
     async fn set_x11_driver_settings(&mut self, settings: &X11DriverSettings) -> Result<()> {
         let key_path = "Software\\Wine\\X11 Driver";
         Self::validate_key_path(key_path)?;
-        if let Some(v) = settings.decorated { Self::validate_value_name("Decorated")?; self.set_string_value(key_path, "Decorated", if v { "Y" } else { "N" }).await?; }
-        if let Some(v) = settings.client_side_graphics { Self::validate_value_name("ClientSideGraphics")?; self.set_string_value(key_path, "ClientSideGraphics", if v { "Y" } else { "N" }).await?; }
-        if let Some(v) = settings.client_side_with_render { Self::validate_value_name("ClientSideWithRender")?; self.set_string_value(key_path, "ClientSideWithRender", if v { "Y" } else { "N" }).await?; }
-        if let Some(v) = settings.client_side_antialias_with_render { Self::validate_value_name("ClientSideAntiAliasWithRender")?; self.set_string_value(key_path, "ClientSideAntiAliasWithRender", if v { "Y" } else { "N" }).await?; }
-        if let Some(v) = settings.client_side_antialias_with_core { Self::validate_value_name("ClientSideAntiAliasWithCore")?; self.set_string_value(key_path, "ClientSideAntiAliasWithCore", if v { "Y" } else { "N" }).await?; }
-        if let Some(v) = settings.grab_fullscreen { Self::validate_value_name("GrabFullscreen")?; self.set_string_value(key_path, "GrabFullscreen", if v { "Y" } else { "N" }).await?; }
-        if let Some(v) = settings.grab_pointer { Self::validate_value_name("GrabPointer")?; self.set_string_value(key_path, "GrabPointer", if v { "Y" } else { "N" }).await?; }
-        if let Some(v) = settings.managed { Self::validate_value_name("Managed")?; self.set_string_value(key_path, "Managed", if v { "Y" } else { "N" }).await?; }
-        if let Some(v) = settings.use_xrandr { Self::validate_value_name("UseXRandR")?; self.set_string_value(key_path, "UseXRandR", if v { "Y" } else { "N" }).await?; }
-        if let Some(v) = settings.use_xvid_mode { Self::validate_value_name("UseXVidMode")?; self.set_string_value(key_path, "UseXVidMode", if v { "Y" } else { "N" }).await?; }
+        if let Some(v) = settings.decorated {
+            Self::validate_value_name("Decorated")?;
+            self.set_string_value(key_path, "Decorated", if v { "Y" } else { "N" })
+                .await?;
+        }
+        if let Some(v) = settings.client_side_graphics {
+            Self::validate_value_name("ClientSideGraphics")?;
+            self.set_string_value(key_path, "ClientSideGraphics", if v { "Y" } else { "N" })
+                .await?;
+        }
+        if let Some(v) = settings.client_side_with_render {
+            Self::validate_value_name("ClientSideWithRender")?;
+            self.set_string_value(key_path, "ClientSideWithRender", if v { "Y" } else { "N" })
+                .await?;
+        }
+        if let Some(v) = settings.client_side_antialias_with_render {
+            Self::validate_value_name("ClientSideAntiAliasWithRender")?;
+            self.set_string_value(
+                key_path,
+                "ClientSideAntiAliasWithRender",
+                if v { "Y" } else { "N" },
+            )
+            .await?;
+        }
+        if let Some(v) = settings.client_side_antialias_with_core {
+            Self::validate_value_name("ClientSideAntiAliasWithCore")?;
+            self.set_string_value(
+                key_path,
+                "ClientSideAntiAliasWithCore",
+                if v { "Y" } else { "N" },
+            )
+            .await?;
+        }
+        if let Some(v) = settings.grab_fullscreen {
+            Self::validate_value_name("GrabFullscreen")?;
+            self.set_string_value(key_path, "GrabFullscreen", if v { "Y" } else { "N" })
+                .await?;
+        }
+        if let Some(v) = settings.grab_pointer {
+            Self::validate_value_name("GrabPointer")?;
+            self.set_string_value(key_path, "GrabPointer", if v { "Y" } else { "N" })
+                .await?;
+        }
+        if let Some(v) = settings.managed {
+            Self::validate_value_name("Managed")?;
+            self.set_string_value(key_path, "Managed", if v { "Y" } else { "N" })
+                .await?;
+        }
+        if let Some(v) = settings.use_xrandr {
+            Self::validate_value_name("UseXRandR")?;
+            self.set_string_value(key_path, "UseXRandR", if v { "Y" } else { "N" })
+                .await?;
+        }
+        if let Some(v) = settings.use_xvid_mode {
+            Self::validate_value_name("UseXVidMode")?;
+            self.set_string_value(key_path, "UseXVidMode", if v { "Y" } else { "N" })
+                .await?;
+        }
         Ok(())
     }
 
     async fn get_dpi_settings(&self) -> Result<Option<DpiSettings>> {
         let key_path = "Control Panel\\Desktop";
         let log_pixels = self.get_dword_value(key_path, "LogPixels").await?;
-        if log_pixels.is_none() { return Ok(None); }
+        if log_pixels.is_none() {
+            return Ok(None);
+        }
         Ok(Some(DpiSettings { log_pixels }))
     }
 
@@ -558,7 +739,9 @@ impl RegEditor for RegistryEditor {
         Self::validate_key_path(key_path)?;
         if let Some(dpi) = settings.log_pixels {
             if dpi < 96 {
-                return Err(PrefixError::ValidationError("DPI must be at least 96".to_string()));
+                return Err(PrefixError::ValidationError(
+                    "DPI must be at least 96".to_string(),
+                ));
             }
             Self::validate_value_name("LogPixels")?;
             self.set_dword_value(key_path, "LogPixels", dpi).await?;
@@ -569,29 +752,59 @@ impl RegEditor for RegistryEditor {
     async fn get_mac_driver_settings(&self) -> Result<Option<MacDriverSettings>> {
         let key_path = "Software\\Wine\\Mac Driver";
         let allow_vertical_sync = self.get_string_value(key_path, "AllowVerticalSync").await?;
-        let capture_displays_for_fullscreen = self.get_string_value(key_path, "CaptureDisplaysForFullscreen").await?;
-        let use_precise_scrolling = self.get_string_value(key_path, "UsePreciseScrolling").await?;
+        let capture_displays_for_fullscreen = self
+            .get_string_value(key_path, "CaptureDisplaysForFullscreen")
+            .await?;
+        let use_precise_scrolling = self
+            .get_string_value(key_path, "UsePreciseScrolling")
+            .await?;
         let retina_mode = self.get_string_value(key_path, "RetinaMode").await?;
-        let windows_float_when_inactive = self.get_string_value(key_path, "WindowsFloatWhenInactive").await?;
+        let windows_float_when_inactive = self
+            .get_string_value(key_path, "WindowsFloatWhenInactive")
+            .await?;
         let left_option_is_alt = self.get_string_value(key_path, "LeftOptionIsAlt").await?;
         let right_option_is_alt = self.get_string_value(key_path, "RightOptionIsAlt").await?;
         let left_command_is_ctrl = self.get_string_value(key_path, "LeftCommandIsCtrl").await?;
-        let right_command_is_ctrl = self.get_string_value(key_path, "RightCommandIsCtrl").await?;
-        if allow_vertical_sync.is_none() && capture_displays_for_fullscreen.is_none()
-            && use_precise_scrolling.is_none() && retina_mode.is_none() && windows_float_when_inactive.is_none()
-            && left_option_is_alt.is_none() && right_option_is_alt.is_none()
-            && left_command_is_ctrl.is_none() && right_command_is_ctrl.is_none() {
+        let right_command_is_ctrl = self
+            .get_string_value(key_path, "RightCommandIsCtrl")
+            .await?;
+        if allow_vertical_sync.is_none()
+            && capture_displays_for_fullscreen.is_none()
+            && use_precise_scrolling.is_none()
+            && retina_mode.is_none()
+            && windows_float_when_inactive.is_none()
+            && left_option_is_alt.is_none()
+            && right_option_is_alt.is_none()
+            && left_command_is_ctrl.is_none()
+            && right_command_is_ctrl.is_none()
+        {
             return Ok(None);
         }
         let mut settings = MacDriverSettings::new();
-        if let Some(v) = allow_vertical_sync { settings.allow_vertical_sync = Some(is_mac_option_true(&v)); }
-        if let Some(v) = capture_displays_for_fullscreen { settings.capture_displays_for_fullscreen = Some(is_mac_option_true(&v)); }
-        if let Some(v) = use_precise_scrolling { settings.use_precise_scrolling = Some(is_mac_option_true(&v)); }
-        if let Some(v) = retina_mode { settings.retina_mode = Some(is_mac_option_true(&v)); }
-        if let Some(v) = left_option_is_alt { settings.left_option_is_alt = Some(is_mac_option_true(&v)); }
-        if let Some(v) = right_option_is_alt { settings.right_option_is_alt = Some(is_mac_option_true(&v)); }
-        if let Some(v) = left_command_is_ctrl { settings.left_command_is_ctrl = Some(is_mac_option_true(&v)); }
-        if let Some(v) = right_command_is_ctrl { settings.right_command_is_ctrl = Some(is_mac_option_true(&v)); }
+        if let Some(v) = allow_vertical_sync {
+            settings.allow_vertical_sync = Some(is_mac_option_true(&v));
+        }
+        if let Some(v) = capture_displays_for_fullscreen {
+            settings.capture_displays_for_fullscreen = Some(is_mac_option_true(&v));
+        }
+        if let Some(v) = use_precise_scrolling {
+            settings.use_precise_scrolling = Some(is_mac_option_true(&v));
+        }
+        if let Some(v) = retina_mode {
+            settings.retina_mode = Some(is_mac_option_true(&v));
+        }
+        if let Some(v) = left_option_is_alt {
+            settings.left_option_is_alt = Some(is_mac_option_true(&v));
+        }
+        if let Some(v) = right_option_is_alt {
+            settings.right_option_is_alt = Some(is_mac_option_true(&v));
+        }
+        if let Some(v) = left_command_is_ctrl {
+            settings.left_command_is_ctrl = Some(is_mac_option_true(&v));
+        }
+        if let Some(v) = right_command_is_ctrl {
+            settings.right_command_is_ctrl = Some(is_mac_option_true(&v));
+        }
         if let Some(float_str) = windows_float_when_inactive {
             if let Some(float_mode) = WindowsFloatWhenInactive::from_string(&float_str) {
                 settings.windows_float_when_inactive = Some(float_mode);
@@ -603,15 +816,55 @@ impl RegEditor for RegistryEditor {
     async fn set_mac_driver_settings(&mut self, settings: &MacDriverSettings) -> Result<()> {
         let key_path = "Software\\Wine\\Mac Driver";
         Self::validate_key_path(key_path)?;
-        if let Some(v) = settings.allow_vertical_sync { Self::validate_value_name("AllowVerticalSync")?; self.set_string_value(key_path, "AllowVerticalSync", if v { "Y" } else { "N" }).await?; }
-        if let Some(v) = settings.capture_displays_for_fullscreen { Self::validate_value_name("CaptureDisplaysForFullscreen")?; self.set_string_value(key_path, "CaptureDisplaysForFullscreen", if v { "Y" } else { "N" }).await?; }
-        if let Some(v) = settings.use_precise_scrolling { Self::validate_value_name("UsePreciseScrolling")?; self.set_string_value(key_path, "UsePreciseScrolling", if v { "Y" } else { "N" }).await?; }
-        if let Some(v) = settings.retina_mode { Self::validate_value_name("RetinaMode")?; self.set_string_value(key_path, "RetinaMode", if v { "Y" } else { "N" }).await?; }
-        if let Some(float_mode) = &settings.windows_float_when_inactive { Self::validate_value_name("WindowsFloatWhenInactive")?; self.set_string_value(key_path, "WindowsFloatWhenInactive", float_mode.to_string()).await?; }
-        if let Some(v) = settings.left_option_is_alt { Self::validate_value_name("LeftOptionIsAlt")?; self.set_string_value(key_path, "LeftOptionIsAlt", if v { "Y" } else { "N" }).await?; }
-        if let Some(v) = settings.right_option_is_alt { Self::validate_value_name("RightOptionIsAlt")?; self.set_string_value(key_path, "RightOptionIsAlt", if v { "Y" } else { "N" }).await?; }
-        if let Some(v) = settings.left_command_is_ctrl { Self::validate_value_name("LeftCommandIsCtrl")?; self.set_string_value(key_path, "LeftCommandIsCtrl", if v { "Y" } else { "N" }).await?; }
-        if let Some(v) = settings.right_command_is_ctrl { Self::validate_value_name("RightCommandIsCtrl")?; self.set_string_value(key_path, "RightCommandIsCtrl", if v { "Y" } else { "N" }).await?; }
+        if let Some(v) = settings.allow_vertical_sync {
+            Self::validate_value_name("AllowVerticalSync")?;
+            self.set_string_value(key_path, "AllowVerticalSync", if v { "Y" } else { "N" })
+                .await?;
+        }
+        if let Some(v) = settings.capture_displays_for_fullscreen {
+            Self::validate_value_name("CaptureDisplaysForFullscreen")?;
+            self.set_string_value(
+                key_path,
+                "CaptureDisplaysForFullscreen",
+                if v { "Y" } else { "N" },
+            )
+            .await?;
+        }
+        if let Some(v) = settings.use_precise_scrolling {
+            Self::validate_value_name("UsePreciseScrolling")?;
+            self.set_string_value(key_path, "UsePreciseScrolling", if v { "Y" } else { "N" })
+                .await?;
+        }
+        if let Some(v) = settings.retina_mode {
+            Self::validate_value_name("RetinaMode")?;
+            self.set_string_value(key_path, "RetinaMode", if v { "Y" } else { "N" })
+                .await?;
+        }
+        if let Some(float_mode) = &settings.windows_float_when_inactive {
+            Self::validate_value_name("WindowsFloatWhenInactive")?;
+            self.set_string_value(key_path, "WindowsFloatWhenInactive", float_mode.to_string())
+                .await?;
+        }
+        if let Some(v) = settings.left_option_is_alt {
+            Self::validate_value_name("LeftOptionIsAlt")?;
+            self.set_string_value(key_path, "LeftOptionIsAlt", if v { "Y" } else { "N" })
+                .await?;
+        }
+        if let Some(v) = settings.right_option_is_alt {
+            Self::validate_value_name("RightOptionIsAlt")?;
+            self.set_string_value(key_path, "RightOptionIsAlt", if v { "Y" } else { "N" })
+                .await?;
+        }
+        if let Some(v) = settings.left_command_is_ctrl {
+            Self::validate_value_name("LeftCommandIsCtrl")?;
+            self.set_string_value(key_path, "LeftCommandIsCtrl", if v { "Y" } else { "N" })
+                .await?;
+        }
+        if let Some(v) = settings.right_command_is_ctrl {
+            Self::validate_value_name("RightCommandIsCtrl")?;
+            self.set_string_value(key_path, "RightCommandIsCtrl", if v { "Y" } else { "N" })
+                .await?;
+        }
         Ok(())
     }
 
@@ -626,7 +879,11 @@ impl RegEditor for RegistryEditor {
             if let Ok(values) = self.registry.get_key_values(&key_path).await {
                 for (value_name, _) in &values {
                     if let Err(e) = Self::validate_value_name(value_name) {
-                        errors.push(ValidationError::new(key_path.clone(), Some(value_name.clone()), e.to_string()));
+                        errors.push(ValidationError::new(
+                            key_path.clone(),
+                            Some(value_name.clone()),
+                            e.to_string(),
+                        ));
                     }
                 }
             }

@@ -1,8 +1,15 @@
 use base::config::PrefixConfig;
-use base::error::{Result, PrefixError};
+use base::error::{PrefixError, Result};
 use base::traits::WinePrefix;
-use std::path::PathBuf;
+use base::{GraphicsBackend, GraphicsConfig};
+use log::{error, info, warn};
+use registry::keys::DllOverrideSetting;
+use registry::{InMemoryRegistryCache, RegEditor, RegistryEditor};
+use runtime::graphics;
 use std::fs;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 
 use crate::Manager;
 
@@ -16,14 +23,20 @@ impl Manager {
             let path = entry.path();
             if path.is_dir() && self.is_valid_wine_prefix(&path) {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if let Ok(mut config) = self.load_or_create_config(&path, name, &system_wine_version) {
+                    if let Ok(mut config) =
+                        self.load_or_create_config(&path, name, &system_wine_version)
+                    {
                         if let Some(ref ver) = system_wine_version {
                             if config.wine_version.as_ref() != Some(ver) {
                                 config.wine_version = Some(ver.clone());
                                 let _ = config.save_to_file(&path);
                             }
                         }
-                        prefixes.push(WinePrefix { name: name.to_string(), path: path.clone(), config });
+                        prefixes.push(WinePrefix {
+                            name: name.to_string(),
+                            path: path.clone(),
+                            config,
+                        });
                     }
                 }
             }
@@ -33,10 +46,17 @@ impl Manager {
     }
 
     fn is_valid_wine_prefix(&self, path: &PathBuf) -> bool {
-        path.join("drive_c").exists() && path.join("system.reg").exists() && path.join("user.reg").exists()
+        path.join("drive_c").exists()
+            && path.join("system.reg").exists()
+            && path.join("user.reg").exists()
     }
 
-    pub(crate) fn load_or_create_config(&self, prefix_path: &PathBuf, name: &str, system_wine_version: &Option<String>) -> Result<PrefixConfig> {
+    pub fn load_or_create_config(
+        &self,
+        prefix_path: &PathBuf,
+        name: &str,
+        system_wine_version: &Option<String>,
+    ) -> Result<PrefixConfig> {
         let mut config = if let Some(config) = PrefixConfig::load_from_file(prefix_path)? {
             config
         } else {
@@ -70,21 +90,38 @@ impl Manager {
         self.create_prefix_with_runtime(name, architecture, &runtime_id)
     }
 
-    pub fn create_prefix_with_runtime(&self, name: &str, architecture: &str, runtime_id: &str) -> Result<PathBuf> {
+    pub fn create_prefix_with_runtime(
+        &self,
+        name: &str,
+        architecture: &str,
+        runtime_id: &str,
+    ) -> Result<PathBuf> {
         let prefix_path = self.wine_dir.join(name);
         if prefix_path.exists() {
-            return Err(PrefixError::AlreadyExists(format!("Prefix '{}' already exists", name)));
+            return Err(PrefixError::AlreadyExists(format!(
+                "Prefix '{}' already exists",
+                name
+            )));
         }
         fs::create_dir_all(&prefix_path)?;
         let mut config = PrefixConfig::new(name.to_string(), architecture.to_string());
         config.wine_version = Some(runtime_id.to_string());
         config.save_to_file(&prefix_path)?;
-        let wine_arch = if architecture == "win32" { "win32" } else { "win64" };
-        let mut cmd = self.build_wine_command_with_args(&["cmd", "/c", "echo hello, world"], &config, &prefix_path);
+        let wine_arch = if architecture == "win32" {
+            "win32"
+        } else {
+            "win64"
+        };
+        let mut cmd = self.build_wine_command_with_args(
+            &["cmd", "/c", "echo hello, world"],
+            &config,
+            &prefix_path,
+        );
         cmd.env("WINEARCH", wine_arch);
         cmd.env("DISPLAY", "");
         cmd.env("WINEDEBUG", "-all");
-        let output = cmd.output()
+        let output = cmd
+            .output()
             .map_err(|e| PrefixError::Process(format!("Failed to run wine: {}", e)))?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         if !stdout.contains("hello, world") {
@@ -102,9 +139,135 @@ impl Manager {
             return Err(PrefixError::NotFound("Prefix does not exist".to_string()));
         }
         if !self.is_valid_wine_prefix(prefix_path) {
-            return Err(PrefixError::Validation("Not a valid Wine prefix".to_string()));
+            return Err(PrefixError::Validation(
+                "Not a valid Wine prefix".to_string(),
+            ));
         }
         fs::remove_dir_all(prefix_path)?;
+        Ok(())
+    }
+
+    /// Activate a graphics backend for a prefix.
+    ///
+    /// 1. Symlink backend `.dll` files into prefix's `system32/` (and `syswow64/`)
+    /// 2. Write DLL override entries to `user.reg`
+    /// 3. Save `graphics` field to `tequila-config.json`
+    pub async fn activate_graphics_backend(
+        &self,
+        backend: &GraphicsBackend,
+        prefix_path: &PathBuf,
+    ) -> Result<GraphicsConfig> {
+        let name = prefix_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let config = self.load_or_create_config(prefix_path, name, &None)?;
+
+        info!(
+            "[prefix] Activating {} for prefix '{}' (arch: {})",
+            backend.display_name(),
+            name,
+            config.architecture
+        );
+
+        if !backend.supports_arch(&config.architecture) {
+            warn!(
+                "[prefix] {} requires 64-bit prefix, but '{}' is {}",
+                backend.display_name(),
+                name,
+                config.architecture
+            );
+            return Err(PrefixError::Validation(format!(
+                "{} requires a 64-bit prefix (current: {})",
+                backend.display_name(),
+                config.architecture
+            )));
+        }
+
+        // 1. Symlink backend DLLs into prefix
+        let gfx_config = graphics::activate_for_prefix(backend, prefix_path)?;
+        info!(
+            "[prefix] Symlinked DLLs for {} into prefix '{}'\n",
+            backend.display_name(),
+            name
+        );
+
+        // 2. Write DLL overrides to registry
+        let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
+        let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+        let entries: Vec<&str> = backend
+            .override_entries()
+            .iter()
+            .map(|(dll, _)| *dll)
+            .collect();
+        info!(
+            "[prefix] Writing DLL overrides to registry: {}=native,builtin",
+            entries.join(",")
+        );
+        for (dll, setting_str) in backend.override_entries() {
+            let setting = DllOverrideSetting::from_string(setting_str).ok_or_else(|| {
+                PrefixError::Validation(format!("Invalid override setting: {}", setting_str))
+            })?;
+            editor.add_dll_override(dll, setting).await?;
+        }
+        editor.save_registry(prefix_path).await?;
+
+        // 3. Save to tequila-config.json
+        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
+        config.graphics = Some(gfx_config.clone());
+        config.update_last_modified();
+        config.save_to_file(prefix_path)?;
+
+        info!(
+            "[prefix] Successfully activated {} for prefix '{}'",
+            backend.display_name(),
+            name
+        );
+        Ok(gfx_config)
+    }
+
+    /// Deactivate the current graphics backend for a prefix.
+    ///
+    /// 1. Remove DLL symlinks from prefix
+    /// 2. Remove DLL override entries from `user.reg`
+    /// 3. Clear `graphics` field from `tequila-config.json`
+    pub async fn deactivate_graphics_backend(&self, prefix_path: &PathBuf) -> Result<()> {
+        let name = prefix_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
+
+        if let Some(gfx_config) = config.graphics.take() {
+            info!(
+                "[prefix] Deactivating {} for prefix '{}'",
+                gfx_config.display_name(),
+                name
+            );
+
+            // 1. Remove DLL symlinks
+            graphics::deactivate_for_prefix(&gfx_config, prefix_path)?;
+            info!("[prefix] Removed DLL symlinks for prefix '{}'", name);
+
+            // 2. Remove registry overrides
+            let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
+            let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+            let dlls: Vec<&str> = gfx_config.override_dlls();
+            info!(
+                "[prefix] Removing DLL overrides from registry: {}",
+                dlls.join(",")
+            );
+            for dll in gfx_config.override_dlls() {
+                editor.remove_dll_override(dll).await?;
+            }
+            editor.save_registry(prefix_path).await?;
+
+            // 3. Clear config
+            config.graphics = None;
+            config.update_last_modified();
+            config.save_to_file(prefix_path)?;
+        }
+
         Ok(())
     }
 }

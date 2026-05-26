@@ -1,7 +1,7 @@
 use crate::config::{PrefixConfig, RegisteredExecutable};
 use crate::error::Result;
-use std::path::PathBuf;
 use chrono::{DateTime, Utc};
+use std::path::PathBuf;
 
 pub trait ConfigOperations {
     fn save_to_file(&self, prefix_path: &PathBuf) -> Result<()>;
@@ -23,9 +23,17 @@ pub trait PrefixManager {
     fn delete_prefix(&self, prefix_path: &PathBuf) -> Result<()>;
     fn scan_for_applications(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>>;
     fn update_config(&self, prefix_path: &PathBuf, config: &PrefixConfig) -> Result<()>;
-    fn add_executable_to_prefix(&self, prefix_path: &PathBuf, executable: RegisteredExecutable) -> Result<()>;
+    fn add_executable_to_prefix(
+        &self,
+        prefix_path: &PathBuf,
+        executable: RegisteredExecutable,
+    ) -> Result<()>;
     fn remove_executable_from_prefix(&self, prefix_path: &PathBuf, index: usize) -> Result<()>;
-    fn launch_executable(&self, prefix_path: &PathBuf, executable: &RegisteredExecutable) -> Result<()>;
+    fn launch_executable(
+        &self,
+        prefix_path: &PathBuf,
+        executable: &RegisteredExecutable,
+    ) -> Result<()>;
     fn run_winecfg(&self, prefix_path: &PathBuf) -> Result<()>;
     fn get_prefix_info(&self, prefix_path: &PathBuf) -> Result<PrefixInfo>;
 }

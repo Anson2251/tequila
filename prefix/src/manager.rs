@@ -1,12 +1,22 @@
+use runtime::RuntimeManager;
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use runtime::RuntimeManager;
 
 #[derive(Clone)]
 pub struct Manager {
     pub(crate) wine_dir: PathBuf,
     pub(crate) scanner: scan::ApplicationScanner,
     pub(crate) runtime_manager: RuntimeManager,
+}
+
+impl fmt::Debug for Manager {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Manager")
+            .field("wine_dir", &self.wine_dir)
+            .field("runtime_manager", &self.runtime_manager)
+            .finish_non_exhaustive()
+    }
 }
 
 impl PartialEq for Manager {
@@ -32,8 +42,16 @@ impl Manager {
         }
     }
 
-    pub fn wine_dir(&self) -> &PathBuf { &self.wine_dir }
-    pub fn scanner(&self) -> &scan::ApplicationScanner { &self.scanner }
-    pub fn runtime_manager(&self) -> &RuntimeManager { &self.runtime_manager }
-    pub fn runtime_manager_mut(&mut self) -> &mut RuntimeManager { &mut self.runtime_manager }
+    pub fn wine_dir(&self) -> &PathBuf {
+        &self.wine_dir
+    }
+    pub fn scanner(&self) -> &scan::ApplicationScanner {
+        &self.scanner
+    }
+    pub fn runtime_manager(&self) -> &RuntimeManager {
+        &self.runtime_manager
+    }
+    pub fn runtime_manager_mut(&mut self) -> &mut RuntimeManager {
+        &mut self.runtime_manager
+    }
 }

@@ -2,23 +2,27 @@ pub mod menu;
 pub mod resources;
 pub use resources::initialize_custom_resources;
 
+use gtk::glib;
 use gtk::prelude::*;
 use gtk4::gio;
-use gtk::glib;
-use relm4::{ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent, Component, gtk, adw, component::AsyncComponentController};
-use relm4::prelude::{AsyncController, AsyncComponent};
+use log::{error, info};
+use relm4::prelude::{AsyncComponent, AsyncController};
+use relm4::{
+    Component, ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent,
+    adw, component::AsyncComponentController, gtk,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracker;
 
-use prefix::{Manager as PrefixManager, ProcessTracker, WinePrefix};
-use prefix::runtime::RuntimeManager;
-use crate::prefix::list::PrefixListModel;
-use crate::prefix::config::PrefixConfigModel;
 use crate::apps::AppManagerModel;
+use crate::prefix::config::PrefixConfigModel;
+use crate::prefix::list::PrefixListModel;
 use crate::settings::SettingsWindow;
-use menu::setup_menu_bar;
 use gtk::gdk;
+use menu::setup_menu_bar;
+use prefix::runtime::RuntimeManager;
+use prefix::{Manager as PrefixManager, ProcessTracker, WinePrefix};
 
 #[tracker::track]
 pub struct AppModel {
@@ -54,7 +58,8 @@ pub struct AppModel {
     #[tracker::do_not_track]
     settings: relm4::prelude::AsyncController<SettingsWindow>,
     #[tracker::do_not_track]
-    create_prefix_dialog: Option<relm4::Controller<crate::prefix::create_dialog::CreatePrefixDialog>>,
+    create_prefix_dialog:
+        Option<relm4::Controller<crate::prefix::create_dialog::CreatePrefixDialog>>,
 }
 
 #[derive(Debug)]
@@ -129,7 +134,9 @@ impl SimpleComponent for AppModel {
             .tooltip_text("Show Sidebar")
             .build();
         let sb_sender = sender.clone();
-        sidebar_btn.connect_clicked(move |_| { sb_sender.input(AppMsg::ToggleSidebar); });
+        sidebar_btn.connect_clicked(move |_| {
+            sb_sender.input(AppMsg::ToggleSidebar);
+        });
         header_bar.pack_start(&sidebar_btn);
 
         let back_btn = gtk::Button::builder()
@@ -144,7 +151,9 @@ impl SimpleComponent for AppModel {
             .tooltip_text("New Prefix")
             .build();
         let np_sender = sender.clone();
-        new_prefix_btn.connect_clicked(move |_| { np_sender.input(AppMsg::CreatePrefix); });
+        new_prefix_btn.connect_clicked(move |_| {
+            np_sender.input(AppMsg::CreatePrefix);
+        });
         header_bar.pack_end(&new_prefix_btn);
 
         let settings_btn = gtk::Button::builder()
@@ -152,7 +161,9 @@ impl SimpleComponent for AppModel {
             .tooltip_text("Settings")
             .build();
         let st_sender = sender.clone();
-        settings_btn.connect_clicked(move |_| { st_sender.input(AppMsg::ShowSettings); });
+        settings_btn.connect_clicked(move |_| {
+            st_sender.input(AppMsg::ShowSettings);
+        });
         header_bar.pack_end(&settings_btn);
 
         let switcher = adw::ViewSwitcher::builder()
@@ -172,38 +183,48 @@ impl SimpleComponent for AppModel {
                 dirs::cache_dir()
                     .unwrap_or_else(|| PathBuf::from("/tmp"))
                     .join("tequila/icons"),
-            ).expect("Failed to open icon cache"),
+            )
+            .expect("Failed to open icon cache"),
         );
 
         // Persistent state store
         let state_path = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("/tmp"))
             .join("tequila/state.db");
-        let prefix_store = Arc::new(
-            prefix::PrefixStore::open(&state_path)
-                .expect("Failed to open state store"),
-        );
+        let prefix_store =
+            Arc::new(prefix::PrefixStore::open(&state_path).expect("Failed to open state store"));
 
         let prefix_manager = PrefixManager::new(wine_dir.clone(), Arc::clone(&icon_cache));
 
         // Load prefixes from filesystem + JSON config files (fast, user-editable)
         let prefixes = AppModel::scan_wine_prefixes(&prefix_manager);
         // Trigger background scan if no cached scan results exist yet
-        let needs_sync = !prefixes.is_empty() && prefixes.iter().all(|p| {
-            !prefix_store.has_scanned_prefix(&p.path.to_string_lossy())
-        });
+        let needs_sync = !prefixes.is_empty()
+            && prefixes
+                .iter()
+                .all(|p| !prefix_store.has_scanned_prefix(&p.path.to_string_lossy()));
         println!("Loaded {} prefixes", prefixes.len());
 
         let prefix_list = PrefixListModel::builder()
             .launch((prefixes.clone(), None))
             .forward(sender.input_sender(), |msg| match msg {
-                crate::prefix::list::PrefixListOutput::SelectPrefix(index) => AppMsg::SelectPrefix(index),
+                crate::prefix::list::PrefixListOutput::SelectPrefix(index) => {
+                    AppMsg::SelectPrefix(index)
+                }
                 crate::prefix::list::PrefixListOutput::DeselectPrefix => AppMsg::HideDetails,
-                crate::prefix::list::PrefixListOutput::DeletePrefix(index) => AppMsg::DeletePrefix(index),
+                crate::prefix::list::PrefixListOutput::DeletePrefix(index) => {
+                    AppMsg::DeletePrefix(index)
+                }
             });
 
         let config_tab = PrefixConfigModel::builder()
-            .launch((PathBuf::new(), prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()), Arc::clone(&prefix_store), Arc::clone(&process_tracker), back_btn))
+            .launch((
+                PathBuf::new(),
+                prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()),
+                Arc::clone(&prefix_store),
+                Arc::clone(&process_tracker),
+                back_btn,
+            ))
             .forward(sender.input_sender(), |msg| match msg {
                 crate::prefix::config::PrefixConfigOutput::ConfigUpdated(config) => {
                     AppMsg::ConfigUpdated(0, config)
@@ -211,20 +232,25 @@ impl SimpleComponent for AppModel {
             });
 
         let app_manager = AppManagerModel::builder()
-            .launch((PathBuf::new(), prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()), Arc::clone(&icon_cache), Arc::clone(&prefix_store), Arc::clone(&process_tracker)))
+            .launch((
+                PathBuf::new(),
+                prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()),
+                prefix_manager.clone(),
+                Arc::clone(&icon_cache),
+                Arc::clone(&prefix_store),
+                Arc::clone(&process_tracker),
+            ))
             .forward(sender.input_sender(), |msg| match msg {
                 crate::apps::AppManagerMsg::ConfigUpdated(config) => {
                     AppMsg::ConfigUpdated(0, config)
                 }
-                _ => AppMsg::RefreshPrefixes
+                _ => AppMsg::RefreshPrefixes,
             });
 
         let settings = SettingsWindow::builder()
             .launch(prefix_manager.clone())
             .forward(sender.input_sender(), |msg| match msg {
-                crate::settings::SettingsOutput::RuntimesUpdated(rm) => {
-                    AppMsg::RuntimesUpdated(rm)
-                }
+                crate::settings::SettingsOutput::RuntimesUpdated(rm) => AppMsg::RuntimesUpdated(rm),
             });
 
         let prefix_list_widget = prefix_list.widget().clone().upcast::<gtk::Widget>();
@@ -232,23 +258,39 @@ impl SimpleComponent for AppModel {
         // Empty state page
         let empty_page = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
-            .halign(gtk::Align::Center).valign(gtk::Align::Center).vexpand(true).build();
-        empty_page.append(&gtk::Image::builder().pixel_size(72)
-            .icon_name("brand-winehq-symbolic").css_classes(["dim-label"]).build());
-        empty_page.append(&gtk::Label::builder().label("No prefix selected")
-            .css_classes(["title-4", "dim-label"]).margin_top(10).build());
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .vexpand(true)
+            .build();
+        empty_page.append(
+            &gtk::Image::builder()
+                .pixel_size(72)
+                .icon_name("brand-winehq-symbolic")
+                .css_classes(["dim-label"])
+                .build(),
+        );
+        empty_page.append(
+            &gtk::Label::builder()
+                .label("No prefix selected")
+                .css_classes(["title-4", "dim-label"])
+                .margin_top(10)
+                .build(),
+        );
 
         // Tabbed content Stack
         let content_stack = adw::ViewStack::new();
-        content_stack.add_titled(app_manager.widget(), Some("apps"), "Apps")
+        content_stack
+            .add_titled(app_manager.widget(), Some("apps"), "Apps")
             .set_icon_name(Some("application-x-executable-symbolic"));
-        content_stack.add_titled(config_tab.widget(), Some("config"), "Config")
+        content_stack
+            .add_titled(config_tab.widget(), Some("config"), "Config")
             .set_icon_name(Some("document-properties-symbolic"));
         switcher.set_stack(Some(&content_stack));
 
         // Wrapper Stack: show either empty page or tabbed content
         let content_box = gtk::Stack::builder()
-            .hexpand(true).vexpand(true)
+            .hexpand(true)
+            .vexpand(true)
             .transition_type(gtk::StackTransitionType::Crossfade)
             .build();
         content_box.add_named(&empty_page, Some("empty"));
@@ -279,9 +321,7 @@ impl SimpleComponent for AppModel {
             .height_request(36)
             .build();
         sync_progress_box.append(&sync_spinner);
-        let sync_progress_bar = gtk::ProgressBar::builder()
-            .width_request(260)
-            .build();
+        let sync_progress_bar = gtk::ProgressBar::builder().width_request(260).build();
         sync_progress_box.append(&sync_progress_bar);
         let sync_progress_label = gtk::Label::builder()
             .css_classes(["caption", "dim-label"])
@@ -426,7 +466,11 @@ impl SimpleComponent for AppModel {
                     let prefix_name = self.prefixes[index].name.clone();
                     let prefix_path = self.prefixes[index].path.clone();
 
-                    println!("Launching prefix: {} at {}", prefix_name, prefix_path.display());
+                    println!(
+                        "Launching prefix: {} at {}",
+                        prefix_name,
+                        prefix_path.display()
+                    );
 
                     // Launch winecfg for the prefix
                     match self.prefix_manager.run_winecfg(&prefix_path) {
@@ -447,7 +491,10 @@ impl SimpleComponent for AppModel {
 
                     if executable_index < config.registered_executables.len() {
                         let executable = &config.registered_executables[executable_index];
-                        if let Err(e) = self.prefix_manager.launch_executable(prefix_path, executable) {
+                        if let Err(e) = self
+                            .prefix_manager
+                            .launch_executable(prefix_path, executable)
+                        {
                             eprintln!("Failed to launch executable: {}", e);
                         }
                     }
@@ -481,19 +528,42 @@ impl SimpleComponent for AppModel {
                     let prefix_path = self.prefixes[index].path.clone();
 
                     // Emit path first so ConfigUpdated handlers have the correct prefix path
-                    self.prefix_config.emit(crate::prefix::config::PrefixConfigMsg::PrefixPathUpdated(prefix_path.clone()));
-                    self.app_manager.emit(crate::apps::AppManagerMsg::PrefixPathUpdated(prefix_path));
+                    self.prefix_config.emit(
+                        crate::prefix::config::PrefixConfigMsg::PrefixPathUpdated(
+                            prefix_path.clone(),
+                        ),
+                    );
+                    self.app_manager
+                        .emit(crate::apps::AppManagerMsg::PrefixPathUpdated(prefix_path));
 
                     // Resolve runtime display name
-                    let runtime_display = config.wine_version.as_ref()
+                    let runtime_display = config
+                        .wine_version
+                        .as_ref()
                         .and_then(|id| self.prefix_manager.runtime_manager().get(id))
                         .map(|r| format!("{} ({})", r.name, r.wine_version))
-                        .unwrap_or_else(|| config.wine_version.as_deref().unwrap_or("Unknown").to_string());
-                    self.prefix_config.emit(crate::prefix::config::PrefixConfigMsg::SetWineVersionDisplay(runtime_display));
+                        .unwrap_or_else(|| {
+                            config
+                                .wine_version
+                                .as_deref()
+                                .unwrap_or("Unknown")
+                                .to_string()
+                        });
+                    self.prefix_config.emit(
+                        crate::prefix::config::PrefixConfigMsg::SetWineVersionDisplay(
+                            runtime_display,
+                        ),
+                    );
 
-                    self.prefix_config.emit(crate::prefix::config::PrefixConfigMsg::ConfigUpdated(config.clone()));
-                    self.prefix_config.emit(crate::prefix::config::PrefixConfigMsg::SetPrefixIndex(index));
-                    self.app_manager.emit(crate::apps::AppManagerMsg::ConfigUpdated(config.clone()));
+                    self.prefix_config
+                        .emit(crate::prefix::config::PrefixConfigMsg::ConfigUpdated(
+                            config.clone(),
+                        ));
+                    self.prefix_config.emit(
+                        crate::prefix::config::PrefixConfigMsg::SetPrefixIndex(index),
+                    );
+                    self.app_manager
+                        .emit(crate::apps::AppManagerMsg::ConfigUpdated(config.clone()));
                 }
             }
             AppMsg::HideDetails => {
@@ -506,17 +576,81 @@ impl SimpleComponent for AppModel {
                     let actual_index = if index == 0 { selected_index } else { index };
 
                     if actual_index < self.prefixes.len() {
-                        let prefix_path = &self.prefixes[actual_index].path;
+                        let prefix_path = self.prefixes[actual_index].path.clone();
+                        let old_graphics = self.prefixes[actual_index].config.graphics.clone();
+                        let new_graphics = config.graphics.clone();
 
-                        // Save config to file and state store
-                        if let Err(e) = self.prefix_manager.update_config(prefix_path, &config) {
-                            eprintln!("Failed to update config: {}", e);
-                        } else {
+                        // Detect if the graphics backend changed
+                        let graphics_changed = match (&old_graphics, &new_graphics) {
+                            (None, None) => false,
+                            (Some(a), Some(b)) => a.backend != b.backend || a.version != b.version,
+                            _ => true, // None <-> Some
+                        };
+
+                        if graphics_changed {
+                            // Update in-memory state immediately for UI responsiveness
                             self.prefixes[actual_index].config = config.clone();
 
-                            // Update other components with the new config but don't refresh the entire list
-                            self.prefix_config.emit(crate::prefix::config::PrefixConfigMsg::ConfigUpdated(config.clone()));
-                            self.app_manager.emit(crate::apps::AppManagerMsg::ConfigUpdated(config.clone()));
+                            // Notify other components with updated config
+                            self.prefix_config.emit(
+                                crate::prefix::config::PrefixConfigMsg::ConfigUpdated(
+                                    config.clone(),
+                                ),
+                            );
+                            self.app_manager
+                                .emit(crate::apps::AppManagerMsg::ConfigUpdated(config.clone()));
+
+                            // Async: deactivate old backend, then activate new one
+                            // (both handle file saving themselves)
+                            let pm = self.prefix_manager.clone();
+                            let pp = prefix_path.clone();
+                            glib::MainContext::default().spawn_local(async move {
+                                // Deactivate old backend (reads current config from file)
+                                if old_graphics.is_some() {
+                                    info!("[config] Deactivating old graphics backend");
+                                    if let Err(e) = pm.deactivate_graphics_backend(&pp).await {
+                                        error!(
+                                            "Failed to deactivate old graphics backend: {}",
+                                            e
+                                        );
+                                    }
+                                }
+
+                                // Activate new backend (writes config + symlinks + registry)
+                                if let Some(ref gfx) = new_graphics {
+                                    if let Some(backend) = gfx.to_backend() {
+                                        info!("[config] Activating {} graphics backend",
+                                            backend.display_name());
+                                        if let Err(e) = pm
+                                            .activate_graphics_backend(&backend, &pp)
+                                            .await
+                                        {
+                                            error!(
+                                                "Failed to activate graphics backend: {}",
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                            });
+                        } else {
+                            // No backend change — normal config save
+                            if let Err(e) =
+                                self.prefix_manager.update_config(&prefix_path, &config)
+                            {
+                                eprintln!("Failed to update config: {}", e);
+                            } else {
+                                self.prefixes[actual_index].config = config.clone();
+
+                                self.prefix_config.emit(
+                                    crate::prefix::config::PrefixConfigMsg::ConfigUpdated(
+                                        config.clone(),
+                                    ),
+                                );
+                                self.app_manager.emit(
+                                    crate::apps::AppManagerMsg::ConfigUpdated(config.clone()),
+                                );
+                            }
                         }
                     }
                 }
@@ -528,7 +662,11 @@ impl SimpleComponent for AppModel {
 
                     match self.prefix_manager.scan_for_applications(&prefix_path) {
                         Ok(executables) => {
-                            println!("Found {} applications in prefix '{}'", executables.len(), prefix_name);
+                            println!(
+                                "Found {} applications in prefix '{}'",
+                                executables.len(),
+                                prefix_name
+                            );
 
                             // Get the current config and update it
                             let mut config = self.prefixes[index].config.clone();
@@ -542,18 +680,27 @@ impl SimpleComponent for AppModel {
                             let added_count = new_count - initial_count;
 
                             // Save the updated config
-                            if let Err(e) = self.prefix_manager.update_config(&prefix_path, &config) {
-                                eprintln!("Failed to save updated config for prefix '{}': {}", prefix_name, e);
+                            if let Err(e) = self.prefix_manager.update_config(&prefix_path, &config)
+                            {
+                                eprintln!(
+                                    "Failed to save updated config for prefix '{}': {}",
+                                    prefix_name, e
+                                );
                             } else {
-                                println!("Successfully updated prefix '{}' config with {} new executables (total: {})",
-                                    prefix_name, added_count, new_count);
+                                println!(
+                                    "Successfully updated prefix '{}' config with {} new executables (total: {})",
+                                    prefix_name, added_count, new_count
+                                );
 
                                 // Update the local copy
                                 self.prefixes[index].config = config;
                             }
                         }
                         Err(e) => {
-                            eprintln!("Failed to scan for applications in prefix '{}': {}", prefix_name, e);
+                            eprintln!(
+                                "Failed to scan for applications in prefix '{}': {}",
+                                prefix_name, e
+                            );
                             // TODO: Show error dialog to user
                         }
                     }
@@ -563,12 +710,14 @@ impl SimpleComponent for AppModel {
                 self.set_syncing(false);
                 self.sync_overlay.set_visible(false);
                 self.prefixes = fresh.clone();
-                self.prefix_list.emit(crate::prefix::list::PrefixListMsg::SetPrefixes(fresh));
+                self.prefix_list
+                    .emit(crate::prefix::list::PrefixListMsg::SetPrefixes(fresh));
             }
             AppMsg::ReloadPrefixes(fresh) => {
                 // Light reload: update the prefix list without app scanning or auto-select
                 self.prefixes = fresh.clone();
-                self.prefix_list.emit(crate::prefix::list::PrefixListMsg::SetPrefixes(fresh));
+                self.prefix_list
+                    .emit(crate::prefix::list::PrefixListMsg::SetPrefixes(fresh));
             }
             AppMsg::SyncPrefixes => {
                 if !self.syncing {
@@ -585,7 +734,8 @@ impl SimpleComponent for AppModel {
                         let total = fresh.len();
                         for (i, p) in fresh.iter_mut().enumerate() {
                             if let Ok(exes) = sm.scan_for_applications(&p.path) {
-                                let _ = st.save_scanned_executables(&p.path.to_string_lossy(), &exes);
+                                let _ =
+                                    st.save_scanned_executables(&p.path.to_string_lossy(), &exes);
                             }
                             let changed = sm.enrich_executables(&mut p.config);
                             if changed {
@@ -598,8 +748,13 @@ impl SimpleComponent for AppModel {
                 }
             }
             AppMsg::SyncProgress(completed, total) => {
-                self.sync_progress_bar.set_fraction(if total > 0 { completed as f64 / total as f64 } else { 0.0 });
-                self.sync_progress_label.set_label(&format!("{} / {} prefixes", completed, total));
+                self.sync_progress_bar.set_fraction(if total > 0 {
+                    completed as f64 / total as f64
+                } else {
+                    0.0
+                });
+                self.sync_progress_label
+                    .set_label(&format!("{} / {} prefixes", completed, total));
             }
             AppMsg::ToggleSidebar => {
                 let visible = !self.sidebar_visible;

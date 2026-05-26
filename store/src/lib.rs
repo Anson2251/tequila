@@ -1,5 +1,5 @@
-mod state;
 mod settings;
+mod state;
 
-pub use state::PrefixStore;
 pub use settings::Settings;
+pub use state::PrefixStore;

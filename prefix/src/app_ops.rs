@@ -1,11 +1,14 @@
+use crate::Manager;
 use base::config::{PrefixConfig, RegisteredExecutable};
 use base::error::Result;
 use base::traits::PrefixInfo;
 use std::path::PathBuf;
-use crate::Manager;
 
 impl Manager {
-    pub fn scan_for_applications(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>> {
+    pub fn scan_for_applications(
+        &self,
+        prefix_path: &PathBuf,
+    ) -> Result<Vec<RegisteredExecutable>> {
         let mut executables = Vec::new();
         executables.extend(self.scanner.scan_prefix(prefix_path)?);
         executables.extend(self.scanner.scan_for_desktop_files(prefix_path)?);
@@ -14,10 +17,17 @@ impl Manager {
         Ok(executables)
     }
 
-    pub async fn scan_for_applications_async(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>> {
+    pub async fn scan_for_applications_async(
+        &self,
+        prefix_path: &PathBuf,
+    ) -> Result<Vec<RegisteredExecutable>> {
         let mut executables = Vec::new();
         executables.extend(self.scanner.scan_prefix_async(prefix_path).await?);
-        executables.extend(self.scanner.scan_for_desktop_files_async(prefix_path).await?);
+        executables.extend(
+            self.scanner
+                .scan_for_desktop_files_async(prefix_path)
+                .await?,
+        );
         executables.sort_by(|a, b| a.name.cmp(&b.name));
         executables.dedup_by(|a, b| a.name == b.name && a.executable_path == b.executable_path);
         Ok(executables)
@@ -31,8 +41,15 @@ impl Manager {
         Ok(())
     }
 
-    pub fn add_executable_to_prefix(&self, prefix_path: &PathBuf, executable: RegisteredExecutable) -> Result<()> {
-        let name = prefix_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+    pub fn add_executable_to_prefix(
+        &self,
+        prefix_path: &PathBuf,
+        executable: RegisteredExecutable,
+    ) -> Result<()> {
+        let name = prefix_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
         let mut config = self.load_or_create_config(prefix_path, name, &None)?;
         config.add_executable(executable);
         self.update_config(prefix_path, &config)?;
@@ -40,7 +57,10 @@ impl Manager {
     }
 
     pub fn remove_executable_from_prefix(&self, prefix_path: &PathBuf, index: usize) -> Result<()> {
-        let name = prefix_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+        let name = prefix_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
         let mut config = self.load_or_create_config(prefix_path, name, &None)?;
         config.remove_executable(index);
         self.update_config(prefix_path, &config)?;
@@ -74,7 +94,10 @@ impl Manager {
     }
 
     pub fn get_prefix_info(&self, prefix_path: &PathBuf) -> Result<PrefixInfo> {
-        let name = prefix_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+        let name = prefix_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
         let config = self.load_or_create_config(prefix_path, name, &None)?;
         let size = self.calculate_prefix_size(prefix_path)?;
         Ok(PrefixInfo {
@@ -91,7 +114,8 @@ impl Manager {
 
     fn calculate_prefix_size(&self, prefix_path: &PathBuf) -> Result<u64> {
         let total_size = walkdir::WalkDir::new(prefix_path)
-            .into_iter().flatten()
+            .into_iter()
+            .flatten()
             .filter(|entry| entry.file_type().is_file())
             .filter_map(|entry| entry.metadata().ok())
             .map(|metadata| metadata.len())

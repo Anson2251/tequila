@@ -1,15 +1,19 @@
-use gtk::prelude::*;
-use adw::prelude::*;
-use relm4::{ComponentParts, ComponentSender, SimpleComponent, gtk, adw};
-use gtk::glib;
-use prefix::Manager as PrefixManager;
 use crate::AppMsg;
+use adw::prelude::*;
+use gtk::glib;
+use gtk::prelude::*;
+use prefix::Manager as PrefixManager;
+use prefix::base::GraphicsBackend;
+use prefix::runtime;
+use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 
 pub struct CreatePrefixDialog {
     prefix_manager: PrefixManager,
     name_entry: gtk::Entry,
     arch_combo: gtk::DropDown,
     runtime_combo: gtk::DropDown,
+    graphics_combo: gtk::DropDown,
+    graphics_backends: Vec<Option<GraphicsBackend>>, // None = no backend
     create_btn: gtk::Button,
     progress_bar: gtk::ProgressBar,
     progress_label: gtk::Label,
@@ -26,7 +30,9 @@ impl CreatePrefixDialog {
     fn build_runtime_combo(prefix_manager: &PrefixManager) -> gtk::DropDown {
         let rm = prefix_manager.runtime_manager();
         let default_id = &rm.default_id;
-        let items: Vec<String> = rm.runtimes.iter()
+        let items: Vec<String> = rm
+            .runtimes
+            .iter()
             .map(|rt| format!("{} ({})", rt.name, rt.wine_version))
             .collect();
         let str_refs: Vec<&str> = items.iter().map(|s| s.as_str()).collect();
@@ -36,6 +42,24 @@ impl CreatePrefixDialog {
             combo.set_selected(idx as u32);
         }
         combo
+    }
+
+    fn build_graphics_combo() -> (gtk::DropDown, Vec<Option<GraphicsBackend>>) {
+        let backends = runtime::graphics::installed_backends();
+        let mut items = vec!["None (no graphics override)".to_string()];
+        let mut mapping: Vec<Option<GraphicsBackend>> = vec![None];
+
+        for b in backends {
+            items.push(format!("{} ({})", b.display_name(), b.version_string()));
+            mapping.push(Some(b));
+        }
+
+        let str_refs: Vec<&str> = items.iter().map(|s| s.as_str()).collect();
+        let combo = gtk::DropDown::from_strings(&str_refs);
+        combo.set_hexpand(true);
+        combo.set_selected(0); // default to None
+
+        (combo, mapping)
     }
 }
 
@@ -113,6 +137,22 @@ impl SimpleComponent for CreatePrefixDialog {
                     }
                 },
 
+                gtk::Box {
+                    set_hexpand: true,
+                    set_spacing: 10,
+                    set_margin_top: 10,
+                    set_orientation: gtk::Orientation::Vertical,
+
+                    gtk::Label {
+                        set_label: "Graphics Backend:",
+                        set_halign: gtk::Align::Start,
+                    },
+                    #[local_ref]
+                    graphics_combo -> gtk::DropDown {
+                        set_hexpand: true,
+                    },
+                },
+
                 #[name = "progress_label"]
                 gtk::Label {
                     set_label: "Creating Wine prefix...",
@@ -132,6 +172,7 @@ impl SimpleComponent for CreatePrefixDialog {
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let runtime_combo = Self::build_runtime_combo(&prefix_manager);
+        let (graphics_combo, graphics_backends) = Self::build_graphics_combo();
 
         let widgets = view_output!();
 
@@ -162,6 +203,8 @@ impl SimpleComponent for CreatePrefixDialog {
             name_entry: widgets.name_entry.clone(),
             arch_combo: widgets.arch_combo.clone(),
             runtime_combo: runtime_combo.clone(),
+            graphics_combo: graphics_combo.clone(),
+            graphics_backends,
             create_btn,
             progress_bar: widgets.progress_bar.clone(),
             progress_label: widgets.progress_label.clone(),
@@ -182,52 +225,65 @@ impl SimpleComponent for CreatePrefixDialog {
                     return;
                 }
 
-                let architecture = if self.arch_combo.selected() == 0 { "win32" } else { "win64" };
+                let architecture = if self.arch_combo.selected() == 0 {
+                    "win32"
+                } else {
+                    "win64"
+                };
 
                 let runtime_id = {
                     let i = self.runtime_combo.selected() as usize;
                     let rm = self.prefix_manager.runtime_manager();
-                    rm.runtimes.get(i).map(|r| r.id.clone())
+                    rm.runtimes
+                        .get(i)
+                        .map(|r| r.id.clone())
                         .unwrap_or_else(|| rm.default_id.clone())
+                };
+
+                let selected_backend = {
+                    let i = self.graphics_combo.selected() as usize;
+                    self.graphics_backends.get(i).cloned().unwrap_or(None)
                 };
 
                 // Show progress, disable inputs
                 self.name_entry.set_sensitive(false);
                 self.arch_combo.set_sensitive(false);
                 self.runtime_combo.set_sensitive(false);
+                self.graphics_combo.set_sensitive(false);
                 self.progress_label.set_visible(true);
                 self.progress_bar.set_visible(true);
                 self.progress_bar.set_fraction(0.0);
                 self.create_btn.set_sensitive(false);
 
                 let pb = self.progress_bar.clone();
-                let pulse_id = glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
-                    pb.pulse();
-                    glib::ControlFlow::Continue
-                });
+                let pulse_id =
+                    glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+                        pb.pulse();
+                        glib::ControlFlow::Continue
+                    });
 
                 let prefix_name = name.clone();
-                let pm = self.prefix_manager.clone();
+                let pm_create = self.prefix_manager.clone();  // consumed by spawn_blocking
+                let pm_async = self.prefix_manager.clone();   // kept for async activation
                 let mw = self.parent.clone();
                 let dlg = self.dialog.clone();
                 let sc = sender.clone();
                 let ctx = glib::MainContext::default();
                 ctx.spawn_local(async move {
+                    // Step 1: Create prefix (blocking)
                     let n = prefix_name.clone();
                     let a = architecture;
                     let rid = runtime_id.clone();
-                    let result = tokio::task::spawn_blocking(move || {
-                        pm.create_prefix_with_runtime(&n, &a, &rid)
-                    }).await;
+                    let create_result = tokio::task::spawn_blocking(move || {
+                        pm_create.create_prefix_with_runtime(&n, &a, &rid)
+                    })
+                    .await;
 
-                    pulse_id.remove();
-                    dlg.close();
-                    match result {
-                        Ok(Ok(prefix_path)) => {
-                            println!("Created prefix: {} at {}", prefix_name, prefix_path.display());
-                            sc.output(AppMsg::RefreshPrefixes).unwrap_or(());
-                        }
+                    let prefix_path = match create_result {
+                        Ok(Ok(path)) => path,
                         Ok(Err(e)) => {
+                            pulse_id.remove();
+                            dlg.close();
                             eprintln!("Failed to create prefix '{}': {}", prefix_name, e);
                             let alert = adw::AlertDialog::new(
                                 Some("Error"),
@@ -237,12 +293,48 @@ impl SimpleComponent for CreatePrefixDialog {
                             alert.set_default_response(Some("ok"));
                             alert.set_close_response("ok");
                             alert.choose(Some(&mw), None::<&gtk::gio::Cancellable>, |_| {});
+                            return;
                         }
                         Err(e) => {
-                            let msg = if e.is_panic() { "panic in create_prefix".to_string() } else { format!("{}", e) };
+                            pulse_id.remove();
+                            dlg.close();
+                            let msg = if e.is_panic() {
+                                "panic in create_prefix".to_string()
+                            } else {
+                                format!("{}", e)
+                            };
                             eprintln!("Failed to create prefix '{}': {}", prefix_name, msg);
+                            return;
+                        }
+                    };
+
+                    // Step 2: Activate graphics backend (symlink DLLs + registry + config)
+                    if let Some(backend) = selected_backend {
+                        if let Err(e) = pm_async.activate_graphics_backend(&backend, &prefix_path).await {
+                            eprintln!("Failed to activate {}: {}", backend.display_name(), e);
+                            let alert = adw::AlertDialog::new(
+                                Some("Warning"),
+                                Some(&format!(
+                                    "Prefix created, but failed to activate {}: {}",
+                                    backend.display_name(),
+                                    e
+                                )),
+                            );
+                            alert.add_response("ok", "OK");
+                            alert.set_default_response(Some("ok"));
+                            alert.set_close_response("ok");
+                            alert.choose(Some(&mw), None::<&gtk::gio::Cancellable>, |_| {});
                         }
                     }
+
+                    pulse_id.remove();
+                    dlg.close();
+                    println!(
+                        "Created prefix: {} at {}",
+                        prefix_name,
+                        prefix_path.display()
+                    );
+                    sc.output(AppMsg::RefreshPrefixes).unwrap_or(());
                 });
             }
         }

@@ -1,10 +1,11 @@
-use relm4::{
-    gtk, RelmWidgetExt,
-    component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
-};
-use relm4::factory::{FactoryComponent, FactorySender, FactoryVecDeque, DynamicIndex};
 use gtk::prelude::*;
 use prefix::config::RegisteredExecutable;
+use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender, FactoryVecDeque};
+use relm4::{
+    RelmWidgetExt,
+    component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
+    gtk,
+};
 use tracker;
 
 #[derive(Debug)]
@@ -152,11 +153,7 @@ impl FactoryComponent for AvailableExecutable {
         }
     }
 
-    fn init_model(
-        init: Self::Init,
-        _index: &DynamicIndex,
-        _sender: FactorySender<Self>,
-    ) -> Self {
+    fn init_model(init: Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
         let (executable, index, arch_label) = init;
         Self {
             executable,
@@ -331,7 +328,7 @@ impl AsyncComponent for AddAppPopoverModel {
             is_visible: false,
             is_scanning: false,
             is_processing_selection: false,
-            tracker: 0
+            tracker: 0,
         };
 
         // Get references to the factory widgets
@@ -340,7 +337,10 @@ impl AsyncComponent for AddAppPopoverModel {
         let widgets = view_output!();
 
         // Initialize the popover with available apps if any
-        sender.input(AddAppPopoverMsg::UpdateAvailableApps(Vec::new(), "win64".to_string()));
+        sender.input(AddAppPopoverMsg::UpdateAvailableApps(
+            Vec::new(),
+            "win64".to_string(),
+        ));
 
         AsyncComponentParts { model, widgets }
     }
@@ -368,11 +368,14 @@ impl AsyncComponent for AddAppPopoverModel {
             }
             AddAppPopoverMsg::UpdateAvailableApps(apps, prefix_arch) => {
                 self.available_apps = apps.clone();
+                self.selected_indices.clear();
+                self.set_selected_indices(self.selected_indices.clone());
 
                 // Compute arch label for each executable
-                let arch_labels: Vec<String> = apps.iter().map(|exe| {
-                    compute_arch_label(&exe.executable_path, &prefix_arch)
-                }).collect();
+                let arch_labels: Vec<String> = apps
+                    .iter()
+                    .map(|exe| compute_arch_label(&exe.executable_path, &prefix_arch))
+                    .collect();
 
                 // Update factory
                 {
@@ -429,7 +432,10 @@ impl AsyncComponent for AddAppPopoverModel {
                     sender.input(AddAppPopoverMsg::ResetProcessingFlag);
                 });
 
-                println!("DEBUG: Current selected indices: {:?}", self.selected_indices);
+                println!(
+                    "DEBUG: Current selected indices: {:?}",
+                    self.selected_indices
+                );
             }
             AddAppPopoverMsg::Scan => {
                 let _ = sender.output(AddAppPopoverOutput::Scan);

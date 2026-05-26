@@ -1,6 +1,6 @@
-use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, gtk, adw};
-use gtk::prelude::*;
 use adw::prelude::*;
+use gtk::prelude::*;
+use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
 use tracker;
 
 #[derive(Debug)]
@@ -237,85 +237,119 @@ impl SimpleComponent for GeneralTabModel {
                 self.set_virtual_desktop_width(s.virtual_desktop_width);
                 self.set_virtual_desktop_height(s.virtual_desktop_height);
             }
-            GeneralTabInput::UpdateField(field, value) => {
-                match field.as_str() {
-                    "windows_version" => {
-                        self.set_windows_version(Some(value.clone()));
-                        let _ = sender.output(GeneralTabOutput::SettingChanged(
-                            "Software\\Wine".into(), format!("Version={}", value),
-                        ));
-                    }
-                    "audio_driver" => {
-                        self.set_audio_driver(Some(value.clone()));
-                        let _ = sender.output(GeneralTabOutput::SettingChanged(
-                            "Software\\Wine\\Drivers\\Audio".into(), value,
-                        ));
-                    }
-                    "log_pixels" => {
-                        if let Ok(v) = value.parse::<u32>() {
-                            self.set_log_pixels(Some(v));
-                            let _ = sender.output(GeneralTabOutput::SettingChanged(
-                                "Control Panel\\Desktop".into(), format!("LogPixels={}", v),
-                            ));
-                        }
-                    }
-                    "vd_enabled" => {
-                        if let Ok(v) = value.parse::<bool>() {
-                            self.set_virtual_desktop_enabled(v);
-                            let _ = sender.output(GeneralTabOutput::SettingChanged(
-                                "Software\\Wine\\Explorer".into(),
-                                if v { "Desktop=Default".into() } else { String::new() },
-                            ));
-                        }
-                    }
-                    "vd_width" => {
-                        if let Ok(w) = value.parse::<u32>() {
-                            self.set_virtual_desktop_width(w);
-                            let _ = sender.output(GeneralTabOutput::SettingChanged(
-                                "Software\\Wine\\Explorer\\Desktops".into(),
-                                format!("Default={}x{}", w, self.virtual_desktop_height),
-                            ));
-                        }
-                    }
-                    "vd_height" => {
-                        if let Ok(h) = value.parse::<u32>() {
-                            self.set_virtual_desktop_height(h);
-                            let _ = sender.output(GeneralTabOutput::SettingChanged(
-                                "Software\\Wine\\Explorer\\Desktops".into(),
-                                format!("Default={}x{}", self.virtual_desktop_width, h),
-                            ));
-                        }
-                    }
-                    _ => {}
+            GeneralTabInput::UpdateField(field, value) => match field.as_str() {
+                "windows_version" => {
+                    self.set_windows_version(Some(value.clone()));
+                    let _ = sender.output(GeneralTabOutput::SettingChanged(
+                        "Software\\Wine".into(),
+                        format!("Version={}", value),
+                    ));
                 }
-            }
+                "audio_driver" => {
+                    self.set_audio_driver(Some(value.clone()));
+                    let _ = sender.output(GeneralTabOutput::SettingChanged(
+                        "Software\\Wine\\Drivers\\Audio".into(),
+                        value,
+                    ));
+                }
+                "log_pixels" => {
+                    if let Ok(v) = value.parse::<u32>() {
+                        self.set_log_pixels(Some(v));
+                        let _ = sender.output(GeneralTabOutput::SettingChanged(
+                            "Control Panel\\Desktop".into(),
+                            format!("LogPixels={}", v),
+                        ));
+                    }
+                }
+                "vd_enabled" => {
+                    if let Ok(v) = value.parse::<bool>() {
+                        self.set_virtual_desktop_enabled(v);
+                        let _ = sender.output(GeneralTabOutput::SettingChanged(
+                            "Software\\Wine\\Explorer".into(),
+                            if v {
+                                "Desktop=Default".into()
+                            } else {
+                                String::new()
+                            },
+                        ));
+                    }
+                }
+                "vd_width" => {
+                    if let Ok(w) = value.parse::<u32>() {
+                        self.set_virtual_desktop_width(w);
+                        let _ = sender.output(GeneralTabOutput::SettingChanged(
+                            "Software\\Wine\\Explorer\\Desktops".into(),
+                            format!("Default={}x{}", w, self.virtual_desktop_height),
+                        ));
+                    }
+                }
+                "vd_height" => {
+                    if let Ok(h) = value.parse::<u32>() {
+                        self.set_virtual_desktop_height(h);
+                        let _ = sender.output(GeneralTabOutput::SettingChanged(
+                            "Software\\Wine\\Explorer\\Desktops".into(),
+                            format!("Default={}x{}", self.virtual_desktop_width, h),
+                        ));
+                    }
+                }
+                _ => {}
+            },
         }
     }
 }
 
 fn win_code_to_index(code: &str) -> Option<u32> {
     Some(match code {
-        "" | "none" => 0, "win10" => 1, "win81" => 2, "win8" => 3,
-        "win7" => 4, "vista" => 5, "winxp" => 6, "win2k" => 7,
-        "winme" => 8, "win98" => 9, "win95" => 10, _ => return None,
+        "" | "none" => 0,
+        "win10" => 1,
+        "win81" => 2,
+        "win8" => 3,
+        "win7" => 4,
+        "vista" => 5,
+        "winxp" => 6,
+        "win2k" => 7,
+        "winme" => 8,
+        "win98" => 9,
+        "win95" => 10,
+        _ => return None,
     })
 }
 
 fn win_index_to_code(idx: u32) -> &'static str {
     match idx {
-        0 => "", 1 => "win10", 2 => "win81", 3 => "win8", 4 => "win7",
-        5 => "vista", 6 => "winxp", 7 => "win2k", 8 => "winme",
-        9 => "win98", 10 => "win95", _ => "",
+        0 => "",
+        1 => "win10",
+        2 => "win81",
+        3 => "win8",
+        4 => "win7",
+        5 => "vista",
+        6 => "winxp",
+        7 => "win2k",
+        8 => "winme",
+        9 => "win98",
+        10 => "win95",
+        _ => "",
     }
 }
 
 fn aud_code_to_index(code: &str) -> Option<u32> {
     Some(match code {
-        "" => 0, "pulse" => 1, "alsa" => 2, "oss" => 3, "coreaudio" => 4,
+        "" => 0,
+        "pulse" => 1,
+        "alsa" => 2,
+        "oss" => 3,
+        "coreaudio" => 4,
         _ => return None,
     })
 }
 
 fn aud_index_to_code(idx: u32) -> &'static str {
-    match idx { 0 => "", 1 => "pulse", 2 => "alsa", 3 => "oss", 4 => "coreaudio", _ => "" }
+    match idx {
+        0 => "",
+        1 => "pulse",
+        2 => "alsa",
+        3 => "oss",
+        4 => "coreaudio",
+        _ => "",
+    }
 }

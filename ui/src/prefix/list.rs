@@ -1,8 +1,8 @@
-use relm4::{gtk, adw, ComponentParts, ComponentSender, SimpleComponent};
-use gtk::prelude::*;
 use gtk::gio;
-use relm4::adw::prelude::*;
+use gtk::prelude::*;
 use prefix::WinePrefix;
+use relm4::adw::prelude::*;
+use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 
 #[derive(Debug)]
 pub struct PrefixListModel {
@@ -52,13 +52,15 @@ impl SimpleComponent for PrefixListModel {
         let widgets = view_output!();
 
         let sender_clone = sender.clone();
-        widgets.prefix_list_box.connect_row_activated(move |_, row| {
-            if let Some(idx) = row.index().checked_sub(0) {
-                if idx >= 0 {
-                    sender_clone.input(PrefixListMsg::SelectPrefix(idx as usize));
+        widgets
+            .prefix_list_box
+            .connect_row_activated(move |_, row| {
+                if let Some(idx) = row.index().checked_sub(0) {
+                    if idx >= 0 {
+                        sender_clone.input(PrefixListMsg::SelectPrefix(idx as usize));
+                    }
                 }
-            }
-        });
+            });
 
         let model = PrefixListModel {
             prefixes: prefixes.clone(),
@@ -121,34 +123,48 @@ fn populate(
             .css_classes(["dim-label", "body"])
             .build();
         list_box.append(
-            &gtk::ListBoxRow::builder().selectable(false).child(&label).build(),
+            &gtk::ListBoxRow::builder()
+                .selectable(false)
+                .child(&label)
+                .build(),
         );
         return;
     }
 
     for (i, prefix) in prefixes.iter().enumerate() {
         let name = gtk::Label::builder()
-            .label(&prefix.name).halign(gtk::Align::Start)
-            .css_classes(["heading"]).build();
+            .label(&prefix.name)
+            .halign(gtk::Align::Start)
+            .css_classes(["heading"])
+            .build();
 
         let detail = gtk::Label::builder()
-            .label(&format!("{} · {} apps",
+            .label(&format!(
+                "{} · {} apps",
                 prefix.config.architecture,
-                prefix.config.registered_executables.len()))
+                prefix.config.registered_executables.len()
+            ))
             .halign(gtk::Align::Start)
-            .css_classes(["caption", "dim-label"]).build();
+            .css_classes(["caption", "dim-label"])
+            .build();
 
         let box_ = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical).spacing(1)
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(1)
             .hexpand(true)
-            .margin_top(3).margin_bottom(3)
-            .margin_start(8).margin_end(8)
+            .margin_top(3)
+            .margin_bottom(3)
+            .margin_start(8)
+            .margin_end(8)
             .build();
         box_.append(&name);
         box_.append(&detail);
 
         let row = gtk::ListBoxRow::builder()
-            .selectable(true).activatable(true).child(&box_).build();
+            .selectable(true)
+            .activatable(true)
+            .child(&box_)
+            .build();
 
         // Left-click → select
         let s = sender.clone();

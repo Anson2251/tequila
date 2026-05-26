@@ -1,6 +1,6 @@
-use relm4::{gtk, ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent};
 use gtk::prelude::*;
 use prefix::config::PrefixConfig;
+use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, gtk};
 use std::path::PathBuf;
 use tracker;
 
@@ -48,7 +48,7 @@ impl SimpleComponent for PrefixDetailsModel {
                 set_spacing: 10,
                 set_margin_all: 10,
 
-                    
+
                 gtk::Box {
                     set_orientation: gtk::Orientation::Vertical,
                     set_spacing: 10,
@@ -86,7 +86,7 @@ impl SimpleComponent for PrefixDetailsModel {
                                 set_label: "Architecture:",
                                 set_halign: gtk::Align::Start,
                             },
-                        
+
 
                             gtk::Entry {
                                 #[track = "model.changed(PrefixDetailsModel::config())"]
@@ -176,7 +176,7 @@ impl SimpleComponent for PrefixDetailsModel {
                             },
                         }
                     },
-                    
+
 
                     gtk::Box {
                         set_hexpand: true,
@@ -229,7 +229,7 @@ impl SimpleComponent for PrefixDetailsModel {
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let (prefix_path, config) = init;
-        
+
         let model = PrefixDetailsModel {
             prefix_path,
             config: config.clone(),
@@ -250,7 +250,9 @@ impl SimpleComponent for PrefixDetailsModel {
         let widgets = view_output!();
 
         // Connect the buffer to the widget (only set once, never replaced)
-        widgets.description_text.set_buffer(Some(&model.description_buffer));
+        widgets
+            .description_text
+            .set_buffer(Some(&model.description_buffer));
 
         // Track user edits
         let buf = model.description_buffer.clone();
@@ -281,7 +283,11 @@ impl SimpleComponent for PrefixDetailsModel {
                 // Capture description from buffer before saving
                 let (start, end) = self.description_buffer.bounds();
                 let text = self.description_buffer.text(&start, &end, true);
-                self.config.description = if text.is_empty() { None } else { Some(text.to_string()) };
+                self.config.description = if text.is_empty() {
+                    None
+                } else {
+                    Some(text.to_string())
+                };
 
                 self.set_editing(false);
                 self.config.update_last_modified();
@@ -325,11 +331,10 @@ impl SimpleComponent for PrefixDetailsModel {
             }
             PrefixDetailsMsg::SetWineVersionDisplay(display) => {
                 self.set_wine_runtime_display(display);
-            }
-            // PrefixDetailsMsg::ShowAppManager => {
-            //     // This message will be handled by the parent component (main.rs)
-            //     let _ = sender.output(PrefixDetailsMsg::ShowAppManager);
-            // }
+            } // PrefixDetailsMsg::ShowAppManager => {
+              //     // This message will be handled by the parent component (main.rs)
+              //     let _ = sender.output(PrefixDetailsMsg::ShowAppManager);
+              // }
         }
     }
 }

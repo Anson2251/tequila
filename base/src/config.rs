@@ -1,10 +1,10 @@
-use serde::{Deserialize, Serialize};
+use crate::error::{PrefixError, Result};
+use crate::graphics::GraphicsConfig;
+use crate::traits::{ConfigOperations, ExecutableManager};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use crate::error::{Result, PrefixError};
-use crate::traits::{ConfigOperations, ExecutableManager};
-use crate::graphics::GraphicsConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PrefixConfig {
@@ -92,7 +92,9 @@ impl PrefixConfig {
     }
 
     pub fn get_executable_by_name(&self, name: &str) -> Option<&RegisteredExecutable> {
-        self.registered_executables.iter().find(|exe| exe.name == name)
+        self.registered_executables
+            .iter()
+            .find(|exe| exe.name == name)
     }
 
     pub fn executables(&self) -> std::slice::Iter<'_, RegisteredExecutable> {
@@ -101,21 +103,33 @@ impl PrefixConfig {
 
     pub fn validate(&self) -> Result<()> {
         if self.name.is_empty() {
-            return Err(PrefixError::Validation("Prefix name cannot be empty".to_string()));
+            return Err(PrefixError::Validation(
+                "Prefix name cannot be empty".to_string(),
+            ));
         }
         if self.architecture.is_empty() {
-            return Err(PrefixError::Validation("Architecture cannot be empty".to_string()));
+            return Err(PrefixError::Validation(
+                "Architecture cannot be empty".to_string(),
+            ));
         }
         if !["win32", "win64"].contains(&self.architecture.as_str()) {
-            return Err(PrefixError::Validation("Architecture must be 'win32' or 'win64'".to_string()));
+            return Err(PrefixError::Validation(
+                "Architecture must be 'win32' or 'win64'".to_string(),
+            ));
         }
         for (i, exe) in self.registered_executables.iter().enumerate() {
             if exe.name.is_empty() {
-                return Err(PrefixError::Validation(format!("Executable {} has empty name", i)));
+                return Err(PrefixError::Validation(format!(
+                    "Executable {} has empty name",
+                    i
+                )));
             }
             if !exe.executable_path.exists() {
-                return Err(PrefixError::Validation(format!("Executable {} has non-existent path: {}",
-                                 i, exe.executable_path.display())));
+                return Err(PrefixError::Validation(format!(
+                    "Executable {} has non-existent path: {}",
+                    i,
+                    exe.executable_path.display()
+                )));
             }
         }
         Ok(())
@@ -142,21 +156,33 @@ impl ConfigOperations for PrefixConfig {
 
     fn validate(&self) -> Result<()> {
         if self.name.is_empty() {
-            return Err(PrefixError::Validation("Prefix name cannot be empty".to_string()));
+            return Err(PrefixError::Validation(
+                "Prefix name cannot be empty".to_string(),
+            ));
         }
         if self.architecture.is_empty() {
-            return Err(PrefixError::Validation("Architecture cannot be empty".to_string()));
+            return Err(PrefixError::Validation(
+                "Architecture cannot be empty".to_string(),
+            ));
         }
         if !["win32", "win64"].contains(&self.architecture.as_str()) {
-            return Err(PrefixError::Validation("Architecture must be 'win32' or 'win64'".to_string()));
+            return Err(PrefixError::Validation(
+                "Architecture must be 'win32' or 'win64'".to_string(),
+            ));
         }
         for (i, exe) in self.registered_executables.iter().enumerate() {
             if exe.name.is_empty() {
-                return Err(PrefixError::Validation(format!("Executable {} has empty name", i)));
+                return Err(PrefixError::Validation(format!(
+                    "Executable {} has empty name",
+                    i
+                )));
             }
             if !exe.executable_path.exists() {
-                return Err(PrefixError::Validation(format!("Executable {} has non-existent path: {}",
-                                 i, exe.executable_path.display())));
+                return Err(PrefixError::Validation(format!(
+                    "Executable {} has non-existent path: {}",
+                    i,
+                    exe.executable_path.display()
+                )));
             }
         }
         Ok(())
@@ -185,7 +211,9 @@ impl ExecutableManager for PrefixConfig {
     }
 
     fn find_executable_by_name(&self, name: &str) -> Option<&RegisteredExecutable> {
-        self.registered_executables.iter().find(|exe| exe.name == name)
+        self.registered_executables
+            .iter()
+            .find(|exe| exe.name == name)
     }
 
     fn executables(&self) -> std::slice::Iter<'_, RegisteredExecutable> {
@@ -195,15 +223,24 @@ impl ExecutableManager for PrefixConfig {
 
 impl std::fmt::Display for PrefixConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PrefixConfig(name: {}, arch: {}, executables: {})",
-               self.name, self.architecture, self.registered_executables.len())
+        write!(
+            f,
+            "PrefixConfig(name: {}, arch: {}, executables: {})",
+            self.name,
+            self.architecture,
+            self.registered_executables.len()
+        )
     }
 }
 
 impl std::fmt::Display for RegisteredExecutable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "RegisteredExecutable(name: {}, path: {})",
-               self.name, self.executable_path.display())
+        write!(
+            f,
+            "RegisteredExecutable(name: {}, path: {})",
+            self.name,
+            self.executable_path.display()
+        )
     }
 }
 
@@ -361,10 +398,14 @@ impl RegisteredExecutableBuilder {
 
     pub fn build(self) -> std::result::Result<RegisteredExecutable, PrefixError> {
         Ok(RegisteredExecutable {
-            name: self.name.ok_or_else(|| PrefixError::Validation("Name is required".to_string()))?,
+            name: self
+                .name
+                .ok_or_else(|| PrefixError::Validation("Name is required".to_string()))?,
             description: self.description,
             icon_path: self.icon_path,
-            executable_path: self.executable_path.ok_or_else(|| PrefixError::Validation("Executable path is required".to_string()))?,
+            executable_path: self.executable_path.ok_or_else(|| {
+                PrefixError::Validation("Executable path is required".to_string())
+            })?,
             file_version: self.file_version,
             product_version: self.product_version,
             company_name: self.company_name,

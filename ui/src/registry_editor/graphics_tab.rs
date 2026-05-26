@@ -1,6 +1,6 @@
-use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, gtk, adw};
-use gtk::prelude::*;
 use adw::prelude::*;
+use gtk::prelude::*;
+use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
 use tracker;
 
 #[derive(Debug, Clone)]
@@ -173,54 +173,78 @@ impl SimpleComponent for GraphicsTabModel {
                 self.set_offscreen_mode(s.offscreen_mode);
                 self.set_video_memory(s.video_memory);
             }
-            GraphicsTabInput::UpdateField(field, value) => {
-                match field.as_str() {
-                    "renderer" => {
-                        self.set_renderer(Some(value.clone()));
-                        let _ = sender.output(GraphicsTabOutput::SettingChanged(
-                            "Software\\Wine\\Direct3D".into(), format!("renderer={}", value),
-                        ));
-                    }
-                    "csmt" => {
-                        let v = if value == "true" { 1 } else { 0 };
-                        self.set_csmt(Some(v));
-                        let _ = sender.output(GraphicsTabOutput::SettingChanged(
-                            "Software\\Wine\\Direct3D".into(), format!("csmt={}", v),
-                        ));
-                    }
-                    "offscreen_mode" => {
-                        self.set_offscreen_mode(Some(value.clone()));
-                        let _ = sender.output(GraphicsTabOutput::SettingChanged(
-                            "Software\\Wine\\Direct3D".into(), format!("OffscreenRenderingMode={}", value),
-                        ));
-                    }
-                    "video_memory" => {
-                        if let Ok(v) = value.parse::<u32>() {
-                            self.set_video_memory(Some(v));
-                            let _ = sender.output(GraphicsTabOutput::SettingChanged(
-                                "Software\\Wine\\Direct3D".into(), format!("VideoMemorySize={}", v),
-                            ));
-                        }
-                    }
-                    _ => {}
+            GraphicsTabInput::UpdateField(field, value) => match field.as_str() {
+                "renderer" => {
+                    self.set_renderer(Some(value.clone()));
+                    let _ = sender.output(GraphicsTabOutput::SettingChanged(
+                        "Software\\Wine\\Direct3D".into(),
+                        format!("renderer={}", value),
+                    ));
                 }
-            }
+                "csmt" => {
+                    let v = if value == "true" { 1 } else { 0 };
+                    self.set_csmt(Some(v));
+                    let _ = sender.output(GraphicsTabOutput::SettingChanged(
+                        "Software\\Wine\\Direct3D".into(),
+                        format!("csmt={}", v),
+                    ));
+                }
+                "offscreen_mode" => {
+                    self.set_offscreen_mode(Some(value.clone()));
+                    let _ = sender.output(GraphicsTabOutput::SettingChanged(
+                        "Software\\Wine\\Direct3D".into(),
+                        format!("OffscreenRenderingMode={}", value),
+                    ));
+                }
+                "video_memory" => {
+                    if let Ok(v) = value.parse::<u32>() {
+                        self.set_video_memory(Some(v));
+                        let _ = sender.output(GraphicsTabOutput::SettingChanged(
+                            "Software\\Wine\\Direct3D".into(),
+                            format!("VideoMemorySize={}", v),
+                        ));
+                    }
+                }
+                _ => {}
+            },
         }
     }
 }
 
 fn rdr_code_to_index(code: &str) -> Option<u32> {
-    Some(match code { "" => 0, "gl" => 1, "vulkan" => 2, "gdi" => 3, _ => return None })
+    Some(match code {
+        "" => 0,
+        "gl" => 1,
+        "vulkan" => 2,
+        "gdi" => 3,
+        _ => return None,
+    })
 }
 
 fn rdr_index_to_code(idx: u32) -> &'static str {
-    match idx { 0 => "", 1 => "gl", 2 => "vulkan", 3 => "gdi", _ => "" }
+    match idx {
+        0 => "",
+        1 => "gl",
+        2 => "vulkan",
+        3 => "gdi",
+        _ => "",
+    }
 }
 
 fn off_code_to_index(code: &str) -> Option<u32> {
-    Some(match code { "" => 0, "fbo" => 1, "backbuffer" => 2, _ => return None })
+    Some(match code {
+        "" => 0,
+        "fbo" => 1,
+        "backbuffer" => 2,
+        _ => return None,
+    })
 }
 
 fn off_index_to_code(idx: u32) -> &'static str {
-    match idx { 0 => "", 1 => "fbo", 2 => "backbuffer", _ => "" }
+    match idx {
+        0 => "",
+        1 => "fbo",
+        2 => "backbuffer",
+        _ => "",
+    }
 }

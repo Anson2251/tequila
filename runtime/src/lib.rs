@@ -1,10 +1,10 @@
 pub mod download;
-pub mod homebrew;
 pub mod graphics;
+pub mod homebrew;
 
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Runtime {
@@ -20,9 +20,17 @@ pub struct Runtime {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum RuntimeSource {
     System,
-    ManagedChannel { channel: Channel, installed_cask_version: String },
-    ManagedVersion { source_url: String },
-    Imported { label: String, original_path: PathBuf },
+    ManagedChannel {
+        channel: Channel,
+        installed_cask_version: String,
+    },
+    ManagedVersion {
+        source_url: String,
+    },
+    Imported {
+        label: String,
+        original_path: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -66,7 +74,10 @@ pub struct RuntimeManager {
 
 impl RuntimeManager {
     pub fn new() -> Self {
-        Self { runtimes: Vec::new(), default_id: String::new() }
+        Self {
+            runtimes: Vec::new(),
+            default_id: String::new(),
+        }
     }
 
     pub fn get(&self, id: &str) -> Option<&Runtime> {
@@ -106,7 +117,8 @@ impl RuntimeManager {
     ) -> &Runtime {
         let id = channel.runtime_id().to_string();
         let wine_bin = discover_wine_binary(&bundle_dir);
-        let version = wine_bin.as_ref()
+        let version = wine_bin
+            .as_ref()
             .and_then(|b| run_wine_version(b))
             .unwrap_or_else(|| "unknown".to_string());
         self.runtimes.retain(|r| r.id != id);
@@ -115,7 +127,10 @@ impl RuntimeManager {
             name: format!("Wine ({})", channel.display_name()),
             wine_version: version,
             bundle_dir,
-            source: RuntimeSource::ManagedChannel { channel, installed_cask_version },
+            source: RuntimeSource::ManagedChannel {
+                channel,
+                installed_cask_version,
+            },
             graphics: Vec::new(),
             installed_at: chrono::Utc::now().to_rfc3339(),
         });
@@ -133,7 +148,8 @@ impl RuntimeManager {
     ) -> &Runtime {
         let id = format!("wine-{}", version);
         let wine_bin = discover_wine_binary(&bundle_dir);
-        let wine_version = wine_bin.as_ref()
+        let wine_version = wine_bin
+            .as_ref()
             .and_then(|b| run_wine_version(b))
             .unwrap_or_else(|| version.to_string());
         self.runtimes.retain(|r| r.id != id);
@@ -162,10 +178,16 @@ impl RuntimeManager {
             .ok_or_else(|| "Could not find bin/wine in the selected path".to_string())?;
         let version = run_wine_version(&wine_bin)
             .ok_or_else(|| "Failed to run wine --version".to_string())?;
-        let bundle_dir = wine_bin.parent()
+        let bundle_dir = wine_bin
+            .parent()
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| wine_bin.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| source_path.clone()));
+            .unwrap_or_else(|| {
+                wine_bin
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| source_path.clone())
+            });
         let sanitized = sanitize_label(label);
         let id = format!("wine-imported-{}", sanitized);
         let target_dir = runtimes_dir.join(&id);
@@ -179,7 +201,10 @@ impl RuntimeManager {
             name: format!("Imported: {}", label),
             wine_version: version,
             bundle_dir: target_dir,
-            source: RuntimeSource::Imported { label: label.to_string(), original_path: source_path.clone() },
+            source: RuntimeSource::Imported {
+                label: label.to_string(),
+                original_path: source_path.clone(),
+            },
             graphics: Vec::new(),
             installed_at: chrono::Utc::now().to_rfc3339(),
         };
@@ -193,7 +218,11 @@ impl RuntimeManager {
     pub fn remove(&mut self, id: &str) {
         self.runtimes.retain(|r| r.id != id);
         if self.default_id == id {
-            self.default_id = self.runtimes.first().map(|r| r.id.clone()).unwrap_or_default();
+            self.default_id = self
+                .runtimes
+                .first()
+                .map(|r| r.id.clone())
+                .unwrap_or_default();
         }
     }
 
@@ -202,7 +231,9 @@ impl RuntimeManager {
             .arg("--version")
             .output()
             .ok()?;
-        if !output.status.success() { return None; }
+        if !output.status.success() {
+            return None;
+        }
         let version = String::from_utf8(output.stdout)
             .ok()
             .map(|s| s.trim().to_string())
@@ -218,20 +249,37 @@ impl RuntimeManager {
         })
     }
 
+    /// Re-detect system Wine (`wine --version`) and update the runtime list.
+    ///
+    /// - If system Wine is found: add or update the entry with the current version.
+    /// - If system Wine is gone: remove the entry from the list.
     pub fn ensure_system_runtime(&mut self) {
-        if !self.runtimes.iter().any(|r| matches!(r.source, RuntimeSource::System)) {
-            if let Some(sys) = Self::detect_system() {
-                if self.default_id.is_empty() {
-                    self.default_id = sys.id.clone();
-                }
-                self.runtimes.push(sys);
+        let sys = Self::detect_system();
+
+        // Remove any previous system runtime entry
+        let had_system = self.runtimes.iter().any(|r| r.id == "wine-system");
+        self.runtimes.retain(|r| r.id != "wine-system");
+
+        if let Some(sys) = sys {
+            if self.default_id.is_empty() || (had_system && self.default_id == "wine-system") {
+                self.default_id = sys.id.clone();
             }
+            self.runtimes.push(sys);
+        } else if had_system && self.default_id == "wine-system" {
+            // System Wine was uninstalled — pick another default
+            self.default_id = self
+                .runtimes
+                .first()
+                .map(|r| r.id.clone())
+                .unwrap_or_default();
         }
     }
 }
 
 impl Default for RuntimeManager {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 fn run_wine_version(wine_bin: &Path) -> Option<String> {
@@ -240,7 +288,9 @@ fn run_wine_version(wine_bin: &Path) -> Option<String> {
         .output()
         .ok()?;
     if output.status.success() {
-        String::from_utf8(output.stdout).ok().map(|s| s.trim().to_string())
+        String::from_utf8(output.stdout)
+            .ok()
+            .map(|s| s.trim().to_string())
     } else {
         None
     }
@@ -248,12 +298,25 @@ fn run_wine_version(wine_bin: &Path) -> Option<String> {
 
 pub fn discover_wine_binary(path: &Path) -> Option<PathBuf> {
     let candidate = path.join("bin").join("wine");
-    if candidate.is_file() { return Some(candidate); }
-    if path.to_string_lossy().ends_with("app") {
-        let wine = path.join("Contents").join("Resources").join("wine").join("bin").join("wine");
-        if wine.is_file() { return Some(wine); }
+    if candidate.is_file() {
+        return Some(candidate);
     }
-    for entry in walkdir::WalkDir::new(path).max_depth(6).into_iter().flatten() {
+    if path.to_string_lossy().ends_with("app") {
+        let wine = path
+            .join("Contents")
+            .join("Resources")
+            .join("wine")
+            .join("bin")
+            .join("wine");
+        if wine.is_file() {
+            return Some(wine);
+        }
+    }
+    for entry in walkdir::WalkDir::new(path)
+        .max_depth(6)
+        .into_iter()
+        .flatten()
+    {
         if entry.file_type().is_file() && entry.file_name() == "wine" {
             let parent = entry.path().parent()?;
             if parent.file_name().map(|n| n == "bin").unwrap_or(false) {
@@ -265,16 +328,25 @@ pub fn discover_wine_binary(path: &Path) -> Option<PathBuf> {
 }
 
 fn sanitize_label(label: &str) -> String {
-    label.to_lowercase()
+    label
+        .to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_string()
 }
 
 pub fn symlink_or_copy(src: &Path, dest: &Path) -> Result<(), String> {
-    if std::os::unix::fs::symlink(src, dest).is_ok() { return Ok(()); }
+    if std::os::unix::fs::symlink(src, dest).is_ok() {
+        return Ok(());
+    }
     copy_dir_recursive(src, dest).map_err(|e| format!("Failed to copy runtime: {}", e))
 }
 
@@ -284,9 +356,14 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> std::io::Result<()> {
         let entry = entry?;
         let ty = entry.file_type()?;
         let target = dest.join(entry.file_name());
-        if ty.is_dir() { copy_dir_recursive(&entry.path(), &target)?; }
-        else if ty.is_symlink() { let link_target = fs::read_link(entry.path())?; std::os::unix::fs::symlink(&link_target, &target)?; }
-        else { fs::copy(entry.path(), &target)?; }
+        if ty.is_dir() {
+            copy_dir_recursive(&entry.path(), &target)?;
+        } else if ty.is_symlink() {
+            let link_target = fs::read_link(entry.path())?;
+            std::os::unix::fs::symlink(&link_target, &target)?;
+        } else {
+            fs::copy(entry.path(), &target)?;
+        }
     }
     Ok(())
 }

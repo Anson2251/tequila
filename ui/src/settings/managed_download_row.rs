@@ -3,8 +3,8 @@ use relm4::prelude::*;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use tracker;
 
@@ -28,10 +28,10 @@ pub struct DownloadRowStatus {
 /// **not** need to be `Send`.
 pub type DownloadFn = Box<
     dyn Fn(
-        PathBuf,
-        PhaseProgressFn,
-        Arc<AtomicBool>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + 'static>>
+            PathBuf,
+            PhaseProgressFn,
+            Arc<AtomicBool>,
+        ) -> Pin<Box<dyn Future<Output = Result<(), String>> + 'static>>
         + Send
         + 'static,
 >;
@@ -255,11 +255,15 @@ impl AsyncComponent for ManagedDownloadRow {
                 alert.set_default_response(Some("install"));
                 alert.set_close_response("cancel");
                 let s = sender.clone();
-                alert.choose(Some(root), None::<&gtk::gio::Cancellable>, move |response| {
-                    if response == "install" {
-                        let _ = s.input(ManagedDownloadRowMsg::BeginInstall);
-                    }
-                });
+                alert.choose(
+                    Some(root),
+                    None::<&gtk::gio::Cancellable>,
+                    move |response| {
+                        if response == "install" {
+                            let _ = s.input(ManagedDownloadRowMsg::BeginInstall);
+                        }
+                    },
+                );
             }
 
             // ── Actual download start ──
@@ -284,11 +288,8 @@ impl AsyncComponent for ManagedDownloadRow {
                 // Clone sender for the progress closure (needs its own copy)
                 let s_progress = sender.clone();
                 let progress: PhaseProgressFn = Box::new(move |downloaded, total, phase| {
-                    let _ = s_progress.input(ManagedDownloadRowMsg::Progress(
-                        downloaded,
-                        total,
-                        phase,
-                    ));
+                    let _ =
+                        s_progress.input(ManagedDownloadRowMsg::Progress(downloaded, total, phase));
                 });
                 // Call the download callback on the main thread to get the future,
                 // then spawn it.  Box<dyn Fn> is callable from &mut self.
@@ -324,9 +325,9 @@ impl AsyncComponent for ManagedDownloadRow {
                     InstallPhase::Download => {
                         let elapsed = now.duration_since(self.last_time);
                         if elapsed.as_secs_f64() > 0.5 {
-                            self.current_speed =
-                                (downloaded.saturating_sub(self.last_bytes)) as f64
-                                    / elapsed.as_secs_f64();
+                            self.current_speed = (downloaded.saturating_sub(self.last_bytes))
+                                as f64
+                                / elapsed.as_secs_f64();
                             self.last_bytes = downloaded;
                             self.last_time = now;
                         }
@@ -343,15 +344,11 @@ impl AsyncComponent for ManagedDownloadRow {
                         }
                     }
                     InstallPhase::Verify => {
-                        self.set_progress(
-                            0.80 + (downloaded as f64 / total.max(1) as f64) * 0.10,
-                        );
+                        self.set_progress(0.80 + (downloaded as f64 / total.max(1) as f64) * 0.10);
                         self.set_status_text("Verifying checksum...".into());
                     }
                     InstallPhase::Extract => {
-                        self.set_progress(
-                            0.90 + (downloaded as f64 / total.max(1) as f64) * 0.10,
-                        );
+                        self.set_progress(0.90 + (downloaded as f64 / total.max(1) as f64) * 0.10);
                         self.set_status_text("Unpacking...".into());
                     }
                 }
@@ -391,8 +388,7 @@ impl AsyncComponent for ManagedDownloadRow {
             // ── Remove ──
             ManagedDownloadRowMsg::Remove => {
                 if let Err(e) = (self.perform_remove)() {
-                    let alert =
-                        adw::AlertDialog::new(Some("Failed to Remove"), Some(&e));
+                    let alert = adw::AlertDialog::new(Some("Failed to Remove"), Some(&e));
                     alert.add_response("ok", "OK");
                     alert.set_default_response(Some("ok"));
                     alert.set_close_response("ok");
@@ -427,9 +423,8 @@ fn init_css_once() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         let provider = gtk::CssProvider::new();
-        provider.load_from_data(
-            ".managed-installed { background-color: rgba(76, 175, 80, 0.12); }",
-        );
+        provider
+            .load_from_data(".managed-installed { background-color: rgba(76, 175, 80, 0.12); }");
         if let Some(display) = gtk::gdk::Display::default() {
             gtk::style_context_add_provider_for_display(
                 &display,

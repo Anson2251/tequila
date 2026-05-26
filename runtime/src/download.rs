@@ -1,18 +1,19 @@
-use sha2::{Sha256, Digest};
+use crate::Channel;
+use base::error::{PrefixError, Result};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
-use base::error::{Result, PrefixError};
-use crate::Channel;
 
 pub fn runtimes_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("tequila").join("runtimes")
+        .join("tequila")
+        .join("runtimes")
 }
 
 pub type ProgressFn = Box<dyn Fn(u64, u64) + Send>;
@@ -31,12 +32,18 @@ pub async fn download_file(url: &str, dest: &Path, progress: &ProgressFn) -> Res
         .await
         .map_err(|e| PrefixError::Process(format!("Download failed: {}", e)))?;
     let total = response.content_length().unwrap_or(0);
-    if let Some(parent) = dest.parent() { fs::create_dir_all(parent)?; }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let mut file = fs::File::create(dest)?;
     let mut downloaded: u64 = 0;
     loop {
         match response.chunk().await {
-            Ok(Some(chunk)) => { file.write_all(&chunk)?; downloaded += chunk.len() as u64; progress(downloaded, total); }
+            Ok(Some(chunk)) => {
+                file.write_all(&chunk)?;
+                downloaded += chunk.len() as u64;
+                progress(downloaded, total);
+            }
             Ok(None) => break,
             Err(e) => return Err(PrefixError::Process(format!("Download error: {}", e))),
         }
@@ -51,7 +58,10 @@ pub fn verify_sha256(path: &Path, expected_hex: &str) -> Result<()> {
     hasher.update(&data);
     let actual = hex::encode(hasher.finalize());
     if actual != expected_hex {
-        return Err(PrefixError::Validation(format!("SHA256 mismatch: expected {}, got {}", expected_hex, actual)));
+        return Err(PrefixError::Validation(format!(
+            "SHA256 mismatch: expected {}, got {}",
+            expected_hex, actual
+        )));
     }
     Ok(())
 }
@@ -59,10 +69,15 @@ pub fn verify_sha256(path: &Path, expected_hex: &str) -> Result<()> {
 pub fn extract_tar(archive: &Path, dest_dir: &Path) -> Result<()> {
     fs::create_dir_all(dest_dir)?;
     let status = Command::new("tar")
-        .arg("-xf").arg(archive).arg("-C").arg(dest_dir)
+        .arg("-xf")
+        .arg(archive)
+        .arg("-C")
+        .arg(dest_dir)
         .status()
         .map_err(|e| PrefixError::Process(format!("Failed to run tar: {}", e)))?;
-    if !status.success() { return Err(PrefixError::Process("tar extraction failed".to_string())); }
+    if !status.success() {
+        return Err(PrefixError::Process("tar extraction failed".to_string()));
+    }
     Ok(())
 }
 
@@ -72,18 +87,33 @@ pub fn extract_tar_zst(archive: &Path, dest_dir: &Path) -> Result<()> {
     let decompressed = zstd::decode_all(&data[..])
         .map_err(|e| PrefixError::Process(format!("zstd decompression failed: {}", e)))?;
     let mut child = Command::new("tar")
-        .arg("-xf").arg("-").arg("-C").arg(dest_dir)
+        .arg("-xf")
+        .arg("-")
+        .arg("-C")
+        .arg(dest_dir)
         .stdin(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| PrefixError::Process(format!("Failed to run tar: {}", e)))?;
-    if let Some(mut stdin) = child.stdin.take() { stdin.write_all(&decompressed)?; }
-    let status = child.wait().map_err(|e| PrefixError::Process(format!("tar wait failed: {}", e)))?;
-    if !status.success() { return Err(PrefixError::Process("tar extraction failed after zstd decompression".to_string())); }
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(&decompressed)?;
+    }
+    let status = child
+        .wait()
+        .map_err(|e| PrefixError::Process(format!("tar wait failed: {}", e)))?;
+    if !status.success() {
+        return Err(PrefixError::Process(
+            "tar extraction failed after zstd decompression".to_string(),
+        ));
+    }
     Ok(())
 }
 
 pub fn find_wine_binary(dir: &Path) -> Result<PathBuf> {
-    for entry in walkdir::WalkDir::new(dir).max_depth(6).into_iter().flatten() {
+    for entry in walkdir::WalkDir::new(dir)
+        .max_depth(6)
+        .into_iter()
+        .flatten()
+    {
         if entry.file_type().is_file() && entry.file_name() == "wine" {
             let parent = entry.path().parent().unwrap();
             if parent.file_name().map(|n| n == "bin").unwrap_or(false) {
@@ -91,23 +121,36 @@ pub fn find_wine_binary(dir: &Path) -> Result<PathBuf> {
             }
         }
     }
-    Err(PrefixError::NotFound("Could not find bin/wine in extracted archive".to_string()))
+    Err(PrefixError::NotFound(
+        "Could not find bin/wine in extracted archive".to_string(),
+    ))
 }
 
 pub fn bundle_dir_from_wine_bin(wine_bin: &Path) -> PathBuf {
-    wine_bin.parent()
+    wine_bin
+        .parent()
         .and_then(|p| p.parent())
         .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| wine_bin.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| wine_bin.to_path_buf()))
+        .unwrap_or_else(|| {
+            wine_bin
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| wine_bin.to_path_buf())
+        })
 }
 
-pub struct LockGuard { lock_path: PathBuf }
+pub struct LockGuard {
+    lock_path: PathBuf,
+}
 
 impl LockGuard {
     pub fn acquire(runtimes_dir: &Path, id: &str) -> Result<Self> {
         let lock_path = runtimes_dir.join(format!(".lock-{}", id));
         if lock_path.exists() {
-            return Err(PrefixError::AlreadyExists(format!("Runtime '{}' is already being downloaded or modified", id)));
+            return Err(PrefixError::AlreadyExists(format!(
+                "Runtime '{}' is already being downloaded or modified",
+                id
+            )));
         }
         fs::write(&lock_path, &std::process::id().to_string())?;
         Ok(LockGuard { lock_path })
@@ -115,7 +158,9 @@ impl LockGuard {
 }
 
 impl Drop for LockGuard {
-    fn drop(&mut self) { let _ = fs::remove_file(&self.lock_path); }
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.lock_path);
+    }
 }
 
 pub async fn download_channel_runtime(channel: &Channel, progress: &ProgressFn) -> Result<PathBuf> {
@@ -128,7 +173,9 @@ pub async fn download_channel_runtime(channel: &Channel, progress: &ProgressFn) 
     let tmp_dir = runtimes.join(format!(".tmp-{}", runtime_id));
     let final_dir = runtimes.join(&runtime_id);
     let _lock = LockGuard::acquire(&runtimes, &runtime_id)?;
-    if tmp_dir.exists() { fs::remove_dir_all(&tmp_dir)?; }
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir)?;
+    }
     fs::create_dir_all(&tmp_dir)?;
     let archive_path = tmp_dir.join("wine.tar.xz");
     download_file(&cask.url, &archive_path, progress).await?;
@@ -136,12 +183,18 @@ pub async fn download_channel_runtime(channel: &Channel, progress: &ProgressFn) 
     extract_tar(&archive_path, &tmp_dir)?;
     let _ = find_wine_binary(&tmp_dir)?;
     let _ = fs::remove_file(&archive_path);
-    if final_dir.exists() { fs::remove_dir_all(&final_dir)?; }
+    if final_dir.exists() {
+        fs::remove_dir_all(&final_dir)?;
+    }
     fs::rename(&tmp_dir, &final_dir)?;
     Ok(final_dir)
 }
 
-pub async fn download_gstreamer(data_dir: &Path, progress: PhaseProgressFn, cancel: Option<Arc<AtomicBool>>) -> Result<PathBuf> {
+pub async fn download_gstreamer(
+    data_dir: &Path,
+    progress: PhaseProgressFn,
+    cancel: Option<Arc<AtomicBool>>,
+) -> Result<PathBuf> {
     let gst_cask = crate::homebrew::fetch_cask("gstreamer-runtime")
         .await
         .map_err(|e| PrefixError::Process(e))?;
@@ -151,7 +204,9 @@ pub async fn download_gstreamer(data_dir: &Path, progress: PhaseProgressFn, canc
     let _lock = LockGuard::acquire(&runtimes_dir, "gstreamer")?;
     let gst_dir = runtimes_dir.join("gstreamer");
     let tmp_dir = runtimes_dir.join(".tmp-gstreamer");
-    if tmp_dir.exists() { fs::remove_dir_all(&tmp_dir)?; }
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir)?;
+    }
     fs::create_dir_all(&tmp_dir)?;
     let pkg_path = tmp_dir.join("gstreamer.pkg");
 
@@ -205,7 +260,10 @@ pub async fn download_gstreamer(data_dir: &Path, progress: PhaseProgressFn, canc
     let tmp_c = tmp_dir.clone();
     std::thread::spawn(move || {
         let result = Command::new("bash")
-            .arg(&script_c).arg("--force").arg(&pkg_c).arg(&tmp_c)
+            .arg(&script_c)
+            .arg("--force")
+            .arg(&pkg_c)
+            .arg(&tmp_c)
             .status();
         let _ = tx.send(result);
     });
@@ -221,7 +279,9 @@ pub async fn download_gstreamer(data_dir: &Path, progress: PhaseProgressFn, canc
                     PrefixError::Process(format!("Failed to run extract script: {}", e))
                 })?;
                 if !status.success() {
-                    return Err(PrefixError::Process("GStreamer extraction failed".to_string()));
+                    return Err(PrefixError::Process(
+                        "GStreamer extraction failed".to_string(),
+                    ));
                 }
                 break;
             }
@@ -229,19 +289,44 @@ pub async fn download_gstreamer(data_dir: &Path, progress: PhaseProgressFn, canc
                 glib::timeout_future(Duration::from_millis(200)).await;
             }
             Err(mpsc::TryRecvError::Disconnected) => {
-                return Err(PrefixError::Process("Extraction thread crashed".to_string()));
+                return Err(PrefixError::Process(
+                    "Extraction thread crashed".to_string(),
+                ));
             }
         }
     }
     progress(1, 1, InstallPhase::Extract);
 
-    if gst_dir.exists() { fs::remove_dir_all(&gst_dir)?; }
+    if gst_dir.exists() {
+        fs::remove_dir_all(&gst_dir)?;
+    }
     fs::rename(&tmp_dir, &gst_dir)?;
+
+    // Fix env file paths: replace .tmp-gstreamer with gstreamer in values
+    let env_path = gst_dir.join("env");
+    if let Ok(content) = fs::read_to_string(&env_path) {
+        let fixed = content
+            .lines()
+            .map(|line| {
+                if let Some((k, v)) = line.split_once('=') {
+                    let v_fixed = v.replace(".tmp-gstreamer", "gstreamer");
+                    format!("{}={}", k, v_fixed)
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let _ = fs::write(&env_path, &fixed);
+    }
+
     Ok(gst_dir)
 }
 
 pub fn cleanup_temp_runtimes(runtimes_dir: &Path) {
-    if !runtimes_dir.is_dir() { return; }
+    if !runtimes_dir.is_dir() {
+        return;
+    }
     if let Ok(entries) = fs::read_dir(runtimes_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name();

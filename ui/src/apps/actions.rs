@@ -1,8 +1,8 @@
-use relm4::{
-    gtk,
-    component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
-};
 use gtk::prelude::*;
+use relm4::{
+    component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
+    gtk,
+};
 use tracker;
 
 #[derive(Debug)]
@@ -22,9 +22,9 @@ pub enum AppActionsMsg {
     SetScanning(bool),
     SetSelectedRunning(bool),
     SetPrefixSet(bool),
-        SetUninstallerRunning(bool),
-        SetExeRunning(bool),
-        Launch,
+    SetUninstallerRunning(bool),
+    SetExeRunning(bool),
+    Launch,
     Add,
     Remove,
     ShowInfo,
@@ -197,7 +197,7 @@ impl AsyncComponent for AppActionsModel {
             prefix_set,
             uninstaller_running: false,
             exe_running: false,
-            tracker: 0
+            tracker: 0,
         };
 
         let widgets = view_output!();
