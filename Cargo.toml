@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "base",
-    "registry",
-    "runtime",
-    "scan",
-    "store",
-    "prefix",
-    "ui",
-    "tequila",
+    "crates/base",
+    "crates/registry",
+    "crates/runtime",
+    "crates/scan",
+    "crates/store",
+    "crates/prefix",
+    "crates/ui",
+    "crates/tequila",
 ]

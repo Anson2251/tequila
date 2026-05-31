@@ -279,7 +279,7 @@ pub async fn download_gstreamer(
 
     // Extract phase (90-100%) — spawn on a thread to avoid blocking main loop
     progress(0, 1, InstallPhase::Extract);
-    let script = include_str!("../../scripts/extract-gstreamer-pkg.sh");
+    let script = include_str!("../../../scripts/extract-gstreamer-pkg.sh");
     let script_path = tmp_dir.join("extract.sh");
     fs::write(&script_path, script)?;
     let (tx, rx) = mpsc::channel();

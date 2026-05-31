@@ -1,209 +1,217 @@
-# Tequila
+# Tequila 🥃
 
-A modern, user-friendly GUI application for managing Wine prefixes (also known as "Wine disks")—built with Rust and [Relm4](https://relm4.org/).
+A modern, user‑friendly GUI application for managing Wine prefixes (also known as "Wine bottles")—built with Rust and [Relm4](https://relm4.org/) / libadwaita.
 
-Tequila simplifies working with Wine on macOS and Linux by providing an intuitive interface to create, organize, share, and launch isolated Windows environments.
-
-> **Note**: Tequila is currently in early development. macOS support is the initial target, with Linux support to follow.
+Tequila simplifies working with Wine on **macOS** and **Linux** by providing an intuitive interface to create, organize, and launch isolated Windows environments. It also includes a full registry editor, application scanner, and Wine runtime manager.
 
 ---
 
-## 🚀 Features
+## Features
 
-- **Manage Wine Prefixes**: Create, rename, and delete isolated Wine environments (prefixes).
-- **Share Prefixes Easily**: Package the entire `drive_c` and registry (`system.reg`, `user.reg`, etc.) into a compressed `.zst` archive using [zstd](https://facebook.github.io/zstd/).
-- **Launch Applications**: Open a file browser or run executables directly from your chosen Wine prefix.
-- **Desktop & Dock Integration**: Create convenient desktop or dock shortcuts for quick access to your Wine apps.
-- **(Planned)** Built-in `winecfg` and `winetricks` integration via GUI.
+### 🍷 Prefix Management
+- **Create & Delete** Wine prefixes (win32/win64)
+- **Launch executables** from the UI with per‑executable environment variables and working directory
+- **Run winecfg and regedit** directly from the interface
+- **Process tracker** monitors running Wine processes and disables launch buttons while an app is active
+
+### 🧩 Wine Runtime Manager
+- **Detect system Wine** (`wine --version` in `PATH`)
+- **Homebrew integration** (macOS): install and manage `wine-stable`, `wine-devel`, `wine-staging`
+- **Kron4ek/Wine‑Builds**: browse and download specific Wine versions from GitHub Releases (works on Linux too)
+- **Import existing Wine** installations from any directory
+- **Switch Wine version** per prefix with automatic reinitialization
+- **GStreamer runtime** download for macOS
+
+### 🎨 Graphics Backends
+- **DXMT** — DirectX Metal translation
+- **D3DMetal** — DirectX 11/12 via Metal
+- **DXVK + VKD3D** — DirectX via Vulkan
+- Automatic DLL symlink installation and registry override setup per prefix
+- Activation / deactivation from the prefix config panel
+
+### 🔧 Registry Editor
+Full graphical registry editor built into the application:
+
+- **General settings**: Windows version, D3D renderer, offscreen rendering mode, audio/graphics drivers, font replacements, DLL overrides, virtual desktop, application‑specific settings
+- **Graphics settings**: backend‑specific configuration
+- **Platform settings**: macOS driver configuration, X11 settings
+- **Registry caching** with TTL‑based invalidation
+- **File watcher** for live registry updates
+
+### 📁 Application Scanner
+- **Auto‑scan** prefixes for Windows executables
+- **Icon extraction** from PE files
+- **Metadata extraction**: version info, company name, description, imported modules
+- **Desktop file scanning** on Linux
+- **SQLite cache** for scanned executables and registry data
+
+### 🖥️ Modern UI
+- Built with **Relm4 0.11** and **libadwaita**
+- **Settings window** with NavigationView subpages
+- **Error dialogs** for launch failures with actionable messages
+- **macOS native** window controls, file dialogs, and menu integration
 
 ---
 
-## 🛠️ Requirements
+## Requirements
 
-- **Rust** (latest stable)
-- **Wine** (installed and in your `PATH`)
-- **zstd** compression library (for packaging/unpacking prefixes)
-- **GTK 4** (required by Relm4)
+- **Rust** (latest stable, edition 2024)
+- **GTK 4** (≥ 4.10)
+- **libadwaita** (≥ 1.7)
+- **zstd** — for compressed runtime downloads
+- **tar**, **xz** — for archive extraction
+- **Wine** — either installed system‑wide (`wine` in `PATH`) or managed via the runtime downloader
 
-> On macOS, you may need to install Wine via [Homebrew](https://brew.sh/) (`brew install --cask wine-stable`) or another method that provides a working `wine` command.
+> **On macOS**, managed runtimes can be installed via Homebrew (`brew install --cask wine-stable`) or downloaded directly from Kron4ek/Wine‑Builds.
+>
+> **On Linux**, the Kron4ek downloader is the primary way to get managed Wine builds.
 
 ---
 
-## 📦 Installation
+## Project Structure
+
+Tequila is organized as a **Cargo workspace** with eight crates:
+
+| Crate | Description |
+|-------|-------------|
+| [`base`](crates/base) | Core types: `PrefixConfig`, `RegisteredExecutable`, error types, `GraphicsBackend`, `GraphicsConfig`, and traits (`ConfigOperations`, `Scanner`, `PrefixManager`, `ExecutableManager`) |
+| [`prefix`](crates/prefix) | Prefix lifecycle: create, delete, scan, launch executables, run winecfg/regedit, runtime environment setup, process tracking |
+| [`runtime`](crates/runtime) | Wine runtime management: Homebrew cask integration, Kron4ek Wine‑Builds downloader, archive extraction, graphics backend installation (DXMT, D3DMetal, DXVK+VKD3D), GStreamer download |
+| [`registry`](crates/registry) | Wine registry access via [`regashii`](https://crates.io/crates/regashii): `RegistryEditor`, `InMemoryRegistryCache`, `WineRegistry`, key constants, DLL override helpers |
+| [`scan`](crates/scan) | Application scanner: PE icon extraction, metadata extraction, desktop file scanning |
+| [`store`](crates/store) | Persistent storage: SQLite‑backed `PrefixStore` for registries and scanned executables, JSON `Settings` persistence |
+| [`ui`](crates/ui) | GTK4/libadwaita UI: main window, prefix list/config, app manager, registry editor (general / graphics / platform tabs), runtime manager, settings window |
+| [`tequila`](crates/tequila) | Binary entry point |
+
+```
+tequila/
+├── Cargo.toml              # Workspace root
+├── crates/
+│   ├── base/               # Core types and traits
+│   ├── prefix/             # Prefix lifecycle & process management
+│   ├── runtime/            # Wine runtime & graphics backend management
+│   ├── registry/           # Wine registry editing
+│   ├── scan/               # Application scanning & icon extraction
+│   ├── store/              # Persistence (SQLite + JSON)
+│   ├── ui/                 # GTK4/libadwaita UI
+│   └── tequila/            # Binary entry point
+├── data/                   # Icon resources
+├── docs/                   # Design documents
+├── scripts/                # Build helper scripts
+└── winetricks.sh           # Bundled winetricks
+```
+
+---
+
+## Installation
 
 ### From Source
 
-1. Clone the repository:
-   ```sh
-   git clone https://github.com/your-username/tequila.git
-   cd tequila
-   ```
-
-2. Build the project:
-   ```sh
-   cargo build --release
-   ```
-
-3. Run Tequila:
-   ```sh
-   ./target/release/tequila
-   ```
-
-> Binaries and installers will be provided in future releases.
-
----
-
-## 🔄 Current Development Progress
-
-### ✅ **Core Features Implemented**
-
-#### **1. Advanced Prefix Configuration System**
-- ✅ **Structured JSON Configuration**: All wine prefixes now have associated `tequila-config.json` files
-- ✅ **Prefix Metadata Management**: Store and manage prefix names, architectures, Wine versions, and creation dates
-- ✅ **Config Validation**: Robust validation system with error handling for corrupted configs
-- ✅ **Automatic Migration**: Existing prefixes are automatically migrated with generated configs
-
-#### **2. Application Management**
-- ✅ **Application Scanner**: Automatic detection of installed Windows applications with metadata extraction
-- ✅ **Executable Registration**: Register executables with custom names, descriptions, and icons
-- ✅ **Direct Launch**: Launch registered applications directly from the UI
-- ✅ **Icon Extraction**: Extract icons from Windows executables using PE file parsing
-- ✅ **Metadata Extraction**: Extract version info, company name, and description from executables
-
-#### **3. Registry Editor (Advanced Feature)**
-- ✅ **Wine Registry Integration**: Full access to Wine registry via `regashii` library
-- ✅ **Registry Caching**: In-memory cache with TTL-based invalidation for performance
-- ✅ **Configuration Management**: Programmatic access to registry settings including:
-  - Windows version settings
-  - D3D renderer configuration
-  - Offscreen rendering modes
-  - Audio and graphics drivers
-  - Font replacements
-  - DLL overrides
-  - Virtual desktop settings
-  - Application-specific settings
-  - macOS-specific driver settings
-
-#### **4. Enhanced UI Components**
-- ✅ **Modern Relm4 Interface**: Built with Relm4 0.10.0 and libadwaita
-- ✅ **Prefix List**: Enhanced display with configuration information
-- ✅ **Prefix Details Panel**: Comprehensive view of prefix metadata and applications
-- ✅ **Application Management**: Add, edit, and remove registered applications
-- ✅ **Dialog System**: Modal dialogs for editing prefix details and managing applications
-- ✅ **Responsive Design**: UI adapts to different window sizes
-
-#### **5. Core Architecture**
-- ✅ **Modular Design**: Clean separation of concerns with dedicated modules:
-  - `prefix/`: Core prefix management
-  - `prefix/regeditor/`: Registry editing functionality
-  - `ui/`: User interface components
-- ✅ **Trait-based Design**: Extensible interfaces for all major components
-- ✅ **Async Operations**: Non-blocking operations for scanning and registry access
-- ✅ **Error Handling**: Comprehensive error handling with user-friendly messages
-
-### 🔄 **In Progress / Advanced Features**
-
-#### **1. Wine Configuration Integration**
-- 🔄 **winecfg Integration**: Execute `winecfg` from within Tequila (implemented, UI integration in progress)
-- 🔄 **Registry Editor UI**: Graphical interface for editing Wine registry settings
-- 🔄 **Configuration Templates**: Preset configurations for different use cases
-
-#### **2. Enhanced Application Management**
-- 🔄 **Desktop File Integration**: Support for Linux `.desktop` files
-- 🔄 **Enhanced Metadata**: More detailed application information extraction
-- 🔄 **Icon Caching**: Efficient caching system for application icons
-
-#### **3. Performance & Reliability**
-- 🔄 **Lazy Loading**: Config loading on demand for large prefix collections
-- 🔄 **Background Operations**: Non-blocking scanning and registry operations
-- 🔄 **Robust Error Recovery**: Graceful handling of Wine command failures
-
-### 📋 **Original Roadmap Status**
-
-| Feature | Status | Notes |
-|-------|--------|-------|
-| Basic prefix management (create/delete) | ✅ | Enhanced with config system |
-| Packaging/unpacking via zstd | ✅ | Core functionality implemented |
-| Launch executables from prefix | ✅ | Advanced with metadata and icons |
-| Create desktop/dock shortcuts (macOS first) | 🔄 | Core functionality in place |
-| Integrated `winecfg` and `winetricks` GUI | 🔄 | `winecfg` integration complete |
-| Linux support | 🔄 | Architecture designed for cross-platform |
-| Import/export from `.tar.zst` archives | 🔄 | Base functionality available |
-| Prefix metadata & icons | ✅ | Advanced implementation complete |
-
----
-
-## 🧭 Roadmap
-
-### **Immediate Next Steps**
-- [ ] **Complete UI Integration**: Finish connecting all UI components to backend
-- [ ] **Registry Editor UI**: Create graphical interface for registry editing
-- [ ] **Testing Suite**: Expand unit and integration tests
-- [ ] **Performance Optimization**: Lazy loading and background operations
-- [ ] **Linux Testing**: Validate functionality on Linux systems
-
-### **Medium Term Goals**
-- [ ] **Template System**: Create and share prefix templates
-- [ ] **Import/Export**: Enhanced prefix sharing capabilities
-- [ ] **Advanced Application Management**: Better metadata extraction and organization
-- [ ] **User Documentation**: Comprehensive usage guides and tutorials
-
-### **Long Term Vision**
-- [ ] **Cloud Integration**: Online application database and prefix sharing
-- [ ] **Advanced Features**: Performance monitoring, dependency management
-- [ ] **Plugin System**: Extensible architecture for new features
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please open an issue or submit a PR.  
-Make sure your code follows standard Rust conventions and includes appropriate documentation.
-
----
-
-## 📜 License
-
-This project is licensed under the GPLv3 License — see the [LICENSE](LICENSE) file for details.
-
----
-
-## 📂 Project Structure
-
-```
-src/
-├── main.rs                     # Main application entry point
-├── prefix/                     # Core prefix management
-│   ├── mod.rs                  # Module exports
-│   ├── config.rs               # PrefixConfig implementation
-│   ├── manager.rs              # PrefixManager implementation
-│   ├── scanner.rs              # ApplicationScanner implementation
-│   ├── traits.rs               # Core traits
-│   ├── wine_processes.rs       # Wine process utilities
-│   └── regeditor/              # Registry editing
-│       ├── mod.rs              # Registry module exports
-│       ├── cache.rs            # Registry cache implementation
-│       ├── editor.rs           # RegistryEditor implementation
-│       ├── keys.rs             # Registry constants and enums
-│       ├── registry.rs         # WineRegistry wrapper
-│       └── traits.rs           # Registry traits
-└── ui/                         # User interface
-    ├── mod.rs                  # UI module exports
-    ├── prefix_list.rs          # Prefix list component
-    ├── prefix_details.rs       # Prefix details component
-    ├── app_manager.rs          # Application management UI
-    └── ...                     # Additional UI components
+```sh
+git clone https://github.com/your-username/tequila.git
+cd tequila
+cargo build --release
+./target/release/tequila
 ```
 
-## 🛠️ Technical Highlights
+> Binaries and installers are not yet provided. See [Roadmap](#-roadmap).
 
-- **Modern Rust**: Uses async/await, traits, and advanced type system features
-- **Relm4 Framework**: Reactive UI with component-based architecture
-- **Serde Integration**: Robust serialization/deserialization for config files
-- **PE File Parsing**: Direct executable metadata extraction using `exe` crate
-- **Registry Access**: Low-level Wine registry manipulation via `regashii`
-- **Error Handling**: Comprehensive error types with user-friendly messages
-- **Async Operations**: Non-blocking scanning and registry operations
-- **Memory Management**: Efficient caching and resource handling
+---
+
+## Usage
+
+1. **Launch Tequila** — the main window opens with an empty sidebar if no prefixes exist.
+2. **Create a prefix** — use the "Create" dialog to set a name and architecture (win32/win64).
+3. **Select a prefix** — the prefix config panel opens, showing Wine version, graphics backend, and registered applications.
+4. **Install a Wine runtime** — go to **Settings → Wine Runtime** to detect system Wine, download a managed runtime (Homebrew or Kron4ek), or import an existing installation.
+5. **Switch Wine versions** — in the prefix config, click "Switch" to select a different runtime. The prefix will automatically reinitialize.
+6. **Launch applications** — executables detected by the scanner appear under the Apps list. You can also launch them directly from the prefix config.
+7. **Edit the registry** — use the **Registry Editor** button to open the graphical registry editor with general, graphics, and platform tabs.
+
+### Screenshots
+
+*(Screenshots to be added)*
+
+---
+
+## Technical Highlights
+
+- **Rust edition 2024** — full use of modern Rust features
+- **Reactive UI** — Relm4's component model with `#[tracker::track]` for efficient updates
+- **Async operations** — non‑blocking scanning, downloading, and registry operations via `tokio`
+- **Wine runtime abstraction** — uniform API over system Wine, Homebrew casks, and Kron4ek builds
+- **Graphics backend pipeline** — automatic DLL symlinking, registry override injection, and config serialization
+- **SQLite persistence** — registry cache and scanned executable cache via `rusqlite`
+- **Comprehensive error handling** — user‑friendly error dialogs with actionable suggestions (rate‑limiting, missing binaries, VPN issues)
+- **macOS integration** — native menus, file dialogs (`NSSavePanel`), Dock integration, and `gdk4-macos`
+
+---
+
+## Requirements Details
+
+### System Dependencies
+
+- **GTK 4** (≥ 4.10)
+- **libadwaita** (≥ 1.7)
+- **pkg-config**
+- **zstd**
+- **tar**, **xz**
+
+**Debian/Ubuntu:**
+```sh
+sudo apt install libgtk-4-dev libadwaita-1-dev pkg-config zstd
+```
+
+**Fedora:**
+```sh
+sudo dnf install gtk4-devel libadwaita-devel pkg-config zstd
+```
+
+**Arch Linux:**
+```sh
+sudo pacman -S gtk4 libadwaita pkg-config zstd
+```
+
+**macOS (Homebrew):**
+```sh
+brew install gtk4 libadwaita pkg-config zstd
+```
+
+---
+
+## Roadmap
+
+### Short Term
+- [ ] Binary releases (AppImage, macOS .app bundle)
+- [ ] Windows executable drag‑and‑drop registration
+- [ ] Prefix export/import as compressed archives
+- [ ] Unit and integration test coverage
+
+### Medium Term
+- [ ] Winetricks integration (GUI for installing libraries)
+- [ ] Prefix templates / starter configurations
+- [ ] Application desktop shortcut creation
+- [ ] Online application database
+
+### Long Term
+- [ ] Plugin system
+- [ ] Cloud prefix sharing
+- [ ] Performance profiling and Wine debug log viewer
+
+---
+
+## Contributing
+
+Contributions are welcome! Please open an issue or submit a pull request.
+
+Make sure your code follows standard Rust conventions and includes appropriate documentation. If you're adding a feature, consider updating the relevant design document in `docs/`.
+
+---
+
+## License
+
+This project is licensed under the **GPLv3 License** — see the [LICENSE](LICENSE) file for details.
+
+---
 
 > **Tequila** — because managing Wine shouldn't give you a headache. 🥃
