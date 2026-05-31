@@ -435,7 +435,8 @@ fn build_available_graphics_rows(
                             && e.as_ref()
                                 .ok()
                                 .map(|e| {
-                                    let n = e.file_name().to_string_lossy();
+                                    let binding = e.file_name();
+                                    let n = binding.to_string_lossy();
                                     n.starts_with("dxvk-") || n.starts_with("vkd3d-")
                                 })
                                 .unwrap_or(false)

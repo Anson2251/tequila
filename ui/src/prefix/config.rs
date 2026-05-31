@@ -39,6 +39,21 @@ pub struct PrefixConfigModel {
     graphics_items: gtk::StringList,
     #[tracker::do_not_track]
     graphics_backends: Vec<Option<prefix::base::GraphicsBackend>>,
+    #[tracker::do_not_track]
+    wine_runtime_items: gtk::StringList,
+    #[tracker::do_not_track]
+    wine_runtime_ids: Vec<String>,
+    selected_wine_runtime: u32,
+    #[tracker::do_not_track]
+    parent_window: gtk::Window,
+    #[tracker::do_not_track]
+    reinitializing: bool,
+    #[tracker::do_not_track]
+    progress_bar: gtk::ProgressBar,
+    #[tracker::do_not_track]
+    pulse_id: Option<gtk::glib::SourceId>,
+    #[tracker::do_not_track]
+    progress_dialog: Option<gtk::Window>,
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────
@@ -54,6 +69,11 @@ pub enum PrefixConfigMsg {
     PrefixPathUpdated(PathBuf),
     SetPrefixIndex(usize),
     SetWineVersionDisplay(String),
+    SelectWineVersion,
+    WineVersionChanged(u32),
+    SetProgressDialog(Option<gtk::Window>),
+    SetPulseId(Option<gtk::glib::SourceId>),
+    ReinitComplete(Result<(), String>),
     GraphicsBackendChanged(u32),
     ShowAdvancedRegistry,
     RegistryEditor(RegistryEditorMsg),
@@ -108,6 +128,9 @@ impl SimpleComponent for PrefixConfigModel {
         Arc<prefix::PrefixStore>,
         Arc<Mutex<ProcessTracker>>,
         gtk::Button,
+        prefix::RuntimeManager,
+        gtk::Window,
+        prefix::Manager,
     );
     type Input = PrefixConfigMsg;
     type Output = PrefixConfigOutput;
@@ -163,7 +186,15 @@ impl SimpleComponent for PrefixConfigModel {
                         set_title: "Wine Version",
                         #[track = "model.changed(PrefixConfigModel::wine_runtime_display())"]
                         set_subtitle: &model.wine_runtime_display,
-                        set_activatable: false,
+
+                        add_suffix = &gtk::Button {
+                            set_label: "Switch",
+                            set_halign: gtk::Align::Center,
+                            set_valign: gtk::Align::Center,
+                            connect_clicked[sender] => move |_| {
+                                sender.input(PrefixConfigMsg::SelectWineVersion);
+                            },
+                        },
                     },
                 },
 
@@ -273,7 +304,35 @@ impl SimpleComponent for PrefixConfigModel {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let (prefix_path, config, prefix_store, process_tracker, back_btn) = init;
+        let (
+            prefix_path,
+            config,
+            prefix_store,
+            process_tracker,
+            back_btn,
+            runtime_manager,
+            parent_window,
+            prefix_manager,
+        ) = init;
+
+        // ── Build wine runtime dropdown ──
+        let mut runtime_items: Vec<String> = Vec::new();
+        let mut runtime_ids: Vec<String> = Vec::new();
+        let mut selected_wine_runtime: u32 = 0;
+        for (i, rt) in runtime_manager.runtimes.iter().enumerate() {
+            runtime_ids.push(rt.id.clone());
+            runtime_items.push(format!("{} ({})", rt.name, rt.wine_version));
+            if Some(&rt.id) == config.wine_version.as_ref() {
+                selected_wine_runtime = i as u32;
+            }
+        }
+        // If no match, select "System Wine" (wine-system) if available, else first
+        if runtime_ids.is_empty() {
+            runtime_items.push("No runtimes available".to_string());
+            runtime_ids.push(String::new());
+        }
+        let runtime_items_str: Vec<&str> = runtime_items.iter().map(|s| s.as_str()).collect();
+        let wine_runtime_items = gtk::StringList::new(&runtime_items_str);
 
         // ── Registry editor ──
         let registry_ctrl = RegistryEditorModel::builder()
@@ -282,6 +341,8 @@ impl SimpleComponent for PrefixConfigModel {
                 config.clone(),
                 Arc::clone(&prefix_store),
                 Arc::clone(&process_tracker),
+                parent_window.clone(),
+                prefix_manager.clone(),
             ))
             .forward(sender.input_sender(), |output| {
                 PrefixConfigMsg::RegistryEditor(output)
@@ -328,6 +389,14 @@ impl SimpleComponent for PrefixConfigModel {
             back_btn,
             graphics_items,
             graphics_backends,
+            wine_runtime_items,
+            wine_runtime_ids: runtime_ids,
+            selected_wine_runtime,
+            parent_window,
+            reinitializing: false,
+            progress_bar: gtk::ProgressBar::new(),
+            pulse_id: None,
+            progress_dialog: None,
             tracker: 0,
         };
 
@@ -430,6 +499,8 @@ impl SimpleComponent for PrefixConfigModel {
                 self.set_editing(false);
                 self.description_text.set_editable(false);
                 self.sync_selected_graphics();
+                self.sync_wine_runtime_display();
+                self.sync_wine_runtime_selection();
             }
             PrefixConfigMsg::PrefixPathUpdated(path) => {
                 self.set_prefix_path(path.clone());
@@ -439,6 +510,131 @@ impl SimpleComponent for PrefixConfigModel {
                 }
                 self.registry_ctrl
                     .emit(RegistryEditorMsg::PrefixPathUpdated(path));
+            }
+            PrefixConfigMsg::SetPrefixIndex(index) => self.set_prefix_index(index),
+            PrefixConfigMsg::SetWineVersionDisplay(d) => self.set_wine_runtime_display(d),
+            PrefixConfigMsg::SelectWineVersion => {
+                let dropdown = gtk::DropDown::builder()
+                    .model(&self.wine_runtime_items)
+                    .selected(self.selected_wine_runtime)
+                    .build();
+
+                let alert = adw::AlertDialog::new(
+                    Some("Change Wine Version"),
+                    Some(
+                        "Select a Wine runtime for this prefix.\n\n\
+                         The prefix will be re-initialized with the new version.\n\
+                         Some applications may not work correctly after the change.",
+                    ),
+                );
+                alert.set_extra_child(Some(&dropdown));
+                alert.add_response("cancel", "Cancel");
+                alert.add_response("change", "Change");
+                alert.set_response_appearance("change", adw::ResponseAppearance::Destructive);
+                alert.set_default_response(Some("cancel"));
+                alert.set_close_response("cancel");
+
+                let s = sender.clone();
+                let pw = self.parent_window.clone();
+                alert.choose(
+                    Some(&self.parent_window),
+                    None::<&gtk::gio::Cancellable>,
+                    move |response| {
+                        if response == "change" {
+                            let idx = dropdown.selected();
+                            let _ = s.input(PrefixConfigMsg::WineVersionChanged(idx));
+
+                            // Show progress dialog
+                            let pb = gtk::ProgressBar::new();
+                            pb.pulse();
+                            let id = gtk::glib::timeout_add_local(
+                                std::time::Duration::from_millis(100),
+                                {
+                                    let pb = pb.clone();
+                                    move || {
+                                        pb.pulse();
+                                        gtk::glib::ControlFlow::Continue
+                                    }
+                                },
+                            );
+                            let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+                            content.set_margin_top(20);
+                            content.set_margin_end(20);
+                            content.set_margin_bottom(20);
+                            content.set_margin_start(20);
+                            let label = gtk::Label::new(Some(
+                                "Reinitializing prefix with the new Wine version...",
+                            ));
+                            content.append(&label);
+                            content.append(&pb);
+
+                            let win = gtk::Window::builder()
+                                .title("Changing Wine Version")
+                                .modal(true)
+                                .transient_for(&pw)
+                                .resizable(false)
+                                .default_width(350)
+                                .child(&content)
+                                .build();
+                            win.present();
+                            let _ = s.input(PrefixConfigMsg::SetProgressDialog(Some(win)));
+                            let _ = s.input(PrefixConfigMsg::SetPulseId(Some(id)));
+                        }
+                    },
+                );
+            }
+            PrefixConfigMsg::WineVersionChanged(idx) => {
+                // Update config with selected runtime
+                if let Some(id) = self.wine_runtime_ids.get(idx as usize) {
+                    self.config.wine_version = if id.is_empty() {
+                        None
+                    } else {
+                        Some(id.clone())
+                    };
+                }
+                self.set_selected_wine_runtime(idx);
+
+                // Save config
+                self.config.update_last_modified();
+                if let Err(e) = self.config.save_to_file(&self.prefix_path) {
+                    eprintln!("Failed to save config: {}", e);
+                }
+                self.saved_config = self.config.clone();
+                let config = self.config.clone();
+                let _ = sender.output(PrefixConfigOutput::ConfigUpdated(config));
+            }
+            PrefixConfigMsg::SetProgressDialog(dialog) => {
+                self.progress_dialog = dialog;
+            }
+            PrefixConfigMsg::SetPulseId(id) => {
+                self.pulse_id = id;
+            }
+            PrefixConfigMsg::ReinitComplete(result) => {
+                self.reinitializing = false;
+                if let Some(id) = self.pulse_id.take() {
+                    id.remove();
+                }
+                if let Some(dialog) = self.progress_dialog.take() {
+                    dialog.close();
+                }
+
+                if let Err(e) = result {
+                    let alert = adw::AlertDialog::new(
+                        Some("Reinitialization Failed"),
+                        Some(&format!(
+                            "Failed to reinitialize prefix with the new Wine version:\n\n{}",
+                            e
+                        )),
+                    );
+                    alert.add_response("ok", "OK");
+                    alert.set_default_response(Some("ok"));
+                    alert.set_close_response("ok");
+                    alert.choose(
+                        Some(&self.parent_window),
+                        None::<&gtk::gio::Cancellable>,
+                        |_| {},
+                    );
+                }
             }
             PrefixConfigMsg::SetPrefixIndex(index) => self.set_prefix_index(index),
             PrefixConfigMsg::SetWineVersionDisplay(d) => self.set_wine_runtime_display(d),
@@ -498,5 +694,37 @@ impl PrefixConfigModel {
         // set_selected with same value is a no-op in GTK4,
         // so no infinite loop when ConfigUpdated comes back from our own change.
         self.set_selected_graphics(idx);
+    }
+
+    fn sync_wine_runtime_display(&mut self) {
+        let display = self
+            .config
+            .wine_version
+            .as_ref()
+            .and_then(|id| {
+                self.wine_runtime_ids
+                    .iter()
+                    .position(|rid| rid == id)
+                    .map(|i| i as u32)
+                    .and_then(|i| self.wine_runtime_items.string(i))
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| {
+                self.config
+                    .wine_version
+                    .as_deref()
+                    .unwrap_or("Unknown")
+                    .to_string()
+            });
+        self.set_wine_runtime_display(display);
+    }
+
+    fn sync_wine_runtime_selection(&mut self) {
+        let idx = self
+            .wine_runtime_ids
+            .iter()
+            .position(|id| Some(id.as_str()) == self.config.wine_version.as_deref())
+            .unwrap_or(0) as u32;
+        self.set_selected_wine_runtime(idx);
     }
 }

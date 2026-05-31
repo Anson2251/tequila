@@ -106,32 +106,52 @@ impl Manager {
         fs::create_dir_all(&prefix_path)?;
         let mut config = PrefixConfig::new(name.to_string(), architecture.to_string());
         config.wine_version = Some(runtime_id.to_string());
-        config.save_to_file(&prefix_path)?;
-        let wine_arch = if architecture == "win32" {
+        config.save_to_file(&prefix_path).map_err(|e| {
+            let _ = fs::remove_dir_all(&prefix_path);
+            e
+        })?;
+        self.reinitialize_prefix(&prefix_path, &config)
+            .map_err(|e| {
+                let _ = fs::remove_dir_all(&prefix_path);
+                e
+            })?;
+        Ok(prefix_path)
+    }
+
+    /// Re-initialize an existing prefix with the Wine version specified in
+    /// `config.wine_version`.  This runs `wine cmd /c echo hello, world` to
+    /// trigger Wine's prefix creation/update machinery.
+    ///
+    /// The prefix directory must already exist on disk.
+    pub fn reinitialize_prefix(&self, prefix_path: &PathBuf, config: &PrefixConfig) -> Result<()> {
+        let wine_arch = if config.architecture == "win32" {
             "win32"
         } else {
             "win64"
         };
+
         let mut cmd = self.build_wine_command_with_args(
             &["cmd", "/c", "echo hello, world"],
-            &config,
-            &prefix_path,
+            config,
+            prefix_path,
         );
         cmd.env("WINEARCH", wine_arch);
         cmd.env("DISPLAY", "");
         cmd.env("WINEDEBUG", "-all");
+
+        self.check_wine_available("wine", config)?;
+
         let output = cmd
             .output()
-            .map_err(|e| PrefixError::Process(format!("Failed to run wine: {}", e)))?;
+            .map_err(|e| PrefixError::Process(format!("Failed to reinitialize prefix: {}", e)))?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         if !stdout.contains("hello, world") {
-            let _ = fs::remove_dir_all(&prefix_path);
             return Err(PrefixError::Wine(format!(
-                "Prefix bootstrap failed: expected 'hello, world' in output, got: {}",
+                "Prefix reinitialization failed: expected 'hello, world' in output, got: {}",
                 stdout.trim()
             )));
         }
-        Ok(prefix_path)
+        Ok(())
     }
 
     pub fn delete_prefix(&self, prefix_path: &PathBuf) -> Result<()> {

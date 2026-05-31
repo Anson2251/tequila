@@ -2,6 +2,7 @@ pub mod menu;
 pub mod resources;
 pub use resources::initialize_custom_resources;
 
+use adw::prelude::*;
 use gtk::glib;
 use gtk::prelude::*;
 use gtk4::gio;
@@ -60,6 +61,8 @@ pub struct AppModel {
     #[tracker::do_not_track]
     create_prefix_dialog:
         Option<relm4::Controller<crate::prefix::create_dialog::CreatePrefixDialog>>,
+    #[tracker::do_not_track]
+    sidebar_btn: gtk::Button,
 }
 
 #[derive(Debug)]
@@ -83,6 +86,7 @@ pub enum AppMsg {
     ToggleSidebar,
     ShowSettings,
     RuntimesUpdated(RuntimeManager),
+    ReinitComplete(usize, std::result::Result<(), String>),
 }
 
 impl AppModel {
@@ -224,6 +228,9 @@ impl SimpleComponent for AppModel {
                 Arc::clone(&prefix_store),
                 Arc::clone(&process_tracker),
                 back_btn,
+                prefix_manager.runtime_manager().clone(),
+                root.clone().upcast::<gtk::Window>(),
+                prefix_manager.clone(),
             ))
             .forward(sender.input_sender(), |msg| match msg {
                 crate::prefix::config::PrefixConfigOutput::ConfigUpdated(config) => {
@@ -239,6 +246,7 @@ impl SimpleComponent for AppModel {
                 Arc::clone(&icon_cache),
                 Arc::clone(&prefix_store),
                 Arc::clone(&process_tracker),
+                root.clone().upcast::<gtk::Window>(),
             ))
             .forward(sender.input_sender(), |msg| match msg {
                 crate::apps::AppManagerMsg::ConfigUpdated(config) => {
@@ -377,6 +385,8 @@ impl SimpleComponent for AppModel {
 
         let overlay_widget = sync_overlay.clone().upcast::<gtk::Widget>();
 
+        let has_prefixes = !prefixes.is_empty();
+
         let model = AppModel {
             prefixes,
             prefix_manager,
@@ -386,19 +396,26 @@ impl SimpleComponent for AppModel {
             app_manager,
             settings,
             create_prefix_dialog: None,
+            sidebar_btn: sidebar_btn.clone(),
             content_stack,
             content_box,
             flap,
             switcher,
             prefix_store,
             syncing: false,
-            sidebar_visible: true,
+            sidebar_visible: has_prefixes,
             main_window: root.clone(),
             sync_overlay: sync_overlay_box,
             sync_progress_bar,
             sync_progress_label,
             tracker: 0,
         };
+
+        // If there are no prefixes, hide the sidebar
+        if !has_prefixes {
+            model.flap.set_show_sidebar(false);
+            model.sidebar_btn.set_sensitive(false);
+        }
 
         let widgets = view_output!();
 
@@ -479,7 +496,18 @@ impl SimpleComponent for AppModel {
                         }
                         Err(e) => {
                             eprintln!("Failed to launch winecfg for prefix {}: {}", prefix_name, e);
-                            // TODO: Show error dialog to user
+                            let alert = adw::AlertDialog::new(
+                                Some("Launch Failed"),
+                                Some(&format!("Failed to launch winecfg:\n\n{}", e)),
+                            );
+                            alert.add_response("ok", "OK");
+                            alert.set_default_response(Some("ok"));
+                            alert.set_close_response("ok");
+                            alert.choose(
+                                Some(&self.main_window.clone().upcast::<gtk::Window>()),
+                                None::<&gtk::gio::Cancellable>,
+                                |_| {},
+                            );
                         }
                     }
                 }
@@ -496,6 +524,18 @@ impl SimpleComponent for AppModel {
                             .launch_executable(prefix_path, executable)
                         {
                             eprintln!("Failed to launch executable: {}", e);
+                            let alert = adw::AlertDialog::new(
+                                Some("Launch Failed"),
+                                Some(&format!("Failed to launch '{}':\n\n{}", executable.name, e)),
+                            );
+                            alert.add_response("ok", "OK");
+                            alert.set_default_response(Some("ok"));
+                            alert.set_close_response("ok");
+                            alert.choose(
+                                Some(&self.main_window.clone().upcast::<gtk::Window>()),
+                                None::<&gtk::gio::Cancellable>,
+                                |_| {},
+                            );
                         }
                     }
                 }
@@ -579,6 +619,9 @@ impl SimpleComponent for AppModel {
                         let prefix_path = self.prefixes[actual_index].path.clone();
                         let old_graphics = self.prefixes[actual_index].config.graphics.clone();
                         let new_graphics = config.graphics.clone();
+                        let old_wine_version =
+                            self.prefixes[actual_index].config.wine_version.clone();
+                        let new_wine_version = config.wine_version.clone();
 
                         // Detect if the graphics backend changed
                         let graphics_changed = match (&old_graphics, &new_graphics) {
@@ -609,51 +652,72 @@ impl SimpleComponent for AppModel {
                                 if old_graphics.is_some() {
                                     info!("[config] Deactivating old graphics backend");
                                     if let Err(e) = pm.deactivate_graphics_backend(&pp).await {
-                                        error!(
-                                            "Failed to deactivate old graphics backend: {}",
-                                            e
-                                        );
+                                        error!("Failed to deactivate old graphics backend: {}", e);
                                     }
                                 }
 
                                 // Activate new backend (writes config + symlinks + registry)
                                 if let Some(ref gfx) = new_graphics {
                                     if let Some(backend) = gfx.to_backend() {
-                                        info!("[config] Activating {} graphics backend",
-                                            backend.display_name());
-                                        if let Err(e) = pm
-                                            .activate_graphics_backend(&backend, &pp)
-                                            .await
+                                        info!(
+                                            "[config] Activating {} graphics backend",
+                                            backend.display_name()
+                                        );
+                                        if let Err(e) =
+                                            pm.activate_graphics_backend(&backend, &pp).await
                                         {
-                                            error!(
-                                                "Failed to activate graphics backend: {}",
-                                                e
-                                            );
+                                            error!("Failed to activate graphics backend: {}", e);
                                         }
                                     }
                                 }
                             });
                         } else {
                             // No backend change — normal config save
-                            if let Err(e) =
-                                self.prefix_manager.update_config(&prefix_path, &config)
+                            if let Err(e) = self.prefix_manager.update_config(&prefix_path, &config)
                             {
                                 eprintln!("Failed to update config: {}", e);
                             } else {
                                 self.prefixes[actual_index].config = config.clone();
-
                                 self.prefix_config.emit(
                                     crate::prefix::config::PrefixConfigMsg::ConfigUpdated(
                                         config.clone(),
                                     ),
                                 );
-                                self.app_manager.emit(
-                                    crate::apps::AppManagerMsg::ConfigUpdated(config.clone()),
-                                );
+                                self.app_manager
+                                    .emit(crate::apps::AppManagerMsg::ConfigUpdated(
+                                        config.clone(),
+                                    ));
                             }
+                        }
+
+                        // Detect if wine version changed — reinitialize prefix on a
+                        // background thread if it did.
+                        if old_wine_version != new_wine_version {
+                            let pm = self.prefix_manager.clone();
+                            let pp = prefix_path.clone();
+                            let cfg = config.clone();
+                            let s = sender.clone();
+                            let prefix_index = actual_index;
+
+                            std::thread::spawn(move || {
+                                let result = pm.reinitialize_prefix(&pp, &cfg);
+                                let msg = AppMsg::ReinitComplete(
+                                    prefix_index,
+                                    result.map_err(|e| e.to_string()),
+                                );
+                                // Send back to main thread via component channel
+                                let _ = s.input(msg);
+                            });
                         }
                     }
                 }
+            }
+            AppMsg::ReinitComplete(_index, result) => {
+                // Forward to prefix config
+                self.prefix_config
+                    .emit(crate::prefix::config::PrefixConfigMsg::ReinitComplete(
+                        result,
+                    ));
             }
             AppMsg::ScanForApplications(index) => {
                 if index < self.prefixes.len() {
@@ -710,12 +774,32 @@ impl SimpleComponent for AppModel {
                 self.set_syncing(false);
                 self.sync_overlay.set_visible(false);
                 self.prefixes = fresh.clone();
+
+                // Close sidebar if all prefixes were removed
+                if fresh.is_empty() {
+                    self.flap.set_show_sidebar(false);
+                    self.set_sidebar_visible(false);
+                    self.sidebar_btn.set_sensitive(false);
+                } else {
+                    self.sidebar_btn.set_sensitive(true);
+                }
+
                 self.prefix_list
                     .emit(crate::prefix::list::PrefixListMsg::SetPrefixes(fresh));
             }
             AppMsg::ReloadPrefixes(fresh) => {
                 // Light reload: update the prefix list without app scanning or auto-select
                 self.prefixes = fresh.clone();
+
+                // Close sidebar if all prefixes were removed
+                if fresh.is_empty() {
+                    self.flap.set_show_sidebar(false);
+                    self.set_sidebar_visible(false);
+                    self.sidebar_btn.set_sensitive(false);
+                } else {
+                    self.sidebar_btn.set_sensitive(true);
+                }
+
                 self.prefix_list
                     .emit(crate::prefix::list::PrefixListMsg::SetPrefixes(fresh));
             }
@@ -757,11 +841,17 @@ impl SimpleComponent for AppModel {
                     .set_label(&format!("{} / {} prefixes", completed, total));
             }
             AppMsg::ToggleSidebar => {
+                if self.prefixes.is_empty() {
+                    return;
+                }
                 let visible = !self.sidebar_visible;
                 self.set_sidebar_visible(visible);
                 self.flap.set_show_sidebar(visible);
             }
             AppMsg::ShowSettings => {
+                self.settings
+                    .widget()
+                    .set_transient_for(Some(&self.main_window));
                 self.settings.widget().present();
             }
             AppMsg::RuntimesUpdated(rm) => {

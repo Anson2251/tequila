@@ -126,6 +126,34 @@ pub fn find_wine_binary(dir: &Path) -> Result<PathBuf> {
     ))
 }
 
+/// Kron4ek archives often contain a single top-level directory (e.g.
+/// `wine-11.8-amd64/`).  After extracting into `dest_dir`, call this to
+/// "un-nest" that directory so the rest of the pipeline sees a flat layout.
+///
+/// If `dest_dir` contains exactly one subdirectory and no loose files,
+/// it returns the path of that subdirectory.  Otherwise it returns `dest_dir`
+/// as-is (no nesting to flatten).
+pub fn find_content_dir(dest_dir: &Path) -> Result<PathBuf> {
+    let mut entries = Vec::new();
+    if let Ok(read) = fs::read_dir(dest_dir) {
+        for entry in read.flatten() {
+            entries.push(entry);
+        }
+    }
+
+    // If there's exactly one entry and it's a directory, use it as the content root
+    if entries.len() == 1 {
+        if let Ok(ftype) = entries[0].file_type() {
+            if ftype.is_dir() {
+                return Ok(entries[0].path());
+            }
+        }
+    }
+
+    // Otherwise assume flat extraction (like Homebrew casks)
+    Ok(dest_dir.to_path_buf())
+}
+
 pub fn bundle_dir_from_wine_bin(wine_bin: &Path) -> PathBuf {
     wine_bin
         .parent()

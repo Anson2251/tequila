@@ -178,22 +178,43 @@ impl AsyncComponent for SettingsWindow {
                 #[watch]
                 set_visible: cfg!(target_os = "macos"),
             },
+
+            adw::PreferencesGroup {
+                adw::ActionRow {
+                    set_title: "Open Prefixes Directory",
+                    set_subtitle: "Browse Wine prefixes on disk",
+                    set_activatable: true,
+                    connect_activated[prefixes_dir] => move |_| {
+                        let path = prefixes_dir.to_string_lossy().to_string();
+                        std::thread::spawn(move || {
+                            #[cfg(target_os = "macos")]
+                            let _ = std::process::Command::new("open").arg(&path).status();
+                            #[cfg(not(target_os = "macos"))]
+                            let _ = std::process::Command::new("xdg-open").arg(&path).status();
+                        });
+                    },
+                },
+                adw::ActionRow {
+                    set_title: "Open Data Directory",
+                    set_subtitle: "Browse runtimes and configuration files on disk",
+                    set_activatable: true,
+                    connect_activated[data_dir] => move |_| {
+                        let path = data_dir.to_string_lossy().to_string();
+                        std::thread::spawn(move || {
+                            #[cfg(target_os = "macos")]
+                            let _ = std::process::Command::new("open").arg(&path).status();
+                            #[cfg(not(target_os = "macos"))]
+                            let _ = std::process::Command::new("xdg-open").arg(&path).status();
+                        });
+                    },
+                },
+            },
         },
 
         #[name = "back_btn"]
         gtk::Button {
             set_icon_name: "go-previous-symbolic",
             set_visible: false,
-        },
-
-        #[name = "close_btn"]
-        gtk::Button {
-            set_icon_name: "window-close-symbolic",
-            set_tooltip_text: Some("Close"),
-            set_visible: cfg!(not(target_os = "macos")),
-            connect_clicked[sender] => move |_| {
-                sender.input(SettingsMsg::Close);
-            },
         },
     }
 
@@ -217,6 +238,7 @@ impl AsyncComponent for SettingsWindow {
         let data_dir = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("tequila");
+        let prefixes_dir = prefix_manager.wine_dir().clone();
 
         // Create child subpage controllers (independent of widgets)
         let runtime_ctrl = runtime::RuntimeSettings::builder()
@@ -259,7 +281,7 @@ impl AsyncComponent for SettingsWindow {
                         Ok(())
                     }
                 }),
-                data_dir,
+                data_dir: data_dir.clone(),
             })
             .forward(sender.input_sender(), |_out| {
                 SettingsMsg::GStreamerStatusChanged
@@ -289,7 +311,6 @@ impl AsyncComponent for SettingsWindow {
 
         // Add buttons to header_bar (must be after view_output! so named widgets exist)
         header_bar.pack_start(&widgets.back_btn);
-        header_bar.pack_end(&widgets.close_btn);
 
         // Wire up back button to NavigationView
         {

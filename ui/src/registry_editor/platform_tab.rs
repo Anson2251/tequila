@@ -1,5 +1,4 @@
 use adw::prelude::*;
-use gtk::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
 use tracker;
 
@@ -233,7 +232,7 @@ impl SimpleComponent for PlatformTabModel {
                 //  X11 Driver
                 // ══════════════════════════════════════
                 adw::PreferencesGroup {
-                    set_margin_top: 18,
+                    set_margin_top: if cfg!(target_os = "macos") { 18 } else { 0 },
                     set_title: "Window Management",
                     set_description: Some("Configure X11 window manager integration"),
 

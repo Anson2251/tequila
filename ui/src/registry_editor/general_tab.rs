@@ -148,12 +148,10 @@ impl SimpleComponent for GeneralTabModel {
                         set_active: model.virtual_desktop_enabled,
                         #[track = "model.changed(GeneralTabModel::editing())"]
                         set_sensitive: model.editing,
-                        connect_state_set[sender] => move |sw, state| {
-                            sw.set_active(state);
+                        connect_active_notify[sender] => move |sw| {
                             sender.input(GeneralTabInput::UpdateField(
-                                "vd_enabled".into(), state.to_string(),
+                                "vd_enabled".into(), sw.is_active().to_string(),
                             ));
-                            gtk::glib::Propagation::Stop
                         },
                     },
                 },

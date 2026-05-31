@@ -207,7 +207,7 @@ impl SimpleComponent for EnvVarsEditor {
 
 #[relm4::component(pub, async)]
 impl AsyncComponent for ExecutableInfoDialogModel {
-    type Init = PathBuf;
+    type Init = (PathBuf, gtk::Window);
     type Input = ExecutableInfoDialogMsg;
     type Output = ExecutableInfoDialogOutput;
     type CommandOutput = ();
@@ -461,6 +461,11 @@ impl AsyncComponent for ExecutableInfoDialogModel {
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
+        let (prefix_path_init, parent_window) = init;
+
+        // Ensure the dialog stays above the main window
+        root.set_transient_for(Some(&parent_window));
+
         let header_bar = gtk::HeaderBar::new();
         #[cfg(target_os = "macos")]
         header_bar.set_property("use-native-controls", true);
@@ -481,26 +486,12 @@ impl AsyncComponent for ExecutableInfoDialogModel {
         #[cfg(not(target_os = "macos"))]
         header_bar.pack_start(&save_btn);
 
-        // Close button (non-macOS only)
-        #[cfg(not(target_os = "macos"))]
-        {
-            let close_btn = gtk::Button::builder()
-                .icon_name("window-close-symbolic")
-                .tooltip_text("Close")
-                .build();
-            let s = sender.clone();
-            close_btn.connect_clicked(move |_| {
-                let _ = s.input(ExecutableInfoDialogMsg::Hide);
-            });
-            header_bar.pack_end(&close_btn);
-        }
-
         root.set_titlebar(Some(&header_bar));
 
         let mut model = ExecutableInfoDialogModel {
             executable: None,
             visible: false,
-            prefix_path: init.canonicalize().unwrap_or(init),
+            prefix_path: prefix_path_init.canonicalize().unwrap_or(prefix_path_init),
             cwd_entry_row: adw::EntryRow::new(),
             env_vars_editor: None,
             tracker: 0,
@@ -522,7 +513,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
         &mut self,
         msg: Self::Input,
         sender: AsyncComponentSender<Self>,
-        _widgets: &Self::Root,
+        root: &Self::Root,
     ) {
         self.reset();
         match msg {
@@ -536,6 +527,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                 self.prefix_path = prefix_path;
                 self.set_executable(Some(executable));
                 self.set_visible(true);
+                root.present();
             }
             ExecutableInfoDialogMsg::Hide => {
                 self.set_visible(false);

@@ -70,8 +70,10 @@ impl SimpleComponent for PrefixListModel {
 
         populate(&model.prefixes, &model.list_box, &sender);
 
-        // If more than one prefix, deselect all (don't auto-select first)
-        if model.prefixes.len() != 1 {
+        // Auto-select first prefix if there's exactly one
+        if model.prefixes.len() == 1 {
+            let _ = sender.output(PrefixListOutput::SelectPrefix(0));
+        } else {
             let lb = model.list_box.clone();
             gtk::glib::idle_add_local(move || {
                 lb.unselect_all();
@@ -88,6 +90,11 @@ impl SimpleComponent for PrefixListModel {
                 println!("SetPrefixes received: {} items", prefixes.len());
                 self.prefixes = prefixes.clone();
                 populate(&self.prefixes, &self.list_box, &sender);
+
+                // Auto-select first prefix if there's exactly one
+                if prefixes.len() == 1 {
+                    let _ = sender.output(PrefixListOutput::SelectPrefix(0));
+                }
             }
             PrefixListMsg::SelectPrefix(index) => {
                 if self.selected_prefix == Some(index) {

@@ -7,6 +7,51 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 
 impl Manager {
+    /// Check that the given binary (`"wine"`, `"winecfg"`, …) is available
+    /// for the current runtime configuration.  Returns a clear error message
+    /// when it isn't.
+    pub(crate) fn check_wine_available(
+        &self,
+        binary_name: &str,
+        config: &PrefixConfig,
+    ) -> Result<()> {
+        if let Some(runtime) = self.runtime_for_prefix(config) {
+            let bundle_bin = runtime.bundle_dir.join("bin").join(binary_name);
+            if bundle_bin.exists() {
+                return Ok(());
+            }
+            // Runtime is configured but the bundle is missing
+            let dir = runtime.bundle_dir.display();
+            return Err(PrefixError::NotFound(format!(
+                "Wine runtime '{}' is configured but not found at {}.\n\
+                 The runtime directory may have been deleted or moved.\n\
+                 Please go to Settings → Wine Runtime and reinstall \
+                 or select a different runtime.",
+                runtime.name, dir,
+            )));
+        }
+
+        // No runtime configured — look for the binary in PATH
+        if find_in_path(binary_name).is_some() {
+            return Ok(());
+        }
+
+        // For "wine" specifically, also check if there's a system wine at the
+        // standard location (some distros don't add /usr/bin/wine to PATH by default).
+        if binary_name == "wine"
+            && (Path::new("/usr/bin/wine").exists() || Path::new("/usr/local/bin/wine").exists())
+        {
+            return Ok(());
+        }
+
+        Err(PrefixError::NotFound(format!(
+            "'{}' was not found on your system and no Wine runtime is configured.\n\
+             Install Wine through your package manager, or add a managed runtime \
+             in Settings → Wine Runtime.",
+            binary_name,
+        )))
+    }
+
     pub fn launch_executable(
         &self,
         prefix_path: &PathBuf,
@@ -26,6 +71,10 @@ impl Manager {
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
         let config = self.load_or_create_config(prefix_path, name, &None)?;
+
+        // Check wine is available before building the command
+        self.check_wine_available("wine", &config)?;
+
         let mut cmd = self.build_wine_command_with_args(
             &[&executable.executable_path.to_string_lossy()],
             &config,
@@ -76,32 +125,42 @@ impl Manager {
         }
     }
 
-    pub fn run_winecfg(&self, prefix_path: &PathBuf) -> Result<()> {
+    pub fn run_winecfg(&self, prefix_path: &PathBuf) -> Result<Child> {
         let name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
         let config = self.load_or_create_config(prefix_path, name, &None)?;
+
+        // Check winecfg is available before spawning
+        self.check_wine_available("winecfg", &config)?;
+
         info!("[launch] Opening winecfg for prefix '{}'", name);
-        self.build_wine_command_for_exe("winecfg", &config, prefix_path)
+        let child = self
+            .build_wine_command_for_exe("winecfg", &config, prefix_path)
             .current_dir(prefix_path)
             .spawn()
             .map_err(|e| PrefixError::Process(format!("Failed to run winecfg: {}", e)))?;
-        Ok(())
+        Ok(child)
     }
 
-    pub fn run_regedit(&self, prefix_path: &PathBuf) -> Result<()> {
+    pub fn run_regedit(&self, prefix_path: &PathBuf) -> Result<Child> {
         let name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
         let config = self.load_or_create_config(prefix_path, name, &None)?;
+
+        // Check wine is available before spawning
+        self.check_wine_available("wine", &config)?;
+
         info!("[launch] Opening regedit for prefix '{}'", name);
-        self.build_wine_command_with_args(&["regedit"], &config, prefix_path)
+        let child = self
+            .build_wine_command_with_args(&["regedit"], &config, prefix_path)
             .current_dir(prefix_path)
             .spawn()
             .map_err(|e| PrefixError::Process(format!("Failed to run regedit: {}", e)))?;
-        Ok(())
+        Ok(child)
     }
 
     /// Core helper: build a `Command` with runtime env applied (WINEPREFIX, PATH, WINEDLLPATH, etc.).
@@ -143,5 +202,18 @@ impl Manager {
             cmd.arg(arg);
         }
         cmd
+    }
+}
+
+/// Search PATH for a named executable using `which`.
+fn find_in_path(name: &str) -> Option<PathBuf> {
+    let output = std::process::Command::new("which")
+        .arg(name)
+        .output()
+        .ok()?;
+    if output.status.success() {
+        Some(PathBuf::from(String::from_utf8(output.stdout).ok()?.trim()))
+    } else {
+        None
     }
 }

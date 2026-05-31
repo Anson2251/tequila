@@ -79,7 +79,7 @@ impl AsyncComponent for RuntimeSettings {
             #[name = "avail_group"]
             adw::PreferencesGroup {
                 set_title: "Available",
-                set_description: Some("Download Wine runtimes from Homebrew"),
+                set_description: Some("Download Wine runtimes"),
             },
         }
     }
@@ -113,7 +113,17 @@ impl AsyncComponent for RuntimeSettings {
             &mut model.rows,
         );
         model.available_ctrls =
-            build_available_channels(&widgets.avail_group, &model.prefix_manager, &sender);
+            build_available_channels(&widgets.avail_group, &model.prefix_manager, &sender).await;
+
+        // Platform-specific group description
+        #[cfg(target_os = "macos")]
+        widgets
+            .avail_group
+            .set_description(Some("Download Wine runtimes from Homebrew"));
+        #[cfg(not(target_os = "macos"))]
+        widgets.avail_group.set_description(Some(
+            "Download Wine runtimes from Kron4ek/Wine-Builds (requires 32-bit libraries)",
+        ));
 
         AsyncComponentParts { model, widgets }
     }
@@ -128,7 +138,9 @@ impl AsyncComponent for RuntimeSettings {
         match msg {
             RuntimeSettingsMsg::RefreshRuntimes => {
                 // Re-detect system Wine in case it was installed/uninstalled/updated
-                self.prefix_manager.runtime_manager_mut().ensure_system_runtime();
+                self.prefix_manager
+                    .runtime_manager_mut()
+                    .ensure_system_runtime();
                 refresh_runtime_list(
                     &self.list_group,
                     self.prefix_manager.runtime_manager(),
@@ -242,7 +254,12 @@ impl AsyncComponent for RuntimeSettings {
 
 // ── Available channel rows (ManagedDownloadRow per channel) ──────────────
 
-fn build_available_channels(
+/// Build the "Available" section of the Wine Runtime settings page.
+///
+/// On macOS the rows come from Homebrew casks (Stable / Staging / Devel).
+/// On Linux they are fetched from Kron4ek/Wine-Builds (all versions).
+#[cfg(target_os = "macos")]
+async fn build_available_channels(
     group: &adw::PreferencesGroup,
     prefix_manager: &PrefixManager,
     sender: &AsyncComponentSender<RuntimeSettings>,
@@ -294,10 +311,18 @@ fn build_available_channels(
                         Result<RuntimeManager, prefix::base::error::PrefixError>,
                     >();
 
-                    let mut pm_thread = pm.clone();
                     std::thread::spawn(move || {
                         let rt = tokio::runtime::Runtime::new()
                             .expect("Failed to create tokio runtime for download thread");
+
+                        // Load latest state from disk
+                        let mut runtime_manager: RuntimeManager =
+                            if let Some(settings) = prefix::Settings::load() {
+                                settings.into()
+                            } else {
+                                RuntimeManager::new()
+                            };
+                        runtime_manager.ensure_system_runtime();
 
                         // 1. Fetch cask info (needs tokio runtime for reqwest)
                         let cask = match rt
@@ -368,13 +393,12 @@ fn build_available_channels(
                         }
 
                         // 7. Register in runtime manager and save
-                        pm_thread.runtime_manager_mut().register_channel(
-                            channel,
-                            cask.version,
-                            final_dir,
-                        );
-                        pm_thread.save_runtime_state();
-                        let rm = pm_thread.runtime_manager().clone();
+                        runtime_manager.register_channel(channel, cask.version, final_dir);
+                        let settings: prefix::Settings = runtime_manager.clone().into();
+                        if let Err(e) = settings.save() {
+                            eprintln!("Failed to save runtime settings: {}", e);
+                        }
+                        let rm = runtime_manager;
                         let _ = tx.send(Ok(rm));
                     });
 
@@ -418,7 +442,6 @@ fn build_available_channels(
 
         // ── perform_remove ──
         let remove_id = runtime_id.clone();
-        let mut remove_pm = pm.clone();
         let remove_sender = sender.clone();
         let perform_remove = Box::new(move || {
             // Delete the runtime directory from disk
@@ -426,17 +449,291 @@ fn build_available_channels(
             if dir.exists() {
                 std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
             }
-            // Remove from the cloned runtime list
-            remove_pm.remove_runtime(&remove_id);
-            // Sync the parent's prefix_manager with the updated state
-            let rm = remove_pm.runtime_manager().clone();
-            let _ = remove_sender.input(RuntimeSettingsMsg::DownloadComplete(rm));
+
+            // Load the latest state from disk
+            let mut runtime_manager: RuntimeManager =
+                if let Some(settings) = prefix::Settings::load() {
+                    settings.into()
+                } else {
+                    RuntimeManager::new()
+                };
+            runtime_manager.remove(&remove_id);
+            let settings: prefix::Settings = runtime_manager.clone().into();
+            if let Err(e) = settings.save() {
+                eprintln!("Failed to save runtime settings: {}", e);
+            }
+
+            let _ = remove_sender.input(RuntimeSettingsMsg::DownloadComplete(runtime_manager));
             Ok(())
         });
 
         let ctrl = managed_download_row::ManagedDownloadRow::builder()
             .launch(managed_download_row::ManagedDownloadRowInit {
                 title: display_name.to_string(),
+                check_status,
+                check_update: None,
+                start_download,
+                perform_remove,
+                data_dir: Default::default(),
+            })
+            .forward(sender.input_sender(), |_out| {
+                RuntimeSettingsMsg::RefreshRuntimes
+            });
+
+        group.add(ctrl.widget());
+        ctrls.push(ctrl);
+    }
+
+    ctrls
+}
+
+/// Build available Wine channels from Kron4ek/Wine-Builds (Linux).
+///
+/// Fetches all releases via the GitHub API and creates a download row for
+/// every vanilla + Staging release.  Each row downloads the `amd64` / `x86`
+/// archive matching the current system architecture.
+#[cfg(not(target_os = "macos"))]
+async fn build_available_channels(
+    group: &adw::PreferencesGroup,
+    _prefix_manager: &PrefixManager,
+    sender: &AsyncComponentSender<RuntimeSettings>,
+) -> Vec<AsyncController<managed_download_row::ManagedDownloadRow>> {
+    use prefix::runtime::kron4ek::WineBuild;
+
+    let mut ctrls: Vec<AsyncController<managed_download_row::ManagedDownloadRow>> = Vec::new();
+
+    // ── Fetch available builds from GitHub API ──────────────────────
+    let builds: Vec<WineBuild> = match prefix::runtime::kron4ek::fetch_all_builds().await {
+        Ok(b) => b,
+        Err(e) => {
+            log::error!("Failed to fetch Kron4ek builds: {}", e);
+            let row = adw::ActionRow::builder()
+                .title("Failed to fetch available Wine versions")
+                .subtitle(&format!("{}", e))
+                .build();
+            group.add(&row);
+            return ctrls;
+        }
+    };
+
+    for build in builds {
+        let runtime_id = format!("wine-{}", build.version);
+        let base_version = build.version.trim_end_matches("-staging");
+        let version_label = if build.is_staging {
+            format!("{} (Staging)", base_version)
+        } else {
+            build.version.clone()
+        };
+
+        // ── check_status ───────────────────────────────────────────
+        let check_id = runtime_id.clone();
+        let chk_version = version_label.clone();
+        let is_staging = build.is_staging;
+        let check_status = Box::new(move || {
+            let dir = prefix::runtime::download::runtimes_dir().join(&check_id);
+            let installed = dir.is_dir();
+            managed_download_row::DownloadRowStatus {
+                installed,
+                managed: installed,
+                status_text: if installed {
+                    format!("✓ Installed (Wine {})", chk_version)
+                } else if is_staging {
+                    "Wine with Staging patchset".to_string()
+                } else {
+                    "Vanilla Wine build".to_string()
+                },
+            }
+        });
+
+        // ── start_download ─────────────────────────────────────────
+        let dl_sender = sender.clone();
+        let dl_build = build.clone();
+        let dl_runtime_id = runtime_id.clone();
+        let start_download: managed_download_row::DownloadFn = Box::new(
+            move |_data_dir: PathBuf,
+                  progress: prefix::runtime::download::PhaseProgressFn,
+                  cancel: std::sync::Arc<std::sync::atomic::AtomicBool>| {
+                let s = dl_sender.clone();
+                let build = dl_build.clone();
+                let runtime_id = dl_runtime_id.clone();
+                Box::pin(async move {
+                    // Shared state: (downloaded_bytes, total_bytes, phase)
+                    // phase: 0=Download, 1=Extract
+                    let dl_state = std::sync::Arc::new(std::sync::Mutex::new((0u64, 0u64, 0u8)));
+                    let dl_state_t = dl_state.clone();
+
+                    let (tx, rx) = std::sync::mpsc::channel::<
+                        Result<RuntimeManager, prefix::base::error::PrefixError>,
+                    >();
+
+                    std::thread::spawn(move || {
+                        let rt = tokio::runtime::Runtime::new()
+                            .expect("Failed to create tokio runtime for download thread");
+
+                        // Load the latest runtime state from disk so that any
+                        // runtimes deleted between row creation and now are gone.
+                        let mut runtime_manager: RuntimeManager =
+                            if let Some(settings) = prefix::Settings::load() {
+                                let mut rm: RuntimeManager = settings.into();
+                                rm.ensure_system_runtime();
+                                rm
+                            } else {
+                                let mut rm = RuntimeManager::new();
+                                rm.ensure_system_runtime();
+                                rm
+                            };
+
+                        // 1. Setup temp directory
+                        let runtimes_dir = prefix::runtime::download::runtimes_dir();
+                        let _ = std::fs::create_dir_all(&runtimes_dir);
+                        prefix::runtime::download::cleanup_temp_runtimes(&runtimes_dir);
+                        let tmp_dir = runtimes_dir.join(format!(".tmp-{}", runtime_id));
+                        let final_dir = runtimes_dir.join(&runtime_id);
+                        let _ = std::fs::remove_dir_all(&tmp_dir);
+                        let _ = std::fs::create_dir_all(&tmp_dir);
+                        let archive_path = tmp_dir.join(&build.archive_name);
+
+                        // 2. Download (phase 0)
+                        let dl_state_prog = dl_state_t.clone();
+                        let simple_prog: runtime::download::ProgressFn = Box::new(move |d, t| {
+                            *dl_state_prog.lock().unwrap() = (d, t, 0u8);
+                        });
+                        if let Err(e) = rt.block_on(prefix::runtime::download::download_file(
+                            &build.archive_url,
+                            &archive_path,
+                            &simple_prog,
+                        )) {
+                            let _ = tx.send(Err(e));
+                            return;
+                        }
+
+                        // 3. Extract (phase 1)
+                        *dl_state_t.lock().unwrap() = (1, 1, 1u8);
+                        if let Err(e) =
+                            prefix::runtime::download::extract_tar(&archive_path, &tmp_dir)
+                        {
+                            let _ = tx.send(Err(e));
+                            return;
+                        }
+
+                        // Remove the archive file so find_content_dir below
+                        // only sees the extracted content directory.
+                        let _ = std::fs::remove_file(&archive_path);
+
+                        // 4. Resolve content root — Kron4ek archives contain a
+                        //    top-level directory (e.g. wine-11.8-amd64/).
+                        let content_dir =
+                            match prefix::runtime::download::find_content_dir(&tmp_dir) {
+                                Ok(d) => d,
+                                Err(e) => {
+                                    let _ = tx.send(Err(e));
+                                    return;
+                                }
+                            };
+
+                        // 5. Find wine binary inside the content root
+                        if let Err(e) = prefix::runtime::download::find_wine_binary(&content_dir) {
+                            let _ = tx.send(Err(e));
+                            return;
+                        }
+                        let _ = std::fs::remove_file(&archive_path);
+                        if final_dir.exists() {
+                            let _ = std::fs::remove_dir_all(&final_dir);
+                        }
+                        // Rename content_dir (not tmp_dir) so we drop the
+                        // synthetic top-level wrapper
+                        if let Err(e) = std::fs::rename(&content_dir, &final_dir) {
+                            let _ = tx.send(Err(prefix::base::error::PrefixError::Io(e)));
+                            return;
+                        }
+                        // Clean up tmp_dir if content_dir != tmp_dir
+                        if content_dir != tmp_dir {
+                            let _ = std::fs::remove_dir_all(&tmp_dir);
+                        }
+
+                        // 5. Register in runtime manager and save
+                        runtime_manager.register_version(
+                            &build.version,
+                            build.archive_url.clone(),
+                            final_dir,
+                        );
+                        let settings: prefix::Settings = runtime_manager.clone().into();
+                        if let Err(e) = settings.save() {
+                            eprintln!("Failed to save runtime settings: {}", e);
+                        }
+                        let rm = runtime_manager;
+                        let _ = tx.send(Ok(rm));
+                    });
+
+                    // Poll for completion
+                    loop {
+                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                            return Err("Download cancelled".into());
+                        }
+
+                        // Bridge progress from shared state
+                        {
+                            let (d, t, phase) = *dl_state.lock().unwrap();
+                            if t > 0 {
+                                let phase = match phase {
+                                    1 => runtime::download::InstallPhase::Extract,
+                                    _ => runtime::download::InstallPhase::Download,
+                                };
+                                progress(d, t, phase);
+                            }
+                        }
+
+                        match rx.try_recv() {
+                            Ok(Ok(rm)) => {
+                                let _ = s.input(RuntimeSettingsMsg::DownloadComplete(rm));
+                                return Ok(());
+                            }
+                            Ok(Err(e)) => return Err(e.to_string()),
+                            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                                gtk::glib::timeout_future(std::time::Duration::from_millis(200))
+                                    .await;
+                            }
+                            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                                return Err("Download thread crashed".into());
+                            }
+                        }
+                    }
+                })
+            },
+        );
+
+        // ── perform_remove ──
+        let remove_id = runtime_id.clone();
+        let remove_sender = sender.clone();
+        let perform_remove = Box::new(move || {
+            let dir = prefix::runtime::download::runtimes_dir().join(&remove_id);
+            if dir.exists() {
+                std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+            }
+
+            // Load the latest state from disk, remove the runtime, and save back.
+            // We cannot use a stale in-memory clone to avoid resurrecting
+            // previously-deleted runtimes.
+            let mut runtime_manager: RuntimeManager =
+                if let Some(settings) = prefix::Settings::load() {
+                    settings.into()
+                } else {
+                    RuntimeManager::new()
+                };
+            runtime_manager.remove(&remove_id);
+            let settings: prefix::Settings = runtime_manager.clone().into();
+            if let Err(e) = settings.save() {
+                eprintln!("Failed to save runtime settings: {}", e);
+            }
+
+            let rm = runtime_manager;
+            let _ = remove_sender.input(RuntimeSettingsMsg::DownloadComplete(rm));
+            Ok(())
+        });
+
+        let ctrl = managed_download_row::ManagedDownloadRow::builder()
+            .launch(managed_download_row::ManagedDownloadRowInit {
+                title: format!("Wine {}", version_label),
                 check_status,
                 check_update: None,
                 start_download,
@@ -482,7 +779,13 @@ fn refresh_runtime_list(
                     installed_cask_version
                 )
             }
-            RuntimeSource::ManagedVersion { source_url: _ } => "Managed (versioned)".to_string(),
+            RuntimeSource::ManagedVersion { source_url } => {
+                if source_url.contains("Kron4ek") {
+                    "Kron4ek".to_string()
+                } else {
+                    "Managed (versioned)".to_string()
+                }
+            }
             RuntimeSource::Imported {
                 label,
                 original_path,

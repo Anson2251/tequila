@@ -1,15 +1,16 @@
+use adw::prelude::*;
 use gtk::prelude::*;
 use notify::{RecursiveMode, Watcher, recommended_watcher};
 use prefix::registry::cache::InMemoryRegistryCache;
 use prefix::registry::keys::*;
 use prefix::{
-    PrefixError, ProcessTracker,
+    Manager as PrefixManager, PrefixError, ProcessTracker,
     config::PrefixConfig,
     registry::{RegEditor, RegistryEditor},
 };
 use relm4::{
     Component, ComponentController, ComponentParts, ComponentSender, Controller, RelmWidgetExt,
-    SimpleComponent, gtk,
+    SimpleComponent, adw, gtk,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,11 +35,15 @@ pub struct RegistryEditorModel {
     config: PrefixConfig,
     editing: bool,
     loading: bool,
+    winecfg_running: bool,
+    regedit_running: bool,
     #[tracker::do_not_track]
     pending_edit: bool,
     #[tracker::do_not_track]
     registry_editor: Option<Arc<Mutex<RegistryEditor>>>,
     // Tab component controllers
+    #[tracker::do_not_track]
+    parent_window: gtk::Window,
     #[tracker::do_not_track]
     pub general_ctrl: Controller<GeneralTabModel>,
     #[tracker::do_not_track]
@@ -51,6 +56,20 @@ pub struct RegistryEditorModel {
     process_tracker: Arc<std::sync::Mutex<ProcessTracker>>,
     #[tracker::do_not_track]
     watch_kill: Option<mpsc::Sender<()>>,
+    #[tracker::do_not_track]
+    winecfg_btn: gtk::Button,
+    #[tracker::do_not_track]
+    winecfg_icon: gtk::Image,
+    #[tracker::do_not_track]
+    winecfg_spinner: gtk::Spinner,
+    #[tracker::do_not_track]
+    regedit_btn: gtk::Button,
+    #[tracker::do_not_track]
+    regedit_icon: gtk::Image,
+    #[tracker::do_not_track]
+    regedit_spinner: gtk::Spinner,
+    #[tracker::do_not_track]
+    prefix_manager: prefix::Manager,
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────
@@ -73,6 +92,7 @@ pub enum RegistryEditorMsg {
     PrefixPathUpdated(PathBuf),
     /// Unified handler: (section, setting) where setting is "key=value" or just "value"
     ApplySetting(String, String),
+    PollProcesses,
 }
 
 // ── Component ────────────────────────────────────────────────────────────
@@ -84,6 +104,8 @@ impl SimpleComponent for RegistryEditorModel {
         PrefixConfig,
         Arc<prefix::PrefixStore>,
         Arc<std::sync::Mutex<ProcessTracker>>,
+        gtk::Window,
+        prefix::Manager,
     );
     type Input = RegistryEditorMsg;
     type Output = RegistryEditorMsg;
@@ -132,15 +154,19 @@ impl SimpleComponent for RegistryEditorModel {
                         set_spacing: 10,
                         set_margin_all: 10,
 
+                        #[name = "winecfg_btn"]
                         gtk::Button {
-                            set_icon_name: "applications-engineering-symbolic",
                             set_tooltip_text: Some("Launch Wine Configuration"),
+                            #[watch]
+                            set_sensitive: !model.winecfg_running,
                             connect_clicked => RegistryEditorMsg::RunWinecfg,
                         },
 
+                        #[name = "regedit_btn"]
                         gtk::Button {
-                            set_icon_name: "document-properties-symbolic",
                             set_tooltip_text: Some("Launch Wine Registry Editor"),
+                            #[watch]
+                            set_sensitive: !model.regedit_running,
                             connect_clicked => RegistryEditorMsg::RunRegedit,
                         },
 
@@ -205,7 +231,8 @@ impl SimpleComponent for RegistryEditorModel {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let (prefix_path, config, prefix_store, process_tracker) = init;
+        let (prefix_path, config, prefix_store, process_tracker, parent_window, prefix_manager) =
+            init;
 
         // ── Tab controllers ──
         let general_ctrl = GeneralTabModel::builder()
@@ -244,23 +271,60 @@ impl SimpleComponent for RegistryEditorModel {
                 }
             });
 
-        let model = RegistryEditorModel {
+        // ── Set up winecfg/regedit buttons with icon + spinner ──
+        let winecfg_icon = gtk::Image::from_icon_name("applications-engineering-symbolic");
+        let winecfg_spinner = gtk::Spinner::builder()
+            .width_request(16)
+            .height_request(16)
+            .build();
+        let regedit_icon = gtk::Image::from_icon_name("document-properties-symbolic");
+        let regedit_spinner = gtk::Spinner::builder()
+            .width_request(16)
+            .height_request(16)
+            .build();
+
+        let mut model = RegistryEditorModel {
             prefix_path: prefix_path.clone(),
             config: config.clone(),
             registry_editor: None,
             editing: false,
             loading: false,
+            winecfg_running: false,
+            regedit_running: false,
             pending_edit: false,
+            parent_window,
             general_ctrl,
             graphics_ctrl,
             platform_ctrl,
             prefix_store,
             process_tracker,
             watch_kill: None,
+            winecfg_btn: gtk::Button::new(),
+            winecfg_icon: winecfg_icon.clone(),
+            winecfg_spinner: winecfg_spinner.clone(),
+            regedit_btn: gtk::Button::new(),
+            regedit_icon: regedit_icon.clone(),
+            regedit_spinner: regedit_spinner.clone(),
+            prefix_manager,
             tracker: 0,
         };
 
         let widgets = view_output!();
+
+        // Buttons start with the icon; swap to spinner when running
+        widgets.winecfg_btn.set_child(Some(&winecfg_icon));
+        widgets.regedit_btn.set_child(Some(&regedit_icon));
+
+        // Store button references so update() can swap children
+        model.winecfg_btn = widgets.winecfg_btn.clone();
+        model.regedit_btn = widgets.regedit_btn.clone();
+
+        // Poll for dead processes every 5 seconds
+        let poll_sender = sender.clone();
+        gtk::glib::timeout_add_seconds_local(5, move || {
+            poll_sender.input(RegistryEditorMsg::PollProcesses);
+            gtk::glib::ControlFlow::Continue
+        });
 
         sender.input(RegistryEditorMsg::LoadRegistry);
 
@@ -288,6 +352,9 @@ impl SimpleComponent for RegistryEditorModel {
             }
 
             RegistryEditorMsg::LoadRegistry => {
+                if self.loading {
+                    return;
+                }
                 if !self.prefix_path.as_os_str().is_empty() {
                     let prefix_path = self.prefix_path.clone();
                     let prefix_path_str = prefix_path.to_string_lossy().to_string();
@@ -317,6 +384,9 @@ impl SimpleComponent for RegistryEditorModel {
             }
 
             RegistryEditorMsg::LoadForEdit => {
+                if self.loading {
+                    return;
+                }
                 if !self.prefix_path.as_os_str().is_empty() {
                     self.set_loading(true);
                     let prefix_path = self.prefix_path.clone();
@@ -402,37 +472,70 @@ impl SimpleComponent for RegistryEditorModel {
             RegistryEditorMsg::RunWinecfg => {
                 let pp = self.prefix_path.clone();
                 let track_path = pp.join("__wine_winecfg__");
-                match std::process::Command::new("winecfg")
-                    .env("WINEPREFIX", pp.to_string_lossy().as_ref())
-                    .spawn()
-                {
+                let already_running = self.process_tracker.lock().unwrap().is_running(&track_path);
+                if already_running {
+                    println!("winecfg already running");
+                    return;
+                }
+                match self.prefix_manager.run_winecfg(&pp) {
                     Ok(child) => {
                         println!("Launched winecfg");
                         self.process_tracker
                             .lock()
                             .unwrap()
                             .register(&track_path, child);
+                        sender.input(RegistryEditorMsg::PollProcesses);
                     }
-                    Err(e) => eprintln!("Failed to launch winecfg: {}", e),
+                    Err(e) => {
+                        eprintln!("Failed to launch winecfg: {}", e);
+                        let alert = adw::AlertDialog::new(
+                            Some("Launch Failed"),
+                            Some(&format!("Failed to launch winecfg:\n\n{}", e)),
+                        );
+                        alert.add_response("ok", "OK");
+                        alert.set_default_response(Some("ok"));
+                        alert.set_close_response("ok");
+                        alert.choose(
+                            Some(&self.parent_window),
+                            None::<&gtk::gio::Cancellable>,
+                            |_| {},
+                        );
+                    }
                 }
             }
 
             RegistryEditorMsg::RunRegedit => {
                 let pp = self.prefix_path.clone();
                 let track_path = pp.join("__wine_regedit__");
-                match std::process::Command::new("wine")
-                    .env("WINEPREFIX", pp.to_string_lossy().as_ref())
-                    .arg("regedit")
-                    .spawn()
-                {
+                let already_running = self.process_tracker.lock().unwrap().is_running(&track_path);
+                if already_running {
+                    println!("regedit already running");
+                    return;
+                }
+                match self.prefix_manager.run_regedit(&pp) {
                     Ok(child) => {
                         println!("Launched regedit");
                         self.process_tracker
                             .lock()
                             .unwrap()
                             .register(&track_path, child);
+                        sender.input(RegistryEditorMsg::PollProcesses);
                     }
-                    Err(e) => eprintln!("Failed to launch regedit: {}", e),
+                    Err(e) => {
+                        eprintln!("Failed to launch regedit: {}", e);
+                        let alert = adw::AlertDialog::new(
+                            Some("Launch Failed"),
+                            Some(&format!("Failed to launch regedit:\n\n{}", e)),
+                        );
+                        alert.add_response("ok", "OK");
+                        alert.set_default_response(Some("ok"));
+                        alert.set_close_response("ok");
+                        alert.choose(
+                            Some(&self.parent_window),
+                            None::<&gtk::gio::Cancellable>,
+                            |_| {},
+                        );
+                    }
                 }
             }
 
@@ -521,6 +624,38 @@ impl SimpleComponent for RegistryEditorModel {
                     false,
                 );
             }
+
+            RegistryEditorMsg::PollProcesses => {
+                let pp = self.prefix_path.clone();
+                let winecfg_track = pp.join("__wine_winecfg__");
+                let regedit_track = pp.join("__wine_regedit__");
+                let mut tracker = self.process_tracker.lock().unwrap();
+
+                // Clean up dead processes and re-check running state
+                let _changed = tracker.poll_dead();
+                let winecfg_alive = tracker.is_running(&winecfg_track);
+                let regedit_alive = tracker.is_running(&regedit_track);
+                drop(tracker);
+
+                self.set_winecfg_running(winecfg_alive);
+                self.set_regedit_running(regedit_alive);
+
+                if winecfg_alive {
+                    self.winecfg_spinner.start();
+                    self.winecfg_btn.set_child(Some(&self.winecfg_spinner));
+                } else {
+                    self.winecfg_spinner.stop();
+                    self.winecfg_btn.set_child(Some(&self.winecfg_icon));
+                }
+
+                if regedit_alive {
+                    self.regedit_spinner.start();
+                    self.regedit_btn.set_child(Some(&self.regedit_spinner));
+                } else {
+                    self.regedit_spinner.stop();
+                    self.regedit_btn.set_child(Some(&self.regedit_icon));
+                }
+            }
         }
     }
 }
@@ -534,6 +669,9 @@ impl RegistryEditorModel {
         setting: String,
         _sender: &ComponentSender<Self>,
     ) {
+        if !self.editing {
+            return;
+        }
         if let Some(editor_arc) = &self.registry_editor {
             let ec = editor_arc.clone();
             let pp = self.prefix_path.to_string_lossy().to_string();

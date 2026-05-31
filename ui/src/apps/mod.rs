@@ -11,11 +11,13 @@ use crate::{
     },
     apps::list::{RegisteredAppsListModel, RegisteredAppsListMsg, RegisteredAppsListOutput},
 };
+use adw::prelude::*;
 use gtk::prelude::*;
 use log::error;
 use prefix::IconCache;
 use prefix::ProcessTracker;
 use prefix::config::{PrefixConfig, RegisteredExecutable};
+use relm4::adw;
 use relm4::{
     RelmWidgetExt,
     component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender, AsyncController},
@@ -51,6 +53,8 @@ pub struct AppManagerModel {
     prefix_store: Arc<prefix::PrefixStore>,
     #[tracker::do_not_track]
     process_tracker: Arc<Mutex<ProcessTracker>>,
+    #[tracker::do_not_track]
+    main_window: gtk::Window,
     running_paths: HashSet<PathBuf>,
     #[tracker::do_not_track]
     uninstaller_track_path: Option<PathBuf>,
@@ -88,6 +92,7 @@ impl AsyncComponent for AppManagerModel {
         Arc<IconCache>,
         Arc<prefix::PrefixStore>,
         Arc<Mutex<ProcessTracker>>,
+        gtk::Window,
     );
     type Input = AppManagerMsg;
     type Output = AppManagerMsg;
@@ -140,7 +145,15 @@ impl AsyncComponent for AppManagerModel {
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
-        let (prefix_path, config, prefix_manager, icon_cache, prefix_store, process_tracker) = init;
+        let (
+            prefix_path,
+            config,
+            prefix_manager,
+            icon_cache,
+            prefix_store,
+            process_tracker,
+            main_window,
+        ) = init;
 
         // Initialize registered apps list component with the current registered executables
         let registered_apps_list = RegisteredAppsListModel::builder()
@@ -166,7 +179,7 @@ impl AsyncComponent for AppManagerModel {
 
         // Initialize executable info dialog (hidden by default)
         let executable_info_dialog = ExecutableInfoDialogModel::builder()
-            .launch(prefix_path.clone())
+            .launch((prefix_path.clone(), main_window.clone()))
             .forward(sender.input_sender(), |output| {
                 AppManagerMsg::ExecutableInfoDialog(output)
             });
@@ -194,6 +207,7 @@ impl AsyncComponent for AppManagerModel {
             process_tracker,
             running_paths: HashSet::new(),
             uninstaller_track_path: None,
+            main_window,
             external_running: HashSet::new(),
             tracker: 0,
         };
@@ -344,6 +358,21 @@ impl AsyncComponent for AppManagerModel {
                         }
                         Err(e) => {
                             error!("[launch] Failed to launch '{}': {}", executable.name, e);
+                            let parent_window = _root
+                                .ancestor(gtk::Window::static_type())
+                                .and_then(|w| w.downcast::<gtk::Window>().ok());
+                            let alert = adw::AlertDialog::new(
+                                Some("Launch Failed"),
+                                Some(&format!("Failed to launch '{}':\n\n{}", executable.name, e)),
+                            );
+                            alert.add_response("ok", "OK");
+                            alert.set_default_response(Some("ok"));
+                            alert.set_close_response("ok");
+                            alert.choose(
+                                parent_window.as_ref(),
+                                None::<&gtk::gio::Cancellable>,
+                                |_| {},
+                            );
                         }
                     }
                 }
@@ -569,9 +598,11 @@ impl AsyncComponent for AppManagerModel {
                         let pp = self.prefix_path.clone();
                         let track_path = pp.join("__wine_uninstaller__");
                         let config = self.config.clone();
-                        let mut cmd = self
-                            .prefix_manager
-                            .build_wine_command_with_args(&["uninstaller"], &config, &pp);
+                        let mut cmd = self.prefix_manager.build_wine_command_with_args(
+                            &["uninstaller"],
+                            &config,
+                            &pp,
+                        );
                         cmd.current_dir(&pp);
                         match cmd.spawn() {
                             Ok(child) => {
@@ -629,9 +660,11 @@ impl AsyncComponent for AppManagerModel {
                 let pp = self.prefix_path.clone();
                 let config = self.config.clone();
                 // Use the same runtime env logic as launch_executable (PATH, WINEDLLPATH, etc.)
-                let mut cmd = self
-                    .prefix_manager
-                    .build_wine_command_with_args(&[&exe_path.to_string_lossy()], &config, &pp);
+                let mut cmd = self.prefix_manager.build_wine_command_with_args(
+                    &[&exe_path.to_string_lossy()],
+                    &config,
+                    &pp,
+                );
                 cmd.current_dir(exe_path.parent().unwrap_or(&pp));
                 match cmd.spawn() {
                     Ok(child) => {

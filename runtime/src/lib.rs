@@ -1,6 +1,7 @@
 pub mod download;
 pub mod graphics;
 pub mod homebrew;
+pub mod kron4ek;
 
 use serde::{Deserialize, Serialize};
 use std::fs;
