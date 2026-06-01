@@ -22,6 +22,9 @@ pub enum PrefixListOutput {
     SelectPrefix(usize),
     DeselectPrefix,
     DeletePrefix(usize),
+    ExportPrefix(usize),
+    OpenInFileManager(usize),
+    OpenInTerminal(usize),
 }
 
 #[relm4::component(pub)]
@@ -184,14 +187,24 @@ fn populate(
         let gesture = gtk::GestureClick::new();
         gesture.set_button(3); // right button
         gesture.connect_pressed(move |_gesture, _n_press, x, y| {
-            let action_name = format!("delete-{}", i);
-            let action = gio::SimpleAction::new(&action_name, None);
+            let prefix_idx = i;
+
+            let export_action = gio::SimpleAction::new("export", None);
+            let open_fm_action = gio::SimpleAction::new("open-fm", None);
+            let open_term_action = gio::SimpleAction::new("open-term", None);
+            let delete_action = gio::SimpleAction::new("delete", None);
             let actions = gio::SimpleActionGroup::new();
-            actions.add_action(&action);
+            actions.add_action(&open_fm_action);
+            actions.add_action(&open_term_action);
+            actions.add_action(&export_action);
+            actions.add_action(&delete_action);
             row_ref.insert_action_group("pref", Some(&actions));
 
             let menu = gio::Menu::new();
-            menu.append(Some("Delete Prefix"), Some(&format!("pref.{}", action_name)));
+            menu.append(Some("Open in File Manager"), Some("pref.open-fm"));
+            menu.append(Some("Open in Terminal"), Some("pref.open-term"));
+            menu.append(Some("Export Prefix…"), Some("pref.export"));
+            menu.append(Some("Delete Prefix"), Some("pref.delete"));
 
             let popover = gtk::PopoverMenu::from_model(Some(&menu));
             popover.set_has_arrow(false);
@@ -201,10 +214,27 @@ fn populate(
             popover.set_pointing_to(Some(&rect));
 
             let popover_clone = popover.clone();
-            let s = s.clone();
-            let name = prefix_name.clone();
-            action.connect_activate(move |_, _| {
+            let s_export = s.clone();
+            export_action.connect_activate(move |_, _| {
                 popover_clone.popdown();
+                let _ = s_export.output(PrefixListOutput::ExportPrefix(prefix_idx));
+            });
+
+            let s_fm = s.clone();
+            open_fm_action.connect_activate(move |_, _| {
+                let _ = s_fm.output(PrefixListOutput::OpenInFileManager(prefix_idx));
+            });
+
+            let s_term = s.clone();
+            open_term_action.connect_activate(move |_, _| {
+                let _ = s_term.output(PrefixListOutput::OpenInTerminal(prefix_idx));
+            });
+
+            let popover_clone2 = popover.clone();
+            let s_del = s.clone();
+            let name = prefix_name.clone();
+            delete_action.connect_activate(move |_, _| {
+                popover_clone2.popdown();
 
                 let alert = adw::AlertDialog::new(
                     Some("Delete Prefix"),
@@ -218,10 +248,10 @@ fn populate(
                 alert.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
                 alert.set_default_response(Some("cancel"));
                 alert.set_close_response("cancel");
-                let s = s.clone();
+                let s = s_del.clone();
                 alert.choose(None::<&gtk::Window>, None::<&gtk::gio::Cancellable>, move |response| {
                     if response == "delete" {
-                        let _ = s.output(PrefixListOutput::DeletePrefix(i));
+                        let _ = s.output(PrefixListOutput::DeletePrefix(prefix_idx));
                     }
                 });
             });

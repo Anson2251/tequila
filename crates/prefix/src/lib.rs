@@ -7,6 +7,7 @@ mod runtime_ops;
 mod wine_processes;
 
 pub use manager::Manager;
+pub use prefix_ops::TQL_EXTENSION;
 pub use process_tracker::ProcessTracker;
 pub use wine_processes::{WineProcesses, apply_runtime_env};
 

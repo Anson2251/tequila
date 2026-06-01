@@ -35,6 +35,27 @@ where
     gtk_pick_file(parent, title, extensions, callback);
 }
 
+/// Opens a **save** file dialog for the given file extensions.
+///
+/// `suggested_name` is the default filename shown in the dialog.
+/// On macOS this uses `NSSavePanel` (native), on other platforms it falls back
+/// to `gtk4::FileDialog::save()`.
+pub fn save_file<F>(
+    parent: &gtk4::Window,
+    title: &str,
+    suggested_name: &str,
+    extensions: &[&str],
+    callback: F,
+) where
+    F: Fn(Option<String>) + 'static,
+{
+    #[cfg(target_os = "macos")]
+    macos_save_file(parent, title, suggested_name, extensions, callback);
+
+    #[cfg(not(target_os = "macos"))]
+    gtk_save_file(parent, title, suggested_name, extensions, callback);
+}
+
 // ── macOS native implementation ──────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
@@ -82,6 +103,62 @@ where
                     }
                 }
             }
+        }
+    });
+
+    panel.beginWithCompletionHandler(&block);
+}
+
+// ── macOS save panel ────────────────────────────────────────────────────
+
+#[cfg(target_os = "macos")]
+fn macos_save_file<F>(
+    _parent: &gtk4::Window,
+    title: &str,
+    suggested_name: &str,
+    _extensions: &[&str],
+    callback: F,
+) where
+    F: Fn(Option<String>) + 'static,
+{
+    use block2::RcBlock;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSModalResponse, NSModalResponseOK, NSSavePanel};
+    use std::cell::RefCell;
+
+    let mtm = unsafe { MainThreadMarker::new_unchecked() };
+    let panel = NSSavePanel::savePanel(mtm);
+    panel.setTitle(Some(&objc2_foundation::NSString::from_str(title)));
+    panel.setNameFieldStringValue(&objc2_foundation::NSString::from_str(suggested_name));
+    panel.setCanCreateDirectories(true);
+
+    // Set allowed file types if extensions are provided
+    if !_extensions.is_empty() {
+        use objc2_foundation::NSArray;
+        let allowed: Vec<&objc2_foundation::NSString> = _extensions
+            .iter()
+            .map(|e| objc2_foundation::NSString::from_str(e))
+            .collect();
+        let arr = NSArray::from_vec(&allowed);
+        panel.setAllowedFileTypes(Some(&arr));
+    }
+
+    let cb = RefCell::new(Some(callback));
+    let panel_for_block = panel.clone();
+    let block = RcBlock::new(move |result: NSModalResponse| {
+        if result == NSModalResponseOK {
+            if let Some(url) = panel_for_block.URL() {
+                if let Some(path_str) = url.path() {
+                    let path: String = path_str.to_string();
+                    if let Some(cb) = cb.take() {
+                        cb(Some(path));
+                        return;
+                    }
+                }
+            }
+        }
+        if let Some(cb) = cb.take() {
+            cb(None);
         }
     });
 
@@ -184,6 +261,44 @@ where
     }
 
     dialog.open(
+        Some(parent),
+        None::<&gtk4::gio::Cancellable>,
+        move |result| match result {
+            Ok(file) => callback(file.path().map(|p| p.display().to_string())),
+            Err(_) => callback(None),
+        },
+    );
+}
+
+#[cfg(not(target_os = "macos"))]
+fn gtk_save_file<F>(
+    parent: &gtk4::Window,
+    title: &str,
+    suggested_name: &str,
+    extensions: &[&str],
+    callback: F,
+) where
+    F: Fn(Option<String>) + 'static,
+{
+    let dialog = gtk4::FileDialog::builder()
+        .title(title)
+        .initial_name(suggested_name)
+        .build();
+
+    let filter = if !extensions.is_empty() {
+        let filter = gtk4::FileFilter::new();
+        for ext in extensions {
+            filter.add_suffix(ext);
+        }
+        Some(filter)
+    } else {
+        None
+    };
+    if let Some(f) = filter {
+        dialog.set_default_filter(Some(&f));
+    }
+
+    dialog.save(
         Some(parent),
         None::<&gtk4::gio::Cancellable>,
         move |result| match result {

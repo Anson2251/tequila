@@ -12,6 +12,7 @@ use relm4::{
     Component, ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent,
     adw, component::AsyncComponentController, gtk,
 };
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracker;
@@ -62,6 +63,10 @@ pub struct AppModel {
     create_prefix_dialog:
         Option<relm4::Controller<crate::prefix::create_dialog::CreatePrefixDialog>>,
     #[tracker::do_not_track]
+    export_dialog: Option<relm4::Controller<crate::prefix::export_dialog::ExportDialogModel>>,
+    #[tracker::do_not_track]
+    import_dialog: Option<relm4::Controller<crate::prefix::import_dialog::ImportDialogModel>>,
+    #[tracker::do_not_track]
     sidebar_btn: gtk::Button,
 }
 
@@ -69,6 +74,16 @@ pub struct AppModel {
 pub enum AppMsg {
     CreatePrefix,
     DeletePrefix(usize),
+    ExportPrefix(usize),
+    ImportPrefix,
+    ShowError(String),
+    ShowImportDialog {
+        name: String,
+        archive_wine: Option<String>,
+        path: PathBuf,
+    },
+    OpenInFileManager(usize),
+    OpenInTerminal(usize),
     LaunchPrefix(usize),
     LaunchExecutable(usize, usize), // prefix index, executable index
     RefreshPrefixes,
@@ -150,6 +165,16 @@ impl SimpleComponent for AppModel {
             .build();
         header_bar.pack_start(&back_btn);
 
+        let import_btn = gtk::Button::builder()
+            .icon_name("document-open-symbolic")
+            .tooltip_text("Import Prefix")
+            .build();
+        let im_sender = sender.clone();
+        import_btn.connect_clicked(move |_| {
+            im_sender.input(AppMsg::ImportPrefix);
+        });
+        header_bar.pack_end(&import_btn);
+
         let new_prefix_btn = gtk::Button::builder()
             .icon_name("list-add-symbolic")
             .tooltip_text("New Prefix")
@@ -218,6 +243,15 @@ impl SimpleComponent for AppModel {
                 crate::prefix::list::PrefixListOutput::DeselectPrefix => AppMsg::HideDetails,
                 crate::prefix::list::PrefixListOutput::DeletePrefix(index) => {
                     AppMsg::DeletePrefix(index)
+                }
+                crate::prefix::list::PrefixListOutput::ExportPrefix(index) => {
+                    AppMsg::ExportPrefix(index)
+                }
+                crate::prefix::list::PrefixListOutput::OpenInFileManager(index) => {
+                    AppMsg::OpenInFileManager(index)
+                }
+                crate::prefix::list::PrefixListOutput::OpenInTerminal(index) => {
+                    AppMsg::OpenInTerminal(index)
                 }
             });
 
@@ -396,6 +430,8 @@ impl SimpleComponent for AppModel {
             app_manager,
             settings,
             create_prefix_dialog: None,
+            export_dialog: None,
+            import_dialog: None,
             sidebar_btn: sidebar_btn.clone(),
             content_stack,
             content_box,
@@ -474,6 +510,9 @@ impl SimpleComponent for AppModel {
                             }
                         }
                         println!("Deleted prefix: {}", prefix_name);
+                        if self.prefixes.is_empty() {
+                            sender.input(AppMsg::HideDetails);
+                        }
                         sender.input(AppMsg::RefreshPrefixes);
                     }
                 }
@@ -538,6 +577,110 @@ impl SimpleComponent for AppModel {
                             );
                         }
                     }
+                }
+            }
+            AppMsg::ExportPrefix(index) => {
+                if index >= self.prefixes.len() {
+                    return;
+                }
+                let prefix_path = self.prefixes[index].path.clone();
+                let prefix_name = self.prefixes[index].name.clone();
+
+                let dialog = crate::prefix::export_dialog::ExportDialogModel::builder()
+                    .launch((
+                        self.prefix_manager.clone(),
+                        prefix_path,
+                        prefix_name,
+                        self.main_window.clone(),
+                    ))
+                    .forward(sender.input_sender(), |msg| msg);
+                self.export_dialog = Some(dialog);
+            }
+            AppMsg::ImportPrefix => {
+                let parent: gtk::Window = self.main_window.clone().upcast();
+                let pm = self.prefix_manager.clone();
+                let s = sender.clone();
+
+                let exts = [&format!("zst.{}", prefix::TQL_EXTENSION)[..]];
+                crate::dialogs::pick_file(&parent, "Import Prefix", &exts, move |path| {
+                    if let Some(path) = path {
+                        let p = PathBuf::from(&path);
+                        let pm = pm.clone();
+                        let s = s.clone();
+                        std::thread::spawn(move || {
+                            let (name, archive_wine) = match pm.inspect_archive(&p) {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    let _ = s.input(AppMsg::ShowError(format!(
+                                        "Failed to read archive:\n\n{}",
+                                        e
+                                    )));
+                                    return;
+                                }
+                            };
+                            let _ = s.input(AppMsg::ShowImportDialog {
+                                name,
+                                archive_wine,
+                                path: p,
+                            });
+                        });
+                    }
+                });
+            }
+            AppMsg::ShowError(msg) => {
+                let alert = adw::AlertDialog::new(Some("Error"), Some(&msg));
+                alert.add_response("ok", "OK");
+                alert.set_default_response(Some("ok"));
+                alert.set_close_response("ok");
+                alert.choose(
+                    Some(&self.main_window.clone().upcast::<gtk::Window>()),
+                    None::<&gio::Cancellable>,
+                    |_| {},
+                );
+            }
+            AppMsg::ShowImportDialog { name, path, .. } => {
+                let dialog = crate::prefix::import_dialog::ImportDialogModel::builder()
+                    .launch((
+                        self.prefix_manager.clone(),
+                        path,
+                        name,
+                        self.main_window.clone(),
+                    ))
+                    .forward(sender.input_sender(), |msg| msg);
+                self.import_dialog = Some(dialog);
+            }
+            AppMsg::OpenInFileManager(index) => {
+                if let Some(prefix) = self.prefixes.get(index) {
+                    let path = prefix.path.to_string_lossy().to_string();
+                    std::thread::spawn(move || {
+                        #[cfg(target_os = "macos")]
+                        let _ = std::process::Command::new("open").arg(&path).status();
+                        #[cfg(not(target_os = "macos"))]
+                        let _ = std::process::Command::new("xdg-open").arg(&path).status();
+                    });
+                }
+            }
+            AppMsg::OpenInTerminal(index) => {
+                if let Some(prefix) = self.prefixes.get(index) {
+                    let prefix_path = prefix.path.clone();
+                    let pm = self.prefix_manager.clone();
+                    std::thread::spawn(move || match pm.generate_terminal_script(&prefix_path) {
+                        Ok(script) => {
+                            let tmp = std::env::temp_dir().join("tequila-terminal.sh");
+                            if let Err(e) = std::fs::write(&tmp, &script) {
+                                error!("[term] Failed to write script: {}", e);
+                                return;
+                            }
+                            if let Err(e) = std::fs::set_permissions(
+                                &tmp,
+                                std::fs::Permissions::from_mode(0o755),
+                            ) {
+                                error!("[term] Failed to chmod script: {}", e);
+                            }
+                            open_terminal_with_script(&tmp);
+                        }
+                        Err(e) => error!("[term] Failed to generate script: {}", e),
+                    });
                 }
             }
             AppMsg::RefreshPrefixes => {
@@ -863,5 +1006,51 @@ impl SimpleComponent for AppModel {
         }
 
         // Update the view based on current state will be handled by Relm4 automatically
+    }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+/// Try to open a terminal emulator that runs the given shell script.
+///
+/// The script should be executable and self-contained (it sets up the Wine
+/// environment and starts an interactive shell). On macOS we use
+/// Terminal.app via AppleScript; on Linux we try common terminals.
+pub fn open_terminal_with_script(script_path: &std::path::Path) {
+    let path_str = script_path.to_string_lossy();
+
+    #[cfg(target_os = "macos")]
+    {
+        let template = include_str!("../../../../scripts/tequila-terminal.applescript");
+        let src = template.replace("__TEQUILA_SCRIPT_PATH__", &path_str.replace('"', "\\\""));
+        let _ = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&src)
+            .status();
+        let _ = std::process::Command::new("open")
+            .args(["-a", "Terminal"])
+            .status();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Try terminals that support -e with a script path.
+        // We run `bash /path/to/script` so the script's shebang and trap work.
+        let cmds: &[&[&str]] = &[
+            &["x-terminal-emulator", "-e", "bash", &path_str],
+            &["gnome-terminal", "--", "bash", &path_str],
+            &["xfce4-terminal", "-e", "bash", &path_str],
+            &["konsole", "-e", "bash", &path_str],
+            &["lxterminal", "-e", "bash", &path_str],
+            &["xterm", "-e", "bash", &path_str],
+            &["kgx", "-e", "bash", &path_str],
+        ];
+        for args in cmds {
+            let cmd = args[0];
+            let rest = &args[1..];
+            if std::process::Command::new(cmd).args(rest).spawn().is_ok() {
+                return;
+            }
+        }
     }
 }

@@ -1,6 +1,5 @@
 use crate::app::AppMsg;
 use adw::prelude::*;
-use gtk::glib;
 use gtk::prelude::*;
 use gtk4::gio;
 use relm4::{ComponentSender, adw, gtk};
@@ -25,6 +24,7 @@ pub fn setup_menu_bar(app: gtk::Application, sender: ComponentSender<crate::app:
 
         let file_menu = Menu::new();
         file_menu.append(Some("_New Prefix"), Some("app.new-prefix"));
+        file_menu.append(Some("_Import Prefix…"), Some("app.import-prefix"));
         file_menu.append(Some("_Preferences"), Some("app.preferences"));
         file_menu.append(Some("_Quit"), Some("app.quit"));
         menubar.append_submenu(Some("_File"), &file_menu);
@@ -49,6 +49,14 @@ fn register_menu_actions(app: &gtk::Application, sender: &ComponentSender<crate:
     });
     app.add_action(&new_prefix_action);
     app.set_accels_for_action("app.new-prefix", &["<primary>n"]);
+
+    let import_prefix_action = SimpleAction::new("import-prefix", None);
+    let s = sender.clone();
+    import_prefix_action.connect_activate(move |_, _| {
+        s.input(AppMsg::ImportPrefix);
+    });
+    app.add_action(&import_prefix_action);
+    app.set_accels_for_action("app.import-prefix", &["<primary>i"]);
 
     let preferences_action = SimpleAction::new("preferences", None);
     let s = sender.clone();
