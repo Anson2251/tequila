@@ -338,7 +338,7 @@ impl AsyncComponent for RuntimeManagerModel {
                         emit_updated(&self.prefix_manager, &sender);
                     }
                     Err(e) => {
-                        eprintln!("Import failed: {}", e);
+                        log::error!("[runtime] import failed: {}", e);
                         let alert = adw::AlertDialog::new(
                             Some("Import Failed"),
                             Some(&format!("Failed to import Wine runtime:\n{}", e)),

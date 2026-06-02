@@ -8,7 +8,7 @@ impl Manager {
     pub fn save_runtime_state(&self) {
         let settings: store::Settings = self.runtime_manager.clone().into();
         if let Err(e) = settings.save() {
-            eprintln!("Failed to save runtime settings: {}", e);
+            log::error!("[runtime] failed to save runtime settings: {}", e);
         }
     }
 

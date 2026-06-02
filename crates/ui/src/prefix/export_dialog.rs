@@ -293,12 +293,12 @@ impl SimpleComponent for ExportDialogModel {
 
                 match result {
                     Ok(path) => {
-                        log::info!("[export] Exported to {}", path.display());
+                        log::info!("[export] exported to {}", path.display());
                         self.dialog.set_deletable(true);
                         self.dialog.close();
                     }
                     Err(e) => {
-                        log::error!("[export] Failed: {}", e);
+                        log::error!("[export] failed: {}", e);
                         // Re-enable UI for retry
                         self.dest_entry.set_sensitive(true);
                         self.browse_btn.set_sensitive(true);

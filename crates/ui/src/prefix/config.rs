@@ -597,7 +597,7 @@ impl SimpleComponent for PrefixConfigModel {
                 // Save config
                 self.config.update_last_modified();
                 if let Err(e) = self.config.save_to_file(&self.prefix_path) {
-                    eprintln!("Failed to save config: {}", e);
+                    log::error!("[prefix] failed to save config: {}", e);
                 }
                 self.saved_config = self.config.clone();
                 let config = self.config.clone();
@@ -684,7 +684,7 @@ impl PrefixConfigModel {
         self.description_text.set_editable(false);
         self.config.update_last_modified();
         if let Err(e) = self.config.save_to_file(&self.prefix_path) {
-            eprintln!("Failed to save config: {}", e);
+            log::error!("[prefix] failed to save config: {}", e);
         }
         let _ = sender.output(PrefixConfigOutput::ConfigUpdated(self.config.clone()));
     }

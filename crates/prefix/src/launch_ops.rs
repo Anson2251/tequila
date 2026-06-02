@@ -16,6 +16,28 @@ impl Manager {
         config: &PrefixConfig,
     ) -> Result<()> {
         if let Some(runtime) = self.runtime_for_prefix(config) {
+            // For system-installed Wine, check PATH and standard locations
+            // instead of bundle_dir (which is empty for system runtimes).
+            if runtime.source == runtime::RuntimeSource::System {
+                if find_in_path(binary_name).is_some() {
+                    return Ok(());
+                }
+                // Some distros don't add /usr/bin to PATH by default
+                if binary_name == "wine"
+                    && (Path::new("/usr/bin/wine").exists()
+                        || Path::new("/usr/local/bin/wine").exists())
+                {
+                    return Ok(());
+                }
+                return Err(PrefixError::NotFound(format!(
+                    "Wine runtime 'System Wine' is configured but '{}' was not \
+                     found in PATH.\n\
+                     Install Wine through your package manager, or add a managed \
+                     runtime in Settings → Wine Runtime.",
+                    binary_name,
+                )));
+            }
+
             let bundle_bin = runtime.bundle_dir.join("bin").join(binary_name);
             if bundle_bin.exists() {
                 return Ok(());
@@ -82,7 +104,7 @@ impl Manager {
         );
 
         info!(
-            "[launch] Launching '{}' in prefix '{}'",
+            "[launch] launching '{}' in prefix '{}'",
             executable.name, name
         );
 
@@ -116,7 +138,7 @@ impl Manager {
                 Ok(child)
             }
             Err(e) => {
-                error!("[launch] Failed to launch '{}': {}", executable.name, e);
+                error!("[launch] failed to launch '{}': {}", executable.name, e);
                 Err(PrefixError::Process(format!(
                     "Failed to launch executable: {}",
                     e
@@ -135,7 +157,7 @@ impl Manager {
         // Check winecfg is available before spawning
         self.check_wine_available("winecfg", &config)?;
 
-        info!("[launch] Opening winecfg for prefix '{}'", name);
+        info!("[launch] opening winecfg for prefix '{}'", name);
         let child = self
             .build_wine_command_for_exe("winecfg", &config, prefix_path)
             .current_dir(prefix_path)
@@ -154,7 +176,7 @@ impl Manager {
         // Check wine is available before spawning
         self.check_wine_available("wine", &config)?;
 
-        info!("[launch] Opening regedit for prefix '{}'", name);
+        info!("[launch] opening regedit for prefix '{}'", name);
         let child = self
             .build_wine_command_with_args(&["regedit"], &config, prefix_path)
             .current_dir(prefix_path)

@@ -220,7 +220,7 @@ impl SimpleComponent for CreatePrefixDialog {
             CreatePrefixMsg::Create => {
                 let name = self.name_entry.text().to_string();
                 if name.is_empty() {
-                    eprintln!("Prefix name cannot be empty");
+                    log::warn!("[create] prefix name cannot be empty");
                     return;
                 }
 
@@ -262,8 +262,8 @@ impl SimpleComponent for CreatePrefixDialog {
                     });
 
                 let prefix_name = name.clone();
-                let pm_create = self.prefix_manager.clone();  // consumed by spawn_blocking
-                let pm_async = self.prefix_manager.clone();   // kept for async activation
+                let pm_create = self.prefix_manager.clone(); // consumed by spawn_blocking
+                let pm_async = self.prefix_manager.clone(); // kept for async activation
                 let mw = self.parent.clone();
                 let dlg = self.dialog.clone();
                 let sc = sender.clone();
@@ -283,7 +283,11 @@ impl SimpleComponent for CreatePrefixDialog {
                         Ok(Err(e)) => {
                             pulse_id.remove();
                             dlg.close();
-                            eprintln!("Failed to create prefix '{}': {}", prefix_name, e);
+                            log::error!(
+                                "[create] failed to create prefix '{}': {}",
+                                prefix_name,
+                                e
+                            );
                             let alert = adw::AlertDialog::new(
                                 Some("Error"),
                                 Some(&format!("Failed to create prefix '{}': {}", prefix_name, e)),
@@ -302,15 +306,26 @@ impl SimpleComponent for CreatePrefixDialog {
                             } else {
                                 format!("{}", e)
                             };
-                            eprintln!("Failed to create prefix '{}': {}", prefix_name, msg);
+                            log::error!(
+                                "[create] failed to create prefix '{}': {}",
+                                prefix_name,
+                                msg
+                            );
                             return;
                         }
                     };
 
                     // Step 2: Activate graphics backend (symlink DLLs + registry + config)
                     if let Some(backend) = selected_backend {
-                        if let Err(e) = pm_async.activate_graphics_backend(&backend, &prefix_path).await {
-                            eprintln!("Failed to activate {}: {}", backend.display_name(), e);
+                        if let Err(e) = pm_async
+                            .activate_graphics_backend(&backend, &prefix_path)
+                            .await
+                        {
+                            log::error!(
+                                "[create] failed to activate {}: {}",
+                                backend.display_name(),
+                                e
+                            );
                             let alert = adw::AlertDialog::new(
                                 Some("Warning"),
                                 Some(&format!(
@@ -328,8 +343,8 @@ impl SimpleComponent for CreatePrefixDialog {
 
                     pulse_id.remove();
                     dlg.close();
-                    println!(
-                        "Created prefix: {} at {}",
+                    log::info!(
+                        "[create] created prefix: {} at {}",
                         prefix_name,
                         prefix_path.display()
                     );

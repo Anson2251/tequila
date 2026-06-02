@@ -188,12 +188,12 @@ impl SimpleComponent for ImportDialogModel {
 
                 match result {
                     Ok(path) => {
-                        log::info!("[import] Imported to {}", path.display());
+                        log::info!("[import] imported to {}", path.display());
                         self.dialog.set_deletable(true);
                         self.dialog.close();
                     }
                     Err(e) => {
-                        log::error!("[import] Failed: {}", e);
+                        log::error!("[import] failed: {}", e);
                         self.import_btn.set_sensitive(true);
                         self.runtime_combo.set_sensitive(true);
                         self.dialog.set_deletable(true);

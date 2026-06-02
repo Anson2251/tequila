@@ -11,7 +11,7 @@ pub fn pick_folder<F>(parent: &gtk4::Window, initial_path: Option<&str>, callbac
 where
     F: Fn(String) + 'static,
 {
-    println!("{:?}", &initial_path);
+    log::debug!("[dialogs] {:?}", &initial_path);
     #[cfg(target_os = "macos")]
     macos_pick_folder(parent, initial_path, callback);
 

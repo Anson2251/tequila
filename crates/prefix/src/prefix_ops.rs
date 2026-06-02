@@ -59,15 +59,9 @@ impl Manager {
             let path = entry.path();
             if path.is_dir() && self.is_valid_wine_prefix(&path) {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if let Ok(mut config) =
+                    if let Ok(config) =
                         self.load_or_create_config(&path, name, &system_wine_version)
                     {
-                        if let Some(ref ver) = system_wine_version {
-                            if config.wine_version.as_ref() != Some(ver) {
-                                config.wine_version = Some(ver.clone());
-                                let _ = config.save_to_file(&path);
-                            }
-                        }
                         prefixes.push(WinePrefix {
                             name: name.to_string(),
                             path: path.clone(),
@@ -220,7 +214,7 @@ impl Manager {
         let config = self.load_or_create_config(prefix_path, name, &None)?;
 
         info!(
-            "[prefix] Activating {} for prefix '{}' (arch: {})",
+            "[prefix] activating {} for prefix '{}' (arch: {})",
             backend.display_name(),
             name,
             config.architecture
@@ -243,7 +237,7 @@ impl Manager {
         // 1. Symlink backend DLLs into prefix
         let gfx_config = graphics::activate_for_prefix(backend, prefix_path)?;
         info!(
-            "[prefix] Symlinked DLLs for {} into prefix '{}'\n",
+            "[prefix] symlinked DLLs for {} into prefix '{}'\n",
             backend.display_name(),
             name
         );
@@ -257,7 +251,7 @@ impl Manager {
             .map(|(dll, _)| *dll)
             .collect();
         info!(
-            "[prefix] Writing DLL overrides to registry: {}=native,builtin",
+            "[prefix] writing DLL overrides to registry: {}=native,builtin",
             entries.join(",")
         );
         for (dll, setting_str) in backend.override_entries() {
@@ -275,7 +269,7 @@ impl Manager {
         config.save_to_file(prefix_path)?;
 
         info!(
-            "[prefix] Successfully activated {} for prefix '{}'",
+            "[prefix] successfully activated {} for prefix '{}'",
             backend.display_name(),
             name
         );
@@ -296,21 +290,21 @@ impl Manager {
 
         if let Some(gfx_config) = config.graphics.take() {
             info!(
-                "[prefix] Deactivating {} for prefix '{}'",
+                "[prefix] deactivating {} for prefix '{}'",
                 gfx_config.display_name(),
                 name
             );
 
             // 1. Remove DLL symlinks
             graphics::deactivate_for_prefix(&gfx_config, prefix_path)?;
-            info!("[prefix] Removed DLL symlinks for prefix '{}'", name);
+            info!("[prefix] removed DLL symlinks for prefix '{}'", name);
 
             // 2. Remove registry overrides
             let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
             let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
             let dlls: Vec<&str> = gfx_config.override_dlls();
             info!(
-                "[prefix] Removing DLL overrides from registry: {}",
+                "[prefix] removing DLL overrides from registry: {}",
                 dlls.join(",")
             );
             for dll in gfx_config.override_dlls() {
@@ -443,7 +437,7 @@ impl Manager {
             .map_err(|e| PrefixError::Process(format!("Failed to finalize zstd: {}", e)))?;
 
         info!(
-            "[prefix] Exported '{}' to {}",
+            "[prefix] exported '{}' to {}",
             prefix_name,
             output_path.display()
         );
@@ -780,7 +774,7 @@ impl Manager {
 
         // Restore absolute paths in the imported config
         if let Err(e) = Self::restore_config_paths(&target) {
-            warn!("[import] Failed to restore config paths: {}", e);
+            warn!("[import] failed to restore config paths: {}", e);
         }
 
         // Reinit the prefix with the specified runtime
@@ -791,14 +785,14 @@ impl Manager {
             config.update_last_modified();
 
             if let Err(e) = self.reinitialize_prefix(&target, &config) {
-                warn!("[import] Reinit failed (non-fatal): {}", e);
+                warn!("[import] reinit failed (non-fatal): {}", e);
             } else {
                 let _ = config.save_to_file(&target);
             }
         }
 
         info!(
-            "[prefix] Imported '{}' from {}",
+            "[prefix] imported '{}' from {}",
             prefix_name,
             archive_path.display()
         );

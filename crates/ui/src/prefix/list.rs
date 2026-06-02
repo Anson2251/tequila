@@ -89,7 +89,7 @@ impl SimpleComponent for PrefixListModel {
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
         match msg {
             PrefixListMsg::SetPrefixes(prefixes) => {
-                println!("SetPrefixes received: {} items", prefixes.len());
+                log::debug!("[list] set_prefixes received: {} items", prefixes.len());
                 self.prefixes = prefixes.clone();
                 populate(&self.prefixes, &self.list_box, &sender);
 
@@ -121,7 +121,7 @@ fn populate(
         list_box.remove(&row);
     }
 
-    println!("populate: {} prefixes", prefixes.len());
+    log::debug!("[list] populate: {} prefixes", prefixes.len());
     if prefixes.is_empty() {
         let label = gtk::Label::builder()
             .label("No Wine prefixes found")

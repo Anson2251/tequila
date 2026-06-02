@@ -82,7 +82,7 @@ impl WineRegistry {
                 merged_registry = system_registry;
             }
             Ok(None) => {}
-            Err(e) => eprintln!("Warning: Failed to load system.reg: {}", e),
+            Err(e) => log::warn!("[registry] failed to load system.reg: {}", e),
         }
 
         match userdef_result.map_err(|e| {
@@ -94,7 +94,7 @@ impl WineRegistry {
                 }
             }
             Ok(None) => {}
-            Err(e) => eprintln!("Warning: Failed to load userdef.reg: {}", e),
+            Err(e) => log::warn!("[registry] failed to load userdef.reg: {}", e),
         }
 
         match user_result
@@ -104,7 +104,7 @@ impl WineRegistry {
                 merged_registry = user_registry;
             }
             Ok(None) => {}
-            Err(e) => eprintln!("Warning: Failed to load user.reg: {}", e),
+            Err(e) => log::warn!("[registry] failed to load user.reg: {}", e),
         }
 
         Ok(WineRegistry {

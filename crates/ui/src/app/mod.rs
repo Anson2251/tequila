@@ -107,7 +107,7 @@ impl AppModel {
         match prefix_manager.scan_prefixes() {
             Ok(prefixes) => prefixes,
             Err(e) => {
-                eprintln!("Error scanning prefixes: {}", e);
+                error!("[app] error scanning prefixes: {}", e);
                 Vec::new()
             }
         }
@@ -230,7 +230,7 @@ impl SimpleComponent for AppModel {
             && prefixes
                 .iter()
                 .all(|p| !prefix_store.has_scanned_prefix(&p.path.to_string_lossy()));
-        println!("Loaded {} prefixes", prefixes.len());
+        info!("[app] loaded {} prefixes", prefixes.len());
 
         let prefix_list = PrefixListModel::builder()
             .launch((prefixes.clone(), None))
@@ -497,7 +497,7 @@ impl SimpleComponent for AppModel {
                     let prefix_path = self.prefixes[index].path.clone();
 
                     if let Err(e) = self.prefix_manager.delete_prefix(&prefix_path) {
-                        eprintln!("Failed to delete prefix: {}", e);
+                        error!("[app] failed to delete prefix: {}", e);
                     } else {
                         self.prefixes.remove(index);
                         if self.selected_prefix == Some(index) {
@@ -507,7 +507,7 @@ impl SimpleComponent for AppModel {
                                 self.selected_prefix = Some(selected - 1);
                             }
                         }
-                        println!("Deleted prefix: {}", prefix_name);
+                        info!("[app] deleted prefix: {}", prefix_name);
                         if self.prefixes.is_empty() {
                             sender.input(AppMsg::HideDetails);
                         }
@@ -520,8 +520,8 @@ impl SimpleComponent for AppModel {
                     let prefix_name = self.prefixes[index].name.clone();
                     let prefix_path = self.prefixes[index].path.clone();
 
-                    println!(
-                        "Launching prefix: {} at {}",
+                    info!(
+                        "[app] launching prefix: {} at {}",
                         prefix_name,
                         prefix_path.display()
                     );
@@ -529,10 +529,16 @@ impl SimpleComponent for AppModel {
                     // Launch winecfg for the prefix
                     match self.prefix_manager.run_winecfg(&prefix_path) {
                         Ok(_) => {
-                            println!("Successfully launched winecfg for prefix: {}", prefix_name);
+                            info!(
+                                "[app] successfully launched winecfg for prefix: {}",
+                                prefix_name
+                            );
                         }
                         Err(e) => {
-                            eprintln!("Failed to launch winecfg for prefix {}: {}", prefix_name, e);
+                            error!(
+                                "[app] failed to launch winecfg for prefix {}: {}",
+                                prefix_name, e
+                            );
                             let alert = adw::AlertDialog::new(
                                 Some("Launch Failed"),
                                 Some(&format!("Failed to launch winecfg:\n\n{}", e)),
@@ -560,7 +566,7 @@ impl SimpleComponent for AppModel {
                             .prefix_manager
                             .launch_executable(prefix_path, executable)
                         {
-                            eprintln!("Failed to launch executable: {}", e);
+                            error!("[app] failed to launch executable: {}", e);
                             let alert = adw::AlertDialog::new(
                                 Some("Launch Failed"),
                                 Some(&format!("Failed to launch '{}':\n\n{}", executable.name, e)),
@@ -666,18 +672,18 @@ impl SimpleComponent for AppModel {
                         Ok(script) => {
                             let tmp = std::env::temp_dir().join("tequila-terminal.sh");
                             if let Err(e) = std::fs::write(&tmp, &script) {
-                                error!("[term] Failed to write script: {}", e);
+                                error!("[term] failed to write script: {}", e);
                                 return;
                             }
                             if let Err(e) = std::fs::set_permissions(
                                 &tmp,
                                 std::fs::Permissions::from_mode(0o755),
                             ) {
-                                error!("[term] Failed to chmod script: {}", e);
+                                error!("[term] failed to chmod script: {}", e);
                             }
                             open_terminal_with_script(&tmp);
                         }
-                        Err(e) => error!("[term] Failed to generate script: {}", e),
+                        Err(e) => error!("[term] failed to generate script: {}", e),
                     });
                 }
             }
@@ -692,7 +698,7 @@ impl SimpleComponent for AppModel {
             AppMsg::SelectPrefix(index) => {
                 if index < self.prefixes.len() {
                     self.selected_prefix = Some(index);
-                    println!("Selected prefix: {}", self.prefixes[index].name);
+                    info!("[app] selected prefix: {}", self.prefixes[index].name);
                     // Automatically show details when a prefix is selected
                     sender.input(AppMsg::ShowPrefixDetails(index));
                 }
@@ -791,9 +797,12 @@ impl SimpleComponent for AppModel {
                             glib::MainContext::default().spawn_local(async move {
                                 // Deactivate old backend (reads current config from file)
                                 if old_graphics.is_some() {
-                                    info!("[config] Deactivating old graphics backend");
+                                    info!("[config] deactivating old graphics backend");
                                     if let Err(e) = pm.deactivate_graphics_backend(&pp).await {
-                                        error!("Failed to deactivate old graphics backend: {}", e);
+                                        error!(
+                                            "[app] failed to deactivate old graphics backend: {}",
+                                            e
+                                        );
                                     }
                                 }
 
@@ -801,13 +810,16 @@ impl SimpleComponent for AppModel {
                                 if let Some(ref gfx) = new_graphics {
                                     if let Some(backend) = gfx.to_backend() {
                                         info!(
-                                            "[config] Activating {} graphics backend",
+                                            "[config] activating {} graphics backend",
                                             backend.display_name()
                                         );
                                         if let Err(e) =
                                             pm.activate_graphics_backend(&backend, &pp).await
                                         {
-                                            error!("Failed to activate graphics backend: {}", e);
+                                            error!(
+                                                "[app] failed to activate graphics backend: {}",
+                                                e
+                                            );
                                         }
                                     }
                                 }
@@ -816,7 +828,7 @@ impl SimpleComponent for AppModel {
                             // No backend change — normal config save
                             if let Err(e) = self.prefix_manager.update_config(&prefix_path, &config)
                             {
-                                eprintln!("Failed to update config: {}", e);
+                                error!("[app] failed to update config: {}", e)
                             } else {
                                 self.prefixes[actual_index].config = config.clone();
                                 self.prefix_config.emit(
@@ -867,8 +879,8 @@ impl SimpleComponent for AppModel {
 
                     match self.prefix_manager.scan_for_applications(&prefix_path) {
                         Ok(executables) => {
-                            println!(
-                                "Found {} applications in prefix '{}'",
+                            info!(
+                                "[app] found {} applications in prefix '{}'",
                                 executables.len(),
                                 prefix_name
                             );
@@ -887,13 +899,13 @@ impl SimpleComponent for AppModel {
                             // Save the updated config
                             if let Err(e) = self.prefix_manager.update_config(&prefix_path, &config)
                             {
-                                eprintln!(
-                                    "Failed to save updated config for prefix '{}': {}",
+                                error!(
+                                    "[app] failed to save updated config for prefix '{}': {}",
                                     prefix_name, e
                                 );
                             } else {
-                                println!(
-                                    "Successfully updated prefix '{}' config with {} new executables (total: {})",
+                                info!(
+                                    "[app] successfully updated prefix '{}' config with {} new executables (total: {})",
                                     prefix_name, added_count, new_count
                                 );
 
@@ -902,8 +914,8 @@ impl SimpleComponent for AppModel {
                             }
                         }
                         Err(e) => {
-                            eprintln!(
-                                "Failed to scan for applications in prefix '{}': {}",
+                            error!(
+                                "[app] failed to scan for applications in prefix '{}': {}",
                                 prefix_name, e
                             );
                             // TODO: Show error dialog to user

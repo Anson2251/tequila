@@ -8,7 +8,7 @@ fn main() {
         .target(env_logger::Target::Stdout)
         .init();
 
-    log::info!("[tequila] Application started");
+    log::info!("[tequila] application started");
 
     let app = RelmApp::new("com.github.anson2251.tequila");
     ui::initialize_custom_resources();

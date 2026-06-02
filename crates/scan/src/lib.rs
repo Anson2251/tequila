@@ -119,7 +119,10 @@ impl ApplicationScanner {
             self.extract_executable_metadata(&image)
         }))
         .unwrap_or_else(|_| {
-            eprintln!("PE parsing panicked for: {}", exe_path_for_meta.display());
+            log::warn!(
+                "[scan] PE parsing panicked for: {}",
+                exe_path_for_meta.display()
+            );
             None
         });
 

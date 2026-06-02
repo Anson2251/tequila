@@ -271,12 +271,12 @@ impl SimpleComponent for PrefixDetailsModel {
         match msg {
             PrefixDetailsMsg::ToggleEdit => {
                 if self.editing {
-                    println!("Saving editing");
+                    log::debug!("[details] saving editing");
                     sender.input(PrefixDetailsMsg::SaveConfig);
                 } else {
                     self.saved_config = self.config.clone();
                     self.set_editing(true);
-                    println!("Setting to editing true");
+                    log::debug!("[details] setting to editing true");
                 }
             }
             PrefixDetailsMsg::SaveConfig => {
@@ -294,9 +294,12 @@ impl SimpleComponent for PrefixDetailsModel {
 
                 // Save config to file
                 if let Err(e) = self.config.save_to_file(&self.prefix_path) {
-                    eprintln!("Failed to save config after editing prefix details: {}", e);
+                    log::error!(
+                        "[details] failed to save config after editing prefix details: {}",
+                        e
+                    );
                 } else {
-                    println!("Config saved successfully after editing prefix details");
+                    log::info!("[details] config saved successfully after editing prefix details");
                 }
 
                 let _ = sender.output(PrefixDetailsMsg::ConfigUpdated(self.config.clone()));

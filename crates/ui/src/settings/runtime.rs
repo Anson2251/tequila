@@ -396,7 +396,7 @@ async fn build_available_channels(
                         runtime_manager.register_channel(channel, cask.version, final_dir);
                         let settings: prefix::Settings = runtime_manager.clone().into();
                         if let Err(e) = settings.save() {
-                            eprintln!("Failed to save runtime settings: {}", e);
+                            log::error!("[runtime] failed to save runtime settings: {}", e);
                         }
                         let rm = runtime_manager;
                         let _ = tx.send(Ok(rm));
@@ -460,7 +460,7 @@ async fn build_available_channels(
             runtime_manager.remove(&remove_id);
             let settings: prefix::Settings = runtime_manager.clone().into();
             if let Err(e) = settings.save() {
-                eprintln!("Failed to save runtime settings: {}", e);
+                log::error!("[runtime] failed to save runtime settings: {}", e);
             }
 
             let _ = remove_sender.input(RuntimeSettingsMsg::DownloadComplete(runtime_manager));
@@ -506,7 +506,7 @@ async fn build_available_channels(
     let builds: Vec<WineBuild> = match prefix::runtime::kron4ek::fetch_all_builds().await {
         Ok(b) => b,
         Err(e) => {
-            log::error!("Failed to fetch Kron4ek builds: {}", e);
+            log::error!("[runtime] failed to fetch Kron4ek builds: {}", e);
             let row = adw::ActionRow::builder()
                 .title("Failed to fetch available Wine versions")
                 .subtitle(&format!("{}", e))
@@ -659,7 +659,7 @@ async fn build_available_channels(
                         );
                         let settings: prefix::Settings = runtime_manager.clone().into();
                         if let Err(e) = settings.save() {
-                            eprintln!("Failed to save runtime settings: {}", e);
+                            log::error!("[runtime] failed to save runtime settings: {}", e);
                         }
                         let rm = runtime_manager;
                         let _ = tx.send(Ok(rm));
@@ -723,7 +723,7 @@ async fn build_available_channels(
             runtime_manager.remove(&remove_id);
             let settings: prefix::Settings = runtime_manager.clone().into();
             if let Err(e) = settings.save() {
-                eprintln!("Failed to save runtime settings: {}", e);
+                log::error!("[runtime] failed to save runtime settings: {}", e);
             }
 
             let rm = runtime_manager;

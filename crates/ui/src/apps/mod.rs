@@ -12,7 +12,7 @@ use crate::{
     apps::list::{RegisteredAppsListModel, RegisteredAppsListMsg, RegisteredAppsListOutput},
 };
 use adw::prelude::*;
-use log::error;
+use log::{debug, error, info};
 use prefix::IconCache;
 use prefix::ProcessTracker;
 use prefix::config::{PrefixConfig, RegisteredExecutable};
@@ -175,14 +175,22 @@ impl AsyncComponent for AppManagerModel {
 
         // Initialize add app popover (hidden by default) - will be connected to the actual add button later
         let add_app_popover = AddAppPopoverModel::builder()
-            .launch((gtk::Button::new(), prefix_path.clone(), Arc::clone(&icon_cache)))
+            .launch((
+                gtk::Button::new(),
+                prefix_path.clone(),
+                Arc::clone(&icon_cache),
+            ))
             .forward(sender.input_sender(), |output| {
                 AppManagerMsg::AddAppPopover(output)
             });
 
         // Initialize executable info dialog (hidden by default)
         let executable_info_dialog = ExecutableInfoDialogModel::builder()
-            .launch((prefix_path.clone(), main_window.clone(), Arc::clone(&icon_cache)))
+            .launch((
+                prefix_path.clone(),
+                main_window.clone(),
+                Arc::clone(&icon_cache),
+            ))
             .forward(sender.input_sender(), |output| {
                 AppManagerMsg::ExecutableInfoDialog(output)
             });
@@ -238,7 +246,7 @@ impl AsyncComponent for AppManagerModel {
         match msg {
             AppManagerMsg::ScanForApplications => {
                 if self.prefix_path.as_os_str().is_empty() {
-                    println!("Skipping scan: no prefix path set");
+                    info!("[apps] skipping scan: no prefix path set");
                     return;
                 }
 
@@ -248,8 +256,8 @@ impl AsyncComponent for AppManagerModel {
                 self.set_selected_executable(None);
                 self.app_actions.emit(AppActionsMsg::SetSelection(false));
 
-                println!(
-                    "Scanning for applications... {}",
+                info!(
+                    "[apps] scanning for applications... {}",
                     &self.prefix_path.display()
                 );
 
@@ -267,7 +275,10 @@ impl AsyncComponent for AppManagerModel {
                     .await
                 {
                     Ok(executables) => {
-                        println!("Scanning complete, found {} executables", executables.len());
+                        info!(
+                            "[apps] scanning complete, found {} executables",
+                            executables.len()
+                        );
                         let _ = self.prefix_store.save_scanned_executables(
                             &self.prefix_path.to_string_lossy(),
                             &executables,
@@ -281,7 +292,7 @@ impl AsyncComponent for AppManagerModel {
                             ));
                     }
                     Err(e) => {
-                        eprintln!("Scan failed: {}", e);
+                        error!("[apps] scan failed: {}", e);
                     }
                 }
                 self.set_scanning(false);
@@ -290,35 +301,41 @@ impl AsyncComponent for AppManagerModel {
             }
             AppManagerMsg::AddExecutable(index) => {
                 if let Some(executable) = self.available_executables.get(index) {
-                    println!("Adding executable: {}", executable.name);
+                    info!("[apps] adding executable: {}", executable.name);
 
                     self.config.add_executable(executable.clone());
 
                     // Save config to file
                     if let Err(e) = self.config.save_to_file(&self.prefix_path) {
-                        eprintln!("Failed to save config after adding executable: {}", e);
+                        error!(
+                            "[apps] failed to save config after adding executable: {}",
+                            e
+                        );
                     } else {
-                        println!("Config saved successfully after adding executable");
+                        info!("[apps] config saved successfully after adding executable");
                     }
 
                     let _ = sender.output(AppManagerMsg::ConfigUpdated(self.config.clone()));
                 }
             }
             AppManagerMsg::AddExecutables(indices) => {
-                println!("Adding {} executables: {:?}", indices.len(), indices);
+                info!("[apps] adding {} executables: {:?}", indices.len(), indices);
 
                 for &index in &indices {
                     if let Some(executable) = self.available_executables.get(index) {
-                        println!("Adding executable: {}", executable.name);
+                        info!("[apps] adding executable: {}", executable.name);
                         self.config.add_executable(executable.clone());
                     }
                 }
 
                 // Save config to file
                 if let Err(e) = self.config.save_to_file(&self.prefix_path) {
-                    eprintln!("Failed to save config after adding executables: {}", e);
+                    error!(
+                        "[apps] failed to save config after adding executables: {}",
+                        e
+                    );
                 } else {
-                    println!("Config saved successfully after adding executables");
+                    info!("[apps] config saved successfully after adding executables");
                 }
 
                 // Update the registered apps list with the new config's registered executables
@@ -337,9 +354,12 @@ impl AsyncComponent for AppManagerModel {
 
                     // Save config to file
                     if let Err(e) = self.config.save_to_file(&self.prefix_path) {
-                        eprintln!("Failed to save config after removing executable: {}", e);
+                        error!(
+                            "[apps] failed to save config after removing executable: {}",
+                            e
+                        );
                     } else {
-                        println!("Config saved successfully after removing executable");
+                        info!("[apps] config saved successfully after removing executable");
                     }
 
                     let _ = sender.output(AppManagerMsg::ConfigUpdated(self.config.clone()));
@@ -360,7 +380,7 @@ impl AsyncComponent for AppManagerModel {
                             sender.input(AppManagerMsg::PollProcesses);
                         }
                         Err(e) => {
-                            error!("[launch] Failed to launch '{}': {}", executable.name, e);
+                            error!("[launch] failed to launch '{}': {}", executable.name, e);
                             let parent_window = _root
                                 .ancestor(gtk::Window::static_type())
                                 .and_then(|w| w.downcast::<gtk::Window>().ok());
@@ -391,7 +411,7 @@ impl AsyncComponent for AppManagerModel {
                     ));
             }
             AppManagerMsg::SelectExecutable(index) => {
-                println!("Selected executable: {}", index);
+                info!("[apps] selected executable: {}", index);
                 self.set_selected_executable(Some(index));
             }
             AppManagerMsg::ConfigUpdated(config) => {
@@ -407,7 +427,7 @@ impl AsyncComponent for AppManagerModel {
                             self.available_executables = exes;
                         }
                         Err(e) => {
-                            eprintln!("Failed to load scanned executables: {}", e);
+                            error!("[apps] failed to load scanned executables: {}", e);
                         }
                     }
                 }
@@ -486,8 +506,8 @@ impl AsyncComponent for AppManagerModel {
 
                             // Persist config to disk
                             if let Err(e) = self.config.save_to_file(&self.prefix_path) {
-                                eprintln!(
-                                    "Failed to save config after updating executable settings: {}",
+                                error!(
+                                    "[apps] failed to save config after updating executable settings: {}",
                                     e
                                 );
                             }
@@ -506,10 +526,10 @@ impl AsyncComponent for AppManagerModel {
                 }
             }
             AppManagerMsg::RegisteredAppsList(output) => {
-                println!("DEBUG: Received RegisteredAppsList output: {:?}", output);
+                debug!("[apps] received RegisteredAppsList output: {:?}", output);
                 match output {
                     RegisteredAppsListOutput::Selected(index) => {
-                        println!("DEBUG: Setting selected executable to: {}", index);
+                        debug!("[apps] setting selected executable to: {}", index);
                         self.set_selected_executable(Some(index));
                         self.app_actions.emit(AppActionsMsg::SetSelection(true));
                         // Check if the selected app is running
@@ -535,7 +555,7 @@ impl AsyncComponent for AppManagerModel {
                 }
             }
             AppManagerMsg::AppActions(output) => {
-                println!("App actions: {:?}", output);
+                info!("[apps] app actions: {:?}", output);
                 match output {
                     AppActionsOutput::Launch => {
                         if let Some(index) = self.selected_executable {
@@ -575,7 +595,7 @@ impl AsyncComponent for AppManagerModel {
 
                         // Auto-scan if no cached executables
                         if self.available_executables.is_empty() {
-                            println!("No cached executables found, starting auto-scan");
+                            info!("[apps] no cached executables found, starting auto-scan");
                             sender.input(AppManagerMsg::ScanForApplications);
                         }
 
@@ -613,7 +633,7 @@ impl AsyncComponent for AppManagerModel {
                         cmd.current_dir(&pp);
                         match cmd.spawn() {
                             Ok(child) => {
-                                println!("Launched Wine uninstaller");
+                                info!("[apps] launched Wine uninstaller");
                                 let mut t = self.process_tracker.lock().unwrap();
                                 t.register(&track_path, child);
                                 drop(t);
@@ -622,7 +642,7 @@ impl AsyncComponent for AppManagerModel {
                                     .emit(AppActionsMsg::SetUninstallerRunning(true));
                                 sender.input(AppManagerMsg::PollProcesses);
                             }
-                            Err(e) => eprintln!("Failed to launch uninstaller: {}", e),
+                            Err(e) => error!("[apps] failed to launch uninstaller: {}", e),
                         }
                     }
                     AppActionsOutput::RunExe => {
@@ -648,14 +668,14 @@ impl AsyncComponent for AppManagerModel {
                 }
             }
             AppManagerMsg::AddAppPopover(output) => {
-                println!("DEBUG: Received AddAppPopover output: {:?}", output);
+                debug!("[apps] received AddAppPopover output: {:?}", output);
                 match output {
                     AddAppPopoverOutput::AddApp(indices) => {
-                        println!("Adding executables: {:?}", indices);
+                        info!("[apps] adding executables: {:?}", indices);
                         sender.input(AppManagerMsg::AddExecutables(indices));
                     }
                     AddAppPopoverOutput::Close => {
-                        println!("DEBUG: Closing popover");
+                        debug!("[apps] closing popover");
                         self.add_app_popover.widget().unparent();
                     }
                     AddAppPopoverOutput::Scan => {
@@ -675,7 +695,7 @@ impl AsyncComponent for AppManagerModel {
                 cmd.current_dir(exe_path.parent().unwrap_or(&pp));
                 match cmd.spawn() {
                     Ok(child) => {
-                        println!("Launched exe directly: {}", exe_path.display());
+                        info!("[apps] launched exe directly: {}", exe_path.display());
                         let mut t = self.process_tracker.lock().unwrap();
                         t.register(&exe_path, child);
                         drop(t);
@@ -683,7 +703,7 @@ impl AsyncComponent for AppManagerModel {
                         self.app_actions.emit(AppActionsMsg::SetExeRunning(true));
                         sender.input(AppManagerMsg::PollProcesses);
                     }
-                    Err(e) => eprintln!("Failed to launch exe: {}", e),
+                    Err(e) => error!("[apps] failed to launch exe: {}", e),
                 }
             }
             AppManagerMsg::PollProcesses => {

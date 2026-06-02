@@ -12,3 +12,4 @@ hex = "0.4"
 walkdir = "2.5"
 rusqlite = { version = "0.39", features = ["bundled"] }
 tokio = { version = "1.52.3", features = ["full"] }
+log = "0.4"

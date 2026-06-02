@@ -436,10 +436,10 @@ impl AsyncComponent for AddAppPopoverModel {
                 // Toggle selection for the clicked index
                 if currently_selected {
                     self.selected_indices.remove(&index);
-                    println!("DEBUG: Deselected index: {}", index);
+                    log::debug!("[apps] deselected index: {}", index);
                 } else {
                     self.selected_indices.insert(index);
-                    println!("DEBUG: Selected index: {}", index);
+                    log::debug!("[apps] selected index: {}", index);
                 }
 
                 // Set flag to prevent recursive calls
@@ -467,8 +467,8 @@ impl AsyncComponent for AddAppPopoverModel {
                     sender.input(AddAppPopoverMsg::ResetProcessingFlag);
                 });
 
-                println!(
-                    "DEBUG: Current selected indices: {:?}",
+                log::debug!(
+                    "[apps] current selected indices: {:?}",
                     self.selected_indices
                 );
             }
@@ -480,7 +480,7 @@ impl AsyncComponent for AddAppPopoverModel {
             }
             AddAppPopoverMsg::ResetProcessingFlag => {
                 self.is_processing_selection = false;
-                println!("DEBUG: Reset processing flag");
+                log::debug!("[apps] reset processing flag");
             }
             AddAppPopoverMsg::PrefixPathUpdated(prefix_path) => {
                 if self.prefix_path == prefix_path {

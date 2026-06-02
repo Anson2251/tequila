@@ -441,7 +441,7 @@ impl SimpleComponent for RegistryEditorModel {
                     });
                     if let Ok(result) = rx.recv() {
                         if let Err(e) = result {
-                            eprintln!("Registry save failed: {}", e);
+                            log::error!("[regedit] registry save failed: {}", e);
                         }
                     }
                     self.registry_editor = Some(editor_arc);
@@ -473,12 +473,12 @@ impl SimpleComponent for RegistryEditorModel {
                 let track_path = pp.join("__wine_winecfg__");
                 let already_running = self.process_tracker.lock().unwrap().is_running(&track_path);
                 if already_running {
-                    println!("winecfg already running");
+                    log::info!("[regedit] winecfg already running");
                     return;
                 }
                 match self.prefix_manager.run_winecfg(&pp) {
                     Ok(child) => {
-                        println!("Launched winecfg");
+                        log::info!("[regedit] launched winecfg");
                         self.process_tracker
                             .lock()
                             .unwrap()
@@ -486,7 +486,7 @@ impl SimpleComponent for RegistryEditorModel {
                         sender.input(RegistryEditorMsg::PollProcesses);
                     }
                     Err(e) => {
-                        eprintln!("Failed to launch winecfg: {}", e);
+                        log::error!("[regedit] failed to launch winecfg: {}", e);
                         let alert = adw::AlertDialog::new(
                             Some("Launch Failed"),
                             Some(&format!("Failed to launch winecfg:\n\n{}", e)),
@@ -508,12 +508,12 @@ impl SimpleComponent for RegistryEditorModel {
                 let track_path = pp.join("__wine_regedit__");
                 let already_running = self.process_tracker.lock().unwrap().is_running(&track_path);
                 if already_running {
-                    println!("regedit already running");
+                    log::info!("[regedit] regedit already running");
                     return;
                 }
                 match self.prefix_manager.run_regedit(&pp) {
                     Ok(child) => {
-                        println!("Launched regedit");
+                        log::info!("[regedit] launched regedit");
                         self.process_tracker
                             .lock()
                             .unwrap()
@@ -521,7 +521,7 @@ impl SimpleComponent for RegistryEditorModel {
                         sender.input(RegistryEditorMsg::PollProcesses);
                     }
                     Err(e) => {
-                        eprintln!("Failed to launch regedit: {}", e);
+                        log::error!("[regedit] failed to launch regedit: {}", e);
                         let alert = adw::AlertDialog::new(
                             Some("Launch Failed"),
                             Some(&format!("Failed to launch regedit:\n\n{}", e)),
@@ -575,7 +575,7 @@ impl SimpleComponent for RegistryEditorModel {
                     }) {
                         Ok(w) => w,
                         Err(e) => {
-                            eprintln!("watch init: {}", e);
+                            log::error!("[regedit] watch init: {}", e);
                             return;
                         }
                     };
@@ -614,7 +614,7 @@ impl SimpleComponent for RegistryEditorModel {
             }
 
             RegistryEditorMsg::RegistrySaveError(error) => {
-                eprintln!("Registry save error: {}", error);
+                log::error!("[regedit] registry save error: {}", error);
                 self.set_editing(false);
                 set_editing_all_tabs(
                     &self.general_ctrl,
@@ -1357,10 +1357,10 @@ fn spawn_registry_load(
                 )));
             }
             Ok(Err(e)) => {
-                eprintln!("Failed to load registry: {}", e);
+                log::error!("[regedit] failed to load registry: {}", e);
             }
             Err(_) => {
-                eprintln!("Failed to receive registry load result");
+                log::error!("[regedit] failed to receive registry load result");
             }
         }
     });
