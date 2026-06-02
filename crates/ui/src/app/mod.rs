@@ -778,10 +778,14 @@ impl SimpleComponent for AppModel {
                         };
 
                         if graphics_changed {
-                            // Update in-memory state immediately for UI responsiveness
-                            self.prefixes[actual_index].config = config.clone();
+                            // Save the full pre-change config so we can roll
+                            // back on disk + notify UIs if anything fails.
+                            let rollback_config = self.prefixes[actual_index].config.clone();
 
-                            // Notify other components with updated config
+                            // Update in-memory state + notify UIs immediately.
+                            // This gives instant visual feedback; if the async
+                            // operation fails below we restore the old state.
+                            self.prefixes[actual_index].config = config.clone();
                             self.prefix_config.emit(
                                 crate::prefix::config::PrefixConfigMsg::ConfigUpdated(
                                     config.clone(),
@@ -791,37 +795,57 @@ impl SimpleComponent for AppModel {
                                 .emit(crate::apps::AppManagerMsg::ConfigUpdated(config.clone()));
 
                             // Async: deactivate old backend, then activate new one
-                            // (both handle file saving themselves)
                             let pm = self.prefix_manager.clone();
                             let pp = prefix_path.clone();
+                            let window = self.main_window.clone().upcast::<gtk::Window>();
+                            let s = sender.clone();
                             glib::MainContext::default().spawn_local(async move {
-                                // Deactivate old backend (reads current config from file)
-                                if old_graphics.is_some() {
+                                let mut failed = false;
+
+                                if let Some(ref old_gfx) = old_graphics {
                                     info!("[config] deactivating old graphics backend");
-                                    if let Err(e) = pm.deactivate_graphics_backend(&pp).await {
-                                        error!(
-                                            "[app] failed to deactivate old graphics backend: {}",
-                                            e
+                                    if let Err(e) = pm
+                                        .deactivate_graphics_backend(&pp, Some(old_gfx.clone()))
+                                        .await
+                                    {
+                                        error!("[app] failed to deactivate old graphics: {}", e);
+                                        failed = true;
+                                        show_error_dialog(
+                                            &window,
+                                            "Failed to Deactivate Graphics Backend",
+                                            &e,
                                         );
                                     }
                                 }
 
-                                // Activate new backend (writes config + symlinks + registry)
-                                if let Some(ref gfx) = new_graphics {
-                                    if let Some(backend) = gfx.to_backend() {
-                                        info!(
-                                            "[config] activating {} graphics backend",
-                                            backend.display_name()
-                                        );
-                                        if let Err(e) =
-                                            pm.activate_graphics_backend(&backend, &pp).await
-                                        {
-                                            error!(
-                                                "[app] failed to activate graphics backend: {}",
-                                                e
+                                if !failed {
+                                    if let Some(ref gfx) = new_graphics {
+                                        if let Some(backend) = gfx.to_backend() {
+                                            info!(
+                                                "[config] activating {} graphics backend",
+                                                backend.display_name()
                                             );
+                                            if let Err(e) =
+                                                pm.activate_graphics_backend(&backend, &pp).await
+                                            {
+                                                error!("[app] failed to activate graphics: {}", e);
+                                                failed = true;
+                                                show_error_dialog(
+                                                    &window,
+                                                    "Failed to Activate Graphics Backend",
+                                                    &e,
+                                                );
+                                            }
                                         }
                                     }
+                                }
+
+                                // On failure: restore the old config on disk
+                                // and emit updates so all UIs revert.
+                                if failed {
+                                    let _ = pm.update_config(&pp, &rollback_config);
+                                    // Emit the rollback config so the UI reverts
+                                    s.input(AppMsg::ConfigUpdated(0, rollback_config));
                                 }
                             });
                         } else {
@@ -1063,4 +1087,13 @@ pub fn open_terminal_with_script(script_path: &std::path::Path) {
             }
         }
     }
+}
+
+/// Show a simple error dialog with an OK button.
+fn show_error_dialog(parent: &gtk::Window, title: &str, msg: &dyn std::fmt::Display) {
+    let alert = adw::AlertDialog::new(Some(title), Some(&msg.to_string()));
+    alert.add_response("ok", "OK");
+    alert.set_default_response(Some("ok"));
+    alert.set_close_response("ok");
+    alert.choose(Some(parent), None::<&gio::Cancellable>, |_| {});
 }

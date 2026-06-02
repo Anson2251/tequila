@@ -147,10 +147,12 @@ impl GraphicsConfig {
         }
     }
 
-    /// DLL override keys for deactivation — matching `GraphicsBackend::override_dlls()`.
+    /// DLL override keys for deactivation.
+    ///
+    /// NOTE: Keep in sync with `GraphicsBackend::override_entries()`.
+    /// If you add a new DLL override to the enum, add it here too.
     pub fn override_dlls(&self) -> Vec<&str> {
         match self.backend.as_str() {
-            // DXMT: all DLLs go into prefix system32 as native overrides
             "dxmt" => vec!["winemetal", "d3d11", "dxgi", "d3d10core"],
             "d3dmetal" => vec!["d3d11", "d3d12", "dxgi"],
             "dxvk-vkd3d" => vec![

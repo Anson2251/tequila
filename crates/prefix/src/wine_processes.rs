@@ -1,6 +1,6 @@
+use base::GraphicsBackend;
 use base::config::PrefixConfig;
 use base::error::{PrefixError, Result};
-use base::GraphicsBackend;
 use log::info;
 use runtime::Runtime;
 use runtime::graphics;
@@ -77,18 +77,22 @@ fn apply_graphics_env(cmd: &mut Command, prefix_path: &Path) {
         GraphicsBackend::Dxmt { version } => {
             // WINEDLLPATH only for .so (unixlib) files — DXMT provides winemetal.so.
             // All .dll files are symlinked into prefix system32 as native overrides.
-            vec![gfx_dir
-                .join(format!("dxmt-{}", version))
-                .join("lib")
-                .join("wine")
-                .join("x86_64-unix")]
+            vec![
+                gfx_dir
+                    .join(format!("dxmt-{}", version))
+                    .join("lib")
+                    .join("wine")
+                    .join("x86_64-unix"),
+            ]
         }
         GraphicsBackend::D3DMetal { version } => {
-            vec![gfx_dir
-                .join(format!("d3dmetal-{}", version))
-                .join("lib")
-                .join("wine")
-                .join("x86_64-unix")]
+            vec![
+                gfx_dir
+                    .join(format!("d3dmetal-{}", version))
+                    .join("lib")
+                    .join("wine")
+                    .join("x86_64-unix"),
+            ]
         }
         GraphicsBackend::DxvkVkd3d {
             dxvk_version,
@@ -143,6 +147,43 @@ fn apply_graphics_env(cmd: &mut Command, prefix_path: &Path) {
         _ => {
             cmd.env("WINEDLLOVERRIDES", &override_str);
             info!("[spawn] WINEDLLOVERRIDES={}", override_str);
+        }
+    }
+
+    // ── DXVK+VKD3D environment variables ──────────────────────────
+    // When the backend is DXVK+VKD3D, set config file paths and state
+    // cache location so the libraries can find their configuration
+    // without requiring the user to set them globally.
+    if let GraphicsBackend::DxvkVkd3d { .. } = &backend {
+        // Point DXVK at the per-prefix dxvk.conf written during patching
+        let dxvk_conf = prefix_path.join("drive_c").join("dxvk.conf");
+        if dxvk_conf.exists() {
+            let path = dxvk_conf.to_string_lossy().to_string();
+            cmd.env("DXVK_CONFIG_FILE", &path);
+            info!("[spawn] DXVK_CONFIG_FILE={}", path);
+        }
+
+        // Point VKD3D-Proton at the per-prefix vkd3d_proton.conf
+        let vkd3d_conf = prefix_path.join("drive_c").join("vkd3d_proton.conf");
+        if vkd3d_conf.exists() {
+            let path = vkd3d_conf.to_string_lossy().to_string();
+            cmd.env("VKD3D_CONFIG_FILE", &path);
+            info!("[spawn] VKD3D_CONFIG_FILE={}", path);
+        }
+
+        // Enable state cache and point it to the per-prefix directory
+        let cache_dir = prefix_path.join("drive_c").join("dxvk_state_cache");
+        if cache_dir.is_dir() {
+            cmd.env("DXVK_STATE_CACHE", "1");
+            let path = cache_dir.to_string_lossy().to_string();
+            cmd.env("DXVK_STATE_CACHE_PATH", &path);
+            info!("[spawn] DXVK_STATE_CACHE=1, DXVK_STATE_CACHE_PATH={}", path);
+        }
+
+        // Disable HUD by default (user can override via per-executable env vars)
+        if std::env::var("DXVK_HUD").is_err() {
+            cmd.env("DXVK_HUD", "0");
+            info!("[spawn] DXVK_HUD=0");
         }
     }
 }

@@ -276,48 +276,515 @@ impl Manager {
         Ok(gfx_config)
     }
 
-    /// Deactivate the current graphics backend for a prefix.
+    /// Unified DXVK+VKD3D patch: download latest releases + activate for prefix.
     ///
-    /// 1. Remove DLL symlinks from prefix
-    /// 2. Remove DLL override entries from `user.reg`
-    /// 3. Clear `graphics` field from `tequila-config.json`
-    pub async fn deactivate_graphics_backend(&self, prefix_path: &PathBuf) -> Result<()> {
+    /// This is the equivalent of `gameportingtoolkit patch` for the DXVK+VKD3D
+    /// backend.  It performs the complete patching workflow:
+    ///
+    /// 1. Fetch the latest DXVK release from GitHub and download it
+    /// 2. Fetch the latest VKD3D-Proton release from GitHub and download it
+    /// 3. Symlink all DLLs into the prefix (`system32/` and `syswow64/`)
+    /// 4. Write `dxvk.conf` and `vkd3d_proton.conf` with sensible defaults
+    /// 5. Create the DXVK state cache directory
+    /// 6. Write DLL override entries to `user.reg`
+    /// 7. Save the `graphics` field to `tequila-config.json`
+    pub async fn patch_prefix_with_dxvk_vkd3d(
+        &self,
+        prefix_path: &PathBuf,
+        progress: runtime::download::PhaseProgressFn,
+        cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<GraphicsConfig> {
         let name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
         let mut config = self.load_or_create_config(prefix_path, name, &None)?;
 
-        if let Some(gfx_config) = config.graphics.take() {
-            info!(
-                "[prefix] deactivating {} for prefix '{}'",
-                gfx_config.display_name(),
-                name
-            );
+        info!(
+            "[prefix] patching prefix '{}' with DXVK+VKD3D (arch: {})",
+            name, config.architecture
+        );
 
-            // 1. Remove DLL symlinks
-            graphics::deactivate_for_prefix(&gfx_config, prefix_path)?;
-            info!("[prefix] removed DLL symlinks for prefix '{}'", name);
-
-            // 2. Remove registry overrides
-            let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
-            let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
-            let dlls: Vec<&str> = gfx_config.override_dlls();
-            info!(
-                "[prefix] removing DLL overrides from registry: {}",
-                dlls.join(",")
-            );
-            for dll in gfx_config.override_dlls() {
-                editor.remove_dll_override(dll).await?;
-            }
-            editor.save_registry(prefix_path).await?;
-
-            // 3. Clear config
-            config.graphics = None;
-            config.update_last_modified();
-            config.save_to_file(prefix_path)?;
+        if !(GraphicsBackend::DxvkVkd3d {
+            dxvk_version: String::new(),
+            vkd3d_version: String::new(),
+        })
+        .supports_arch(&config.architecture)
+        {
+            return Err(PrefixError::Validation(format!(
+                "DXVK+VKD3D does not support architecture '{}'",
+                config.architecture
+            )));
         }
 
+        // 1–2. Download latest DXVK + VKD3D
+        let (dxvk_dir, vkd3d_dir, dxvk_ver, vkd3d_ver) =
+            runtime::graphics::download_dxvk_vkd3d(progress, cancel).await?;
+
+        info!(
+            "[prefix] downloaded DXVK {} and VKD3D-Proton {}",
+            dxvk_ver, vkd3d_ver
+        );
+
+        // 3–5. Apply the full patch (symlinks + configs + state cache)
+        runtime::graphics::patch_dxvk_vkd3d_for_prefix(&dxvk_dir, &vkd3d_dir, prefix_path)?;
+        info!(
+            "[prefix] patched DXVK+VKD3D DLLs and config into prefix '{}'",
+            name
+        );
+
+        // 6. Write DLL overrides to registry
+        let backend = GraphicsBackend::DxvkVkd3d {
+            dxvk_version: dxvk_ver.clone(),
+            vkd3d_version: vkd3d_ver.clone(),
+        };
+        let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
+        let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+        for (dll, setting_str) in backend.override_entries() {
+            let setting = DllOverrideSetting::from_string(setting_str).ok_or_else(|| {
+                PrefixError::Validation(format!("Invalid override setting: {}", setting_str))
+            })?;
+            editor.add_dll_override(dll, setting).await?;
+        }
+        editor.save_registry(prefix_path).await?;
+        info!(
+            "[prefix] wrote DLL overrides to registry for prefix '{}'",
+            name
+        );
+
+        // 7. Save config
+        let backend_name: &str = "dxvk-vkd3d";
+        let gfx_config = GraphicsConfig {
+            backend: backend_name.to_string(),
+            version: format!("dxvk-{}+vkd3d-{}", dxvk_ver, vkd3d_ver),
+        };
+        config.graphics = Some(gfx_config.clone());
+        config.update_last_modified();
+        config.save_to_file(prefix_path)?;
+
+        info!(
+            "[prefix] successfully patched prefix '{}' with DXVK+VKD3D",
+            name
+        );
+        Ok(gfx_config)
+    }
+
+    /// Deactivate the current graphics backend for a prefix.
+    ///
+    /// 1. Remove DLL symlinks from prefix
+    /// 2. Remove DLL override entries from `user.reg`
+    /// 3. Clear `graphics` field from `tequila-config.json`
+    ///
+    /// `old_graphics` is the backend to deactivate.  When `Some`, it is
+    /// used directly without re-reading the config from disk (the disk
+    /// config may already have been updated by the time this runs).
+    /// When `None`, falls back to reading from the prefix config file.
+    pub async fn deactivate_graphics_backend(
+        &self,
+        prefix_path: &PathBuf,
+        old_graphics: Option<GraphicsConfig>,
+    ) -> Result<()> {
+        let name = prefix_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
+
+        // Use the caller-provided config, or fall back to loading from disk
+        let gfx_config = match old_graphics {
+            Some(g) => g,
+            None => match config.graphics.take() {
+                Some(g) => g,
+                None => {
+                    info!("[prefix] no active graphics backend to deactivate");
+                    return Ok(());
+                }
+            },
+        };
+        info!(
+            "[prefix] deactivating {} for prefix '{}'",
+            gfx_config.display_name(),
+            name
+        );
+
+        // 1. Remove DLL symlinks
+        info!("[prefix]   step 1/3: removing DLL symlinks...");
+        graphics::deactivate_for_prefix(&gfx_config, prefix_path)?;
+        info!("[prefix]   step 1/3: done");
+
+        // 2. Remove registry overrides
+        info!("[prefix]   step 2/3: initialising registry editor...");
+        let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
+        let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+        let dlls: Vec<&str> = gfx_config.override_dlls();
+        info!(
+            "[prefix]   step 2/3: removing overrides: {}",
+            dlls.join(",")
+        );
+        for dll in gfx_config.override_dlls() {
+            editor.remove_dll_override(dll).await?;
+        }
+        info!("[prefix]   step 2/3: saving registry...");
+        editor.save_registry(prefix_path).await?;
+        info!("[prefix]   step 2/3: done");
+
+        // 3. Clear config
+        info!("[prefix]   step 3/3: clearing config...");
+        config.graphics = None;
+        config.update_last_modified();
+        config.save_to_file(prefix_path)?;
+        info!("[prefix]   step 3/3: done");
+
+        info!(
+            "[prefix] done deactivating {} for prefix '{}'",
+            gfx_config.display_name(),
+            name
+        );
+        Ok(())
+    }
+
+    /// Unpatch DXVK+VKD3D from a prefix — symmetric counterpart of
+    /// `patch_prefix_with_dxvk_vkd3d`.
+    ///
+    /// 1. Remove DXVK+VKD3D DLL symlinks from `system32/` and `syswow64/`
+    /// 2. Remove `dxvk.conf` and `vkd3d_proton.conf` (Tequila-generated only)
+    /// 3. Delete the DXVK state cache directory
+    /// 4. Remove DLL override entries from `user.reg`
+    /// 5. Clear the `graphics` field from `tequila-config.json`
+    ///
+    /// This is safe to call even if the prefix has no DXVK+VKD3D backend
+    /// configured — it returns `Ok(())` without doing anything.
+    pub async fn unpatch_prefix_with_dxvk_vkd3d(&self, prefix_path: &PathBuf) -> Result<()> {
+        let name = prefix_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
+
+        // Only proceed if the prefix currently has a DXVK+VKD3D backend
+        let gfx_config = match config.graphics.take() {
+            Some(g) if g.backend == "dxvk-vkd3d" => g,
+            Some(g) => {
+                // Different backend — put it back and bail
+                config.graphics = Some(g);
+                return Ok(());
+            }
+            None => return Ok(()),
+        };
+
+        info!("[prefix] unpatching DXVK+VKD3D for prefix '{}'", name);
+
+        // 1. Remove DLL symlinks + config files + state cache
+        runtime::graphics::deactivate_for_prefix(&gfx_config, prefix_path)?;
+        info!(
+            "[prefix] removed DXVK+VKD3D DLL symlinks and config for '{}'",
+            name
+        );
+
+        // 2. Remove DLL overrides from registry
+        let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
+        let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+        for dll in gfx_config.override_dlls() {
+            editor.remove_dll_override(dll).await?;
+        }
+        editor.save_registry(prefix_path).await?;
+        info!(
+            "[prefix] removed DLL overrides from registry for '{}'",
+            name
+        );
+
+        // 3. Clear graphics field in config (graphics already taken above)
+        config.update_last_modified();
+        config.save_to_file(prefix_path)?;
+
+        info!("[prefix] successfully unpatched DXVK+VKD3D from '{}'", name);
+        Ok(())
+    }
+
+    // ── DXMT patch / unpatch ─────────────────────────────────────
+
+    /// Patch a prefix with DXMT: download latest release + activate.
+    ///
+    /// 1. Fetch the latest DXMT release from GitHub and download it
+    /// 2. Symlink DXMT DLLs into the prefix `system32/`
+    /// 3. Write DLL override entries to `user.reg`
+    /// 4. Save the `graphics` field to `tequila-config.json`
+    pub async fn patch_prefix_with_dxmt(
+        &self,
+        prefix_path: &PathBuf,
+        progress: runtime::download::PhaseProgressFn,
+        cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<GraphicsConfig> {
+        let name = prefix_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
+
+        info!(
+            "[prefix] patching prefix '{}' with DXMT (arch: {})",
+            name, config.architecture
+        );
+
+        if config.architecture != "win64" {
+            return Err(PrefixError::Validation(format!(
+                "DXMT requires a 64-bit prefix (current: {})",
+                config.architecture
+            )));
+        }
+
+        // 1. Download latest DXMT
+        let (version, url) = runtime::graphics::fetch_dxmt_release().await?;
+
+        if let Some(ref cancel) = cancel {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(PrefixError::Process("Cancelled".to_string()));
+            }
+        }
+
+        // Wrap PhaseProgressFn in Arc<Mutex<>> for use as &ProgressFn
+        let progress = std::sync::Arc::new(std::sync::Mutex::new(progress));
+        let p = std::sync::Arc::clone(&progress);
+        let simple_prog: runtime::download::ProgressFn = Box::new(move |d, t| {
+            let cb = p.lock().unwrap();
+            cb(d, t, runtime::download::InstallPhase::Download);
+        });
+        let dxmt_dir = runtime::graphics::download_dxmt(&version, &url, &simple_prog).await?;
+        info!("[prefix] downloaded DXMT {}", version);
+
+        // 2. Activate (symlink DLLs)
+        runtime::graphics::activate_dxmt_for_prefix(&dxmt_dir, prefix_path)?;
+        info!("[prefix] activated DXMT DLLs for prefix '{}'", name);
+
+        // 3. Write registry overrides
+        let backend = GraphicsBackend::Dxmt {
+            version: version.clone(),
+        };
+        let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
+        let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+        for (dll, setting_str) in backend.override_entries() {
+            let setting = DllOverrideSetting::from_string(setting_str).ok_or_else(|| {
+                PrefixError::Validation(format!("Invalid override setting: {}", setting_str))
+            })?;
+            editor.add_dll_override(dll, setting).await?;
+        }
+        editor.save_registry(prefix_path).await?;
+        info!(
+            "[prefix] wrote DLL overrides to registry for prefix '{}'",
+            name
+        );
+
+        // 4. Save config
+        let gfx_config = GraphicsConfig {
+            backend: "dxmt".to_string(),
+            version: version.clone(),
+        };
+        config.graphics = Some(gfx_config.clone());
+        config.update_last_modified();
+        config.save_to_file(prefix_path)?;
+
+        info!("[prefix] successfully patched prefix '{}' with DXMT", name);
+        Ok(gfx_config)
+    }
+
+    /// Unpatch DXMT from a prefix.
+    pub async fn unpatch_prefix_with_dxmt(&self, prefix_path: &PathBuf) -> Result<()> {
+        let name = prefix_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
+
+        let gfx_config = match config.graphics.take() {
+            Some(g) if g.backend == "dxmt" => g,
+            Some(g) => {
+                config.graphics = Some(g);
+                return Ok(());
+            }
+            None => return Ok(()),
+        };
+
+        info!("[prefix] unpatching DXMT for prefix '{}'", name);
+
+        // 1. Remove DLL symlinks
+        runtime::graphics::deactivate_for_prefix(&gfx_config, prefix_path)?;
+        info!("[prefix] removed DXMT DLL symlinks for '{}'", name);
+
+        // 2. Remove registry overrides
+        let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
+        let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+        for dll in gfx_config.override_dlls() {
+            editor.remove_dll_override(dll).await?;
+        }
+        editor.save_registry(prefix_path).await?;
+
+        // 3. Clear config
+        config.update_last_modified();
+        config.save_to_file(prefix_path)?;
+
+        info!("[prefix] successfully unpatched DXMT from '{}'", name);
+        Ok(())
+    }
+
+    // ── D3DMetal patch / unpatch ────────────────────────────────
+
+    /// Patch a prefix with D3DMetal (GPTK).
+    ///
+    /// `source_path` can be:
+    /// - A `.dmg` file (Apple Game Porting Toolkit) — will be mounted and imported
+    /// - A directory containing a `lib/` tree — copied directly
+    pub async fn patch_prefix_with_d3dmetal(
+        &self,
+        prefix_path: &PathBuf,
+        source_path: &std::path::Path,
+    ) -> Result<GraphicsConfig> {
+        let name = prefix_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
+
+        info!(
+            "[prefix] patching prefix '{}' with D3DMetal (arch: {})",
+            name, config.architecture
+        );
+
+        if config.architecture != "win64" {
+            return Err(PrefixError::Validation(format!(
+                "D3DMetal requires a 64-bit prefix (current: {})",
+                config.architecture
+            )));
+        }
+
+        // 1. Import D3DMetal from DMG or directory.
+        // Both branches involve blocking I/O (hdiutil, cp), so run on a
+        // blocking thread pool to avoid stalling the async executor.
+        let source_owned = source_path.to_path_buf();
+        let d3dmetal_dir = tokio::task::spawn_blocking(move || -> Result<PathBuf> {
+            if source_owned
+                .extension()
+                .map(|e| e == "dmg")
+                .unwrap_or(false)
+            {
+                runtime::graphics::import_d3dmetal_from_dmg(&source_owned)
+            } else {
+                let gfx_dir = runtime::graphics::graphics_dir();
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let dest = gfx_dir.join(format!("d3dmetal-imported-{}", ts));
+                let lib = [
+                    source_owned.join("lib"),
+                    source_owned.join("redist").join("lib"),
+                ]
+                .iter()
+                .find(|p| p.is_dir())
+                .cloned()
+                .ok_or_else(|| {
+                    PrefixError::NotFound(
+                        "Could not find D3DMetal lib directory in the selected path".to_string(),
+                    )
+                })?;
+                std::fs::create_dir_all(&dest)?;
+                let status = std::process::Command::new("cp")
+                    .arg("-R")
+                    .arg(&lib)
+                    .arg(&dest)
+                    .status()
+                    .map_err(|e| PrefixError::Process(format!("cp failed: {}", e)))?;
+                if !status.success() {
+                    return Err(PrefixError::Process(
+                        "Failed to copy D3DMetal files".to_string(),
+                    ));
+                }
+                Ok(dest)
+            }
+        })
+        .await
+        .map_err(|e| PrefixError::Process(format!("Blocking task failed: {}", e)))??;
+        info!("[prefix] imported D3DMetal for prefix '{}'", name);
+
+        // 2. Activate (symlink DLLs + frameworks)
+        runtime::graphics::activate_d3dmetal_for_prefix(&d3dmetal_dir, prefix_path)?;
+        info!("[prefix] activated D3DMetal DLLs for prefix '{}'", name);
+
+        // 3. Write registry overrides
+        let version = d3dmetal_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("imported")
+            .trim_start_matches("d3dmetal-")
+            .to_string();
+        let backend = GraphicsBackend::D3DMetal {
+            version: version.clone(),
+        };
+        let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
+        let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+        for (dll, setting_str) in backend.override_entries() {
+            let setting = DllOverrideSetting::from_string(setting_str).ok_or_else(|| {
+                PrefixError::Validation(format!("Invalid override setting: {}", setting_str))
+            })?;
+            editor.add_dll_override(dll, setting).await?;
+        }
+        editor.save_registry(prefix_path).await?;
+        info!(
+            "[prefix] wrote DLL overrides to registry for prefix '{}'",
+            name
+        );
+
+        // 4. Save config
+        let gfx_config = GraphicsConfig {
+            backend: "d3dmetal".to_string(),
+            version,
+        };
+        config.graphics = Some(gfx_config.clone());
+        config.update_last_modified();
+        config.save_to_file(prefix_path)?;
+
+        info!(
+            "[prefix] successfully patched prefix '{}' with D3DMetal",
+            name
+        );
+        Ok(gfx_config)
+    }
+
+    /// Unpatch D3DMetal from a prefix.
+    pub async fn unpatch_prefix_with_d3dmetal(&self, prefix_path: &PathBuf) -> Result<()> {
+        let name = prefix_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
+
+        let gfx_config = match config.graphics.take() {
+            Some(g) if g.backend == "d3dmetal" => g,
+            Some(g) => {
+                config.graphics = Some(g);
+                return Ok(());
+            }
+            None => return Ok(()),
+        };
+
+        info!("[prefix] unpatching D3DMetal for prefix '{}'", name);
+
+        // 1. Remove DLL/framework symlinks
+        runtime::graphics::deactivate_for_prefix(&gfx_config, prefix_path)?;
+        info!("[prefix] removed D3DMetal symlinks for '{}'", name);
+
+        // 2. Remove registry overrides
+        let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
+        let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+        for dll in gfx_config.override_dlls() {
+            editor.remove_dll_override(dll).await?;
+        }
+        editor.save_registry(prefix_path).await?;
+
+        // 3. Clear config
+        config.update_last_modified();
+        config.save_to_file(prefix_path)?;
+
+        info!("[prefix] successfully unpatched D3DMetal from '{}'", name);
         Ok(())
     }
 

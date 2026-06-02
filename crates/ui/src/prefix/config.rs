@@ -88,7 +88,7 @@ pub enum PrefixConfigOutput {
 
 fn build_graphics_model() -> (gtk::StringList, Vec<Option<prefix::base::GraphicsBackend>>) {
     let backends = runtime::graphics::installed_backends();
-    let mut items = vec!["None"];
+    let mut items = vec!["WineD3D (built-in)"];
     let mut mapping: Vec<Option<prefix::base::GraphicsBackend>> = vec![None];
     for b in &backends {
         // Leak the string for a &'static str (the StringList holds its own copy)
@@ -177,22 +177,40 @@ impl SimpleComponent for PrefixConfigModel {
 
                     adw::ActionRow {
                         set_title: "Architecture",
-                        #[track = "model.changed(PrefixConfigModel::config())"]
-                        set_subtitle: &model.config.architecture,
+                        set_subtitle: "Windows architecture (32 or 64-bit)",
                         set_activatable: false,
+
+                        add_suffix = &gtk::Label {
+                            #[track = "model.changed(PrefixConfigModel::config())"]
+                            set_label: &model.config.architecture,
+                            set_css_classes: &["caption", "monospace"],
+                            set_valign: gtk::Align::Center,
+                        },
                     },
 
                     adw::ActionRow {
                         set_title: "Wine Version",
-                        #[track = "model.changed(PrefixConfigModel::wine_runtime_display())"]
-                        set_subtitle: &model.wine_runtime_display,
+                        set_subtitle: "Wine runtime used for this prefix",
 
-                        add_suffix = &gtk::Button {
-                            set_label: "Switch",
-                            set_halign: gtk::Align::Center,
+                        add_suffix = &gtk::Box {
+                            set_orientation: gtk::Orientation::Horizontal,
+                            set_spacing: 8,
                             set_valign: gtk::Align::Center,
-                            connect_clicked[sender] => move |_| {
-                                sender.input(PrefixConfigMsg::SelectWineVersion);
+
+                            gtk::Label {
+                                #[track = "model.changed(PrefixConfigModel::wine_runtime_display())"]
+                                set_label: &model.wine_runtime_display,
+                                set_css_classes: &["caption"],
+                                set_valign: gtk::Align::Center,
+                            },
+
+                            gtk::Button {
+                                set_label: "Switch",
+                                set_css_classes: &["flat"],
+                                set_valign: gtk::Align::Center,
+                                connect_clicked[sender] => move |_| {
+                                    sender.input(PrefixConfigMsg::SelectWineVersion);
+                                },
                             },
                         },
                     },
@@ -210,24 +228,44 @@ impl SimpleComponent for PrefixConfigModel {
 
                     adw::ActionRow {
                         set_title: "Created",
-                        #[track = "model.changed(PrefixConfigModel::config())"]
-                        set_subtitle: &model.config.creation_date.format("%Y-%m-%d %H:%M:%S").to_string(),
+                        set_subtitle: "Prefix creation date",
                         set_activatable: false,
+
+                        add_suffix = &gtk::Label {
+                            #[track = "model.changed(PrefixConfigModel::config())"]
+                            set_label: &model.config.creation_date.format("%Y-%m-%d").to_string(),
+                            set_css_classes: &["caption"],
+                            set_valign: gtk::Align::Center,
+                        },
                     },
 
                     adw::ActionRow {
                         set_title: "Last Modified",
-                        #[track = "model.changed(PrefixConfigModel::config())"]
-                        set_subtitle: &model.config.last_modified.format("%Y-%m-%d %H:%M:%S").to_string(),
+                        set_subtitle: "Last configuration change",
                         set_activatable: false,
+
+                        add_suffix = &gtk::Label {
+                            #[track = "model.changed(PrefixConfigModel::config())"]
+                            set_label: &model.config.last_modified.format("%Y-%m-%d").to_string(),
+                            set_css_classes: &["caption"],
+                            set_valign: gtk::Align::Center,
+                        },
                     },
 
                     adw::ActionRow {
                         set_title: "Path",
-                        #[track = "model.changed(PrefixConfigModel::prefix_path())"]
-                        set_subtitle: &model.prefix_path.to_string_lossy(),
+                        set_subtitle: "Filesystem location of the prefix",
                         set_activatable: false,
-                        add_css_class: "monospace",
+
+                        add_suffix = &gtk::Label {
+                            #[track = "model.changed(PrefixConfigModel::prefix_path())"]
+                            set_label: &model.prefix_path.to_string_lossy(),
+                            set_css_classes: &["caption", "monospace"],
+                            set_hexpand: true,
+                            set_ellipsize: gtk::pango::EllipsizeMode::Start,
+                            set_valign: gtk::Align::Center,
+                            set_xalign: 1.0,
+                        },
                     },
                 },
 

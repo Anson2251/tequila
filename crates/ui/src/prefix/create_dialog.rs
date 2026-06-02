@@ -45,7 +45,7 @@ impl CreatePrefixDialog {
 
     fn build_graphics_combo() -> (gtk::DropDown, Vec<Option<GraphicsBackend>>) {
         let backends = runtime::graphics::installed_backends();
-        let mut items = vec!["None (no graphics override)".to_string()];
+        let mut items = vec!["WineD3D (built-in)".to_string()];
         let mut mapping: Vec<Option<GraphicsBackend>> = vec![None];
 
         for b in backends {
