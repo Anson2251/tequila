@@ -1,7 +1,7 @@
 use adw::prelude::*;
 use prefix::{
     GraphicsBackend, Manager as PrefixManager,
-    runtime::{self, Channel, RuntimeManager, RuntimeSource},
+    runtime::{self, RuntimeManager, RuntimeSource},
 };
 use relm4::prelude::*;
 use std::path::PathBuf;

@@ -1,7 +1,6 @@
 use crate::AppMsg;
 use adw::prelude::*;
 use gtk::glib;
-use gtk::prelude::*;
 use prefix::Manager as PrefixManager;
 use prefix::base::GraphicsBackend;
 use prefix::runtime;

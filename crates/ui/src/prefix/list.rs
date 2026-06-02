@@ -1,5 +1,4 @@
 use gtk::gio;
-use gtk::prelude::*;
 use prefix::WinePrefix;
 use relm4::adw::prelude::*;
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
@@ -203,7 +202,7 @@ fn populate(
             let menu = gio::Menu::new();
             menu.append(Some("Open in File Manager"), Some("pref.open-fm"));
             menu.append(Some("Open in Terminal"), Some("pref.open-term"));
-            menu.append(Some("Export Prefix…"), Some("pref.export"));
+            menu.append(Some("Export Prefix"), Some("pref.export"));
             menu.append(Some("Delete Prefix"), Some("pref.delete"));
 
             let popover = gtk::PopoverMenu::from_model(Some(&menu));

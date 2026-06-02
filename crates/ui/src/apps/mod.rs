@@ -12,7 +12,6 @@ use crate::{
     apps::list::{RegisteredAppsListModel, RegisteredAppsListMsg, RegisteredAppsListOutput},
 };
 use adw::prelude::*;
-use gtk::prelude::*;
 use log::error;
 use prefix::IconCache;
 use prefix::ProcessTracker;
@@ -157,7 +156,11 @@ impl AsyncComponent for AppManagerModel {
 
         // Initialize registered apps list component with the current registered executables
         let registered_apps_list = RegisteredAppsListModel::builder()
-            .launch(config.registered_executables.clone())
+            .launch((
+                config.registered_executables.clone(),
+                prefix_path.clone(),
+                Arc::clone(&icon_cache),
+            ))
             .forward(sender.input_sender(), |output| {
                 AppManagerMsg::RegisteredAppsList(output)
             });
@@ -172,14 +175,14 @@ impl AsyncComponent for AppManagerModel {
 
         // Initialize add app popover (hidden by default) - will be connected to the actual add button later
         let add_app_popover = AddAppPopoverModel::builder()
-            .launch(gtk::Button::new())
+            .launch((gtk::Button::new(), prefix_path.clone(), Arc::clone(&icon_cache)))
             .forward(sender.input_sender(), |output| {
                 AppManagerMsg::AddAppPopover(output)
             });
 
         // Initialize executable info dialog (hidden by default)
         let executable_info_dialog = ExecutableInfoDialogModel::builder()
-            .launch((prefix_path.clone(), main_window.clone()))
+            .launch((prefix_path.clone(), main_window.clone(), Arc::clone(&icon_cache)))
             .forward(sender.input_sender(), |output| {
                 AppManagerMsg::ExecutableInfoDialog(output)
             });
@@ -451,7 +454,11 @@ impl AsyncComponent for AppManagerModel {
                 let has_prefix = !path.as_os_str().is_empty();
                 self.app_actions
                     .emit(AppActionsMsg::SetPrefixSet(has_prefix));
-                self.set_prefix_path(path);
+                self.set_prefix_path(path.clone());
+                self.registered_apps_list
+                    .emit(RegisteredAppsListMsg::PrefixPathUpdated(path.clone()));
+                self.add_app_popover
+                    .emit(AddAppPopoverMsg::PrefixPathUpdated(path));
                 self.set_selected_executable(None);
                 self.app_actions.emit(AppActionsMsg::SetSelection(false));
             }

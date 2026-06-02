@@ -1,9 +1,6 @@
 use crate::app::AppMsg;
 use adw::prelude::*;
-use gtk::prelude::*;
-use gtk4::gio;
 use relm4::{ComponentSender, adw, gtk};
-use std::sync::OnceLock;
 
 /// Configure the application menu bar with platform-appropriate menus.
 ///

@@ -1,11 +1,15 @@
 use gtk::prelude::*;
+use prefix::IconCache;
 use prefix::config::RegisteredExecutable;
+use prefix::resolve_or_extract_icon;
 use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender, FactoryVecDeque};
 use relm4::{
     RelmWidgetExt,
     component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
     gtk,
 };
+use std::path::PathBuf;
+use std::sync::Arc;
 use tracker;
 
 #[derive(Debug)]
@@ -16,12 +20,17 @@ pub struct RegisteredAppsListModel {
     registered_executables: Vec<RegisteredExecutable>,
     #[tracker::do_not_track]
     selection_handler_id: Option<gtk::glib::SignalHandlerId>,
+    #[tracker::do_not_track]
+    prefix_path: PathBuf,
+    #[tracker::do_not_track]
+    icon_cache: Arc<IconCache>,
 }
 
 #[derive(Debug)]
 pub enum RegisteredAppsListMsg {
     UpdateExecutables(Vec<RegisteredExecutable>),
     SetRunningPaths(std::collections::HashSet<std::path::PathBuf>),
+    PrefixPathUpdated(PathBuf),
     SelectionChanged,
 }
 
@@ -50,11 +59,12 @@ struct RegisteredExecutableItem {
     #[allow(dead_code)]
     index: usize,
     is_running: bool,
+    resolved_icon: Option<PathBuf>,
 }
 
 #[relm4::factory]
 impl FactoryComponent for RegisteredExecutableItem {
-    type Init = (RegisteredExecutable, usize);
+    type Init = (RegisteredExecutable, usize, Option<PathBuf>);
     type Input = ();
     type Output = ();
     type CommandOutput = ();
@@ -83,9 +93,9 @@ impl FactoryComponent for RegisteredExecutableItem {
                     gtk::Image {
                         set_pixel_size: 48,
                         #[watch]
-                        set_from_file: self.executable.icon_path.as_deref(),
+                        set_from_file: self.resolved_icon.as_deref(),
                         #[watch]
-                        set_visible: self.executable.icon_path.is_some(),
+                        set_visible: self.resolved_icon.is_some(),
                         set_halign: gtk::Align::Center,
                         set_valign: gtk::Align::Center,
                         set_vexpand: true,
@@ -94,7 +104,7 @@ impl FactoryComponent for RegisteredExecutableItem {
                         set_pixel_size: 48,
                         set_icon_name: Some("application-x-executable"),
                         #[watch]
-                        set_visible: self.executable.icon_path.is_none(),
+                        set_visible: self.resolved_icon.is_none(),
                         set_halign: gtk::Align::Center,
                         set_valign: gtk::Align::Center,
                         set_vexpand: true,
@@ -116,11 +126,12 @@ impl FactoryComponent for RegisteredExecutableItem {
     }
 
     fn init_model(init: Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
-        let (executable, idx) = init;
+        let (executable, idx, resolved_icon) = init;
         Self {
             executable,
             index: idx,
             is_running: false,
+            resolved_icon,
         }
     }
 
@@ -131,7 +142,7 @@ impl FactoryComponent for RegisteredExecutableItem {
 
 #[relm4::component(pub, async)]
 impl AsyncComponent for RegisteredAppsListModel {
-    type Init = Vec<RegisteredExecutable>;
+    type Init = (Vec<RegisteredExecutable>, PathBuf, Arc<IconCache>);
     type Input = RegisteredAppsListMsg;
     type Output = RegisteredAppsListOutput;
     type CommandOutput = ();
@@ -195,23 +206,31 @@ impl AsyncComponent for RegisteredAppsListModel {
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
+        let (executables_init, prefix_path, icon_cache) = init;
+
         // Initialize factory for registered executables (grid layout)
         let executables = FactoryVecDeque::builder()
             .launch(gtk::FlowBox::default())
             .detach();
 
+        let prefix_path_for_init = prefix_path.clone();
+        let icon_cache_for_init = Arc::clone(&icon_cache);
         let mut model = RegisteredAppsListModel {
             executables,
-            registered_executables: init.clone(),
+            registered_executables: executables_init.clone(),
             selection_handler_id: None,
+            prefix_path,
+            icon_cache,
             tracker: 0,
         };
 
-        // Initialize with provided executables
+        // Initialize with provided executables — resolve + extract fallback
         {
             let mut guard = model.executables.guard();
-            for (idx, exe) in init.iter().enumerate() {
-                guard.push_back((exe.clone(), idx));
+            for (idx, exe) in executables_init.iter().enumerate() {
+                let resolved =
+                    resolve_or_extract_icon(exe, &prefix_path_for_init, &icon_cache_for_init);
+                guard.push_back((exe.clone(), idx, resolved));
             }
         }
 
@@ -249,10 +268,13 @@ impl AsyncComponent for RegisteredAppsListModel {
                     }
                 }
 
+                let prefix_path = self.prefix_path.clone();
+                let icon_cache = Arc::clone(&self.icon_cache);
                 let mut guard = self.executables.guard();
                 guard.clear();
                 for (idx, exe) in executables.iter().enumerate() {
-                    guard.push_back((exe.clone(), idx));
+                    let resolved = resolve_or_extract_icon(exe, &prefix_path, &icon_cache);
+                    guard.push_back((exe.clone(), idx, resolved));
                 }
                 drop(guard);
 
@@ -267,6 +289,21 @@ impl AsyncComponent for RegisteredAppsListModel {
                 let mut guard = self.executables.guard();
                 for item in guard.iter_mut() {
                     item.is_running = paths.contains(&item.executable.executable_path);
+                }
+            }
+            RegisteredAppsListMsg::PrefixPathUpdated(prefix_path) => {
+                if self.prefix_path == prefix_path {
+                    return;
+                }
+                self.prefix_path = prefix_path;
+
+                // Re-resolve icons in case the prefix location changed
+                let prefix_path = self.prefix_path.clone();
+                let icon_cache = Arc::clone(&self.icon_cache);
+                let mut guard = self.executables.guard();
+                for item in guard.iter_mut() {
+                    item.resolved_icon =
+                        resolve_or_extract_icon(&item.executable, &prefix_path, &icon_cache);
                 }
             }
             RegisteredAppsListMsg::SelectionChanged => {

@@ -4,7 +4,6 @@ pub use resources::initialize_custom_resources;
 
 use adw::prelude::*;
 use gtk::glib;
-use gtk::prelude::*;
 use gtk4::gio;
 use log::{error, info};
 use relm4::prelude::{AsyncComponent, AsyncController};
@@ -21,7 +20,6 @@ use crate::apps::AppManagerModel;
 use crate::prefix::config::PrefixConfigModel;
 use crate::prefix::list::PrefixListModel;
 use crate::settings::SettingsWindow;
-use gtk::gdk;
 use menu::setup_menu_bar;
 use prefix::runtime::RuntimeManager;
 use prefix::{Manager as PrefixManager, ProcessTracker, WinePrefix};
@@ -964,7 +962,7 @@ impl SimpleComponent for AppModel {
                                 let _ =
                                     st.save_scanned_executables(&p.path.to_string_lossy(), &exes);
                             }
-                            let changed = sm.enrich_executables(&mut p.config);
+                            let changed = sm.enrich_executables(&p.path, &mut p.config);
                             if changed {
                                 let _ = sm.update_config(&p.path, &p.config);
                             }

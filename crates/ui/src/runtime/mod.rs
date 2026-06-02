@@ -1,5 +1,4 @@
 use adw::prelude::*;
-use gtk::prelude::*;
 use prefix::{
     Manager as PrefixManager,
     runtime::{Channel, RuntimeManager, RuntimeSource},

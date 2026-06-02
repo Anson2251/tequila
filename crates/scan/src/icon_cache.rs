@@ -1,10 +1,19 @@
 use rusqlite::{Connection, params};
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 pub struct IconCache {
     db: Mutex<Connection>,
     cache_dir: PathBuf,
+}
+
+impl fmt::Debug for IconCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IconCache")
+            .field("cache_dir", &self.cache_dir)
+            .finish()
+    }
 }
 
 impl IconCache {

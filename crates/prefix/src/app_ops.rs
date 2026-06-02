@@ -2,7 +2,8 @@ use crate::Manager;
 use base::config::{PrefixConfig, RegisteredExecutable};
 use base::error::Result;
 use base::traits::PrefixInfo;
-use std::path::PathBuf;
+use log::debug;
+use std::path::{Path, PathBuf};
 
 impl Manager {
     pub fn scan_for_applications(
@@ -67,15 +68,20 @@ impl Manager {
         Ok(())
     }
 
-    pub fn enrich_executables(&self, config: &mut PrefixConfig) -> bool {
+    pub fn enrich_executables(&self, prefix_path: &Path, config: &mut PrefixConfig) -> bool {
         let ic = self.scanner.icon_cache();
         let mut changed = false;
         for exe in &mut config.registered_executables {
-            if let Some(icon_path) = scan::extract_icon_for_exe(&exe.executable_path, ic) {
-                if exe.icon_path.as_ref() != Some(&icon_path) {
-                    exe.icon_path = Some(icon_path);
+            if let Some(resolved) = resolve_or_extract_icon(exe, prefix_path, ic) {
+                if exe.icon_path.as_ref() != Some(&resolved) {
+                    exe.icon_path = Some(resolved);
                     changed = true;
                 }
+            } else if exe.icon_path.is_some() {
+                // Previously persisted icon no longer available and extraction
+                // failed — drop the stale path so the UI can show its fallback.
+                exe.icon_path = None;
+                changed = true;
             }
             if exe.file_description.is_none() {
                 let meta = scan::extract_metadata_for_exe(&exe.executable_path);
@@ -122,4 +128,34 @@ impl Manager {
             .sum();
         Ok(total_size)
     }
+}
+
+/// Resolve the icon for a registered executable.
+///
+/// 1. Honour the user-provided `icon_path`:
+///    * absolute → use directly,
+///    * relative → join with `prefix_path`.
+///    Returned only when the resulting file actually exists on disk.
+/// 2. Otherwise fall back to extracting an icon from the executable itself
+///    (using the shared `IconCache`).
+pub fn resolve_or_extract_icon(
+    exe: &RegisteredExecutable,
+    prefix_path: &Path,
+    icon_cache: &scan::IconCache,
+) -> Option<PathBuf> {
+    if let Some(resolved) = exe.resolve_icon_path(prefix_path) {
+        debug!(
+            "[apps] Using configured icon for '{}': {}",
+            exe.name,
+            resolved.display()
+        );
+        return Some(resolved);
+    }
+    if exe.icon_path.is_some() {
+        debug!(
+            "[apps] Configured icon for '{}' is missing, attempting extraction",
+            exe.name
+        );
+    }
+    scan::extract_icon_for_exe(&exe.executable_path, icon_cache)
 }

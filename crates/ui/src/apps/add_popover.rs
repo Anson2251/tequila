@@ -1,11 +1,15 @@
 use gtk::prelude::*;
+use prefix::IconCache;
 use prefix::config::RegisteredExecutable;
+use prefix::resolve_or_extract_icon;
 use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender, FactoryVecDeque};
 use relm4::{
     RelmWidgetExt,
     component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
     gtk,
 };
+use std::path::PathBuf;
+use std::sync::Arc;
 use tracker;
 
 #[derive(Debug)]
@@ -19,6 +23,10 @@ pub struct AddAppPopoverModel {
     is_scanning: bool,
     #[tracker::do_not_track]
     is_processing_selection: bool,
+    #[tracker::do_not_track]
+    prefix_path: PathBuf,
+    #[tracker::do_not_track]
+    icon_cache: Arc<IconCache>,
 }
 
 #[derive(Debug)]
@@ -31,6 +39,7 @@ pub enum AddAppPopoverMsg {
     Scan,
     ResetProcessingFlag,
     SetScanning(bool),
+    PrefixPathUpdated(PathBuf),
 }
 
 #[derive(Debug)]
@@ -48,12 +57,14 @@ struct AvailableExecutable {
     index: usize,
     selected: bool,
     arch_label: String,
+    resolved_icon: Option<PathBuf>,
 }
 
 #[derive(Debug)]
 enum AvailableExecutableMsg {
     #[allow(dead_code)]
     Select,
+    ResolvedIcon(Option<PathBuf>),
 }
 
 #[derive(Debug)]
@@ -63,7 +74,7 @@ enum AvailableExecutableOutput {
 
 #[relm4::factory]
 impl FactoryComponent for AvailableExecutable {
-    type Init = (RegisteredExecutable, usize, String); // exe, index, arch_label
+    type Init = (RegisteredExecutable, usize, String, Option<PathBuf>); // exe, index, arch_label, resolved_icon
     type Input = AvailableExecutableMsg;
     type Output = AvailableExecutableOutput;
     type CommandOutput = ();
@@ -104,13 +115,16 @@ impl FactoryComponent for AvailableExecutable {
 
                     gtk::Image {
                         set_pixel_size: 24,
-                        set_from_file: self.executable.icon_path.as_deref(),
-                        set_visible: self.executable.icon_path.is_some(),
+                        #[watch]
+                        set_from_file: self.resolved_icon.as_deref(),
+                        #[watch]
+                        set_visible: self.resolved_icon.is_some(),
                     },
                     gtk::Image {
                         set_pixel_size: 24,
                         set_icon_name: Some("application-x-executable"),
-                        set_visible: self.executable.icon_path.is_none(),
+                        #[watch]
+                        set_visible: self.resolved_icon.is_none(),
                     },
                 },
 
@@ -154,12 +168,13 @@ impl FactoryComponent for AvailableExecutable {
     }
 
     fn init_model(init: Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
-        let (executable, index, arch_label) = init;
+        let (executable, index, arch_label, resolved_icon) = init;
         Self {
             executable,
             index,
             selected: false,
             arch_label,
+            resolved_icon,
         }
     }
 
@@ -168,13 +183,16 @@ impl FactoryComponent for AvailableExecutable {
             AvailableExecutableMsg::Select => {
                 self.selected = true;
             }
+            AvailableExecutableMsg::ResolvedIcon(icon) => {
+                self.resolved_icon = icon;
+            }
         }
     }
 }
 
 #[relm4::component(pub, async)]
 impl AsyncComponent for AddAppPopoverModel {
-    type Init = gtk::Button;
+    type Init = (gtk::Button, PathBuf, Arc<IconCache>);
     type Input = AddAppPopoverMsg;
     type Output = AddAppPopoverOutput;
     type CommandOutput = ();
@@ -310,10 +328,12 @@ impl AsyncComponent for AddAppPopoverModel {
     }
 
     async fn init(
-        _init: Self::Init,
+        init: Self::Init,
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
+        let (_button, prefix_path, icon_cache) = init;
+
         // Initialize factory for available executables
         let available_executables = FactoryVecDeque::builder()
             .launch(gtk::ListBox::default())
@@ -328,6 +348,8 @@ impl AsyncComponent for AddAppPopoverModel {
             is_visible: false,
             is_scanning: false,
             is_processing_selection: false,
+            prefix_path,
+            icon_cache,
             tracker: 0,
         };
 
@@ -377,12 +399,25 @@ impl AsyncComponent for AddAppPopoverModel {
                     .map(|exe| compute_arch_label(&exe.executable_path, &prefix_arch))
                     .collect();
 
+                // Resolve (or extract) icons for display
+                let prefix_path = self.prefix_path.clone();
+                let icon_cache = Arc::clone(&self.icon_cache);
+                let resolved_icons: Vec<Option<PathBuf>> = apps
+                    .iter()
+                    .map(|exe| resolve_or_extract_icon(exe, &prefix_path, &icon_cache))
+                    .collect();
+
                 // Update factory
                 {
                     let mut guard = self.available_executables.guard();
                     guard.clear();
                     for (index, executable) in apps.iter().enumerate() {
-                        guard.push_back((executable.clone(), index, arch_labels[index].clone()));
+                        guard.push_back((
+                            executable.clone(),
+                            index,
+                            arch_labels[index].clone(),
+                            resolved_icons[index].clone(),
+                        ));
                     }
                 }
             }
@@ -446,6 +481,21 @@ impl AsyncComponent for AddAppPopoverModel {
             AddAppPopoverMsg::ResetProcessingFlag => {
                 self.is_processing_selection = false;
                 println!("DEBUG: Reset processing flag");
+            }
+            AddAppPopoverMsg::PrefixPathUpdated(prefix_path) => {
+                if self.prefix_path == prefix_path {
+                    return;
+                }
+                self.prefix_path = prefix_path;
+
+                // Re-resolve icons with the new prefix location
+                let prefix_path = self.prefix_path.clone();
+                let icon_cache = Arc::clone(&self.icon_cache);
+                let mut guard = self.available_executables.guard();
+                for item in guard.iter_mut() {
+                    item.resolved_icon =
+                        resolve_or_extract_icon(&item.executable, &prefix_path, &icon_cache);
+                }
             }
             AddAppPopoverMsg::AddSelected => {
                 if !self.selected_indices.is_empty() {

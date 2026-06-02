@@ -1,5 +1,4 @@
 use adw::prelude::*;
-use gtk::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
 use tracker;
 

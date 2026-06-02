@@ -1,5 +1,7 @@
 use adw::prelude::*;
+use prefix::IconCache;
 use prefix::config::RegisteredExecutable;
+use prefix::resolve_or_extract_icon;
 use relm4::{
     Component, ComponentParts, ComponentSender, Controller, RelmWidgetExt, SimpleComponent, adw,
     component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
@@ -7,6 +9,7 @@ use relm4::{
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Debug)]
 #[tracker::track]
@@ -16,7 +19,11 @@ pub struct ExecutableInfoDialogModel {
     #[tracker::do_not_track]
     prefix_path: PathBuf,
     #[tracker::do_not_track]
+    icon_cache: Arc<IconCache>,
+    #[tracker::do_not_track]
     cwd_entry_row: adw::EntryRow,
+    #[tracker::do_not_track]
+    icon_path_entry_row: adw::EntryRow,
     #[tracker::do_not_track]
     env_vars_editor: Option<Controller<EnvVarsEditor>>,
 }
@@ -27,6 +34,8 @@ pub enum ExecutableInfoDialogMsg {
     Hide,
     SaveChanges,
     BrowseCwd,
+    BrowseIcon,
+    ClearIcon,
     EditEnvVars,
     EnvVarsEdited(HashMap<String, String>),
 }
@@ -60,6 +69,17 @@ fn parse_env_vars(text: &str) -> HashMap<String, String> {
             }
         })
         .collect()
+}
+
+impl ExecutableInfoDialogModel {
+    /// Resolve the icon path for the currently displayed executable,
+    /// honouring both absolute and prefix-relative paths. Falls back to
+    /// extracting the icon from the .exe if no usable `icon_path` is set.
+    fn resolved_icon_path(&self) -> Option<PathBuf> {
+        self.executable.as_ref().and_then(|exe| {
+            resolve_or_extract_icon(exe, &self.prefix_path, &self.icon_cache)
+        })
+    }
 }
 
 fn env_vars_subtitle(executable: Option<&RegisteredExecutable>) -> String {
@@ -207,7 +227,7 @@ impl SimpleComponent for EnvVarsEditor {
 
 #[relm4::component(pub, async)]
 impl AsyncComponent for ExecutableInfoDialogModel {
-    type Init = (PathBuf, gtk::Window);
+    type Init = (PathBuf, gtk::Window, Arc<IconCache>);
     type Input = ExecutableInfoDialogMsg;
     type Output = ExecutableInfoDialogOutput;
     type CommandOutput = ();
@@ -247,9 +267,9 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                             gtk::Image {
                                 set_pixel_size: 64,
                                 #[watch]
-                                set_from_file: model.executable.as_ref().and_then(|e| e.icon_path.as_deref()),
+                                set_from_file: model.resolved_icon_path().as_deref(),
                                 #[watch]
-                                set_visible: model.executable.as_ref().and_then(|e| e.icon_path.as_ref()).is_some(),
+                                set_visible: model.resolved_icon_path().is_some(),
                                 set_halign: gtk::Align::Center,
                                 set_valign: gtk::Align::Center,
                             },
@@ -257,7 +277,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                                 set_pixel_size: 64,
                                 set_icon_name: Some("application-x-executable"),
                                 #[watch]
-                                set_visible: model.executable.as_ref().and_then(|e| e.icon_path.as_ref()).is_none(),
+                                set_visible: model.resolved_icon_path().is_none(),
                                 set_halign: gtk::Align::Center,
                                 set_valign: gtk::Align::Center,
                             },
@@ -433,6 +453,29 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                             },
                         },
 
+                        // Icon Path
+                        #[name = "icon_path_entry_row"]
+                        adw::EntryRow {
+                            set_title: "Icon Path",
+
+                            add_suffix = &gtk::Button {
+                                set_icon_name: "image-x-generic-symbolic",
+                                set_valign: gtk::Align::Center,
+                                set_tooltip_text: Some("Choose an icon file"),
+                                connect_clicked[sender] => move |_| {
+                                    sender.input(ExecutableInfoDialogMsg::BrowseIcon);
+                                },
+                            },
+                            add_suffix = &gtk::Button {
+                                set_icon_name: "edit-clear-symbolic",
+                                set_valign: gtk::Align::Center,
+                                set_tooltip_text: Some("Clear icon (fall back to extracting from the .exe)"),
+                                connect_clicked[sender] => move |_| {
+                                    sender.input(ExecutableInfoDialogMsg::ClearIcon);
+                                },
+                            },
+                        },
+
                         // Environment Variables
                         adw::ActionRow {
                             set_title: "Environment Variables",
@@ -461,7 +504,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
-        let (prefix_path_init, parent_window) = init;
+        let (prefix_path_init, parent_window, icon_cache) = init;
 
         // Ensure the dialog stays above the main window
         root.set_transient_for(Some(&parent_window));
@@ -492,7 +535,9 @@ impl AsyncComponent for ExecutableInfoDialogModel {
             executable: None,
             visible: false,
             prefix_path: prefix_path_init.canonicalize().unwrap_or(prefix_path_init),
+            icon_cache,
             cwd_entry_row: adw::EntryRow::new(),
+            icon_path_entry_row: adw::EntryRow::new(),
             env_vars_editor: None,
             tracker: 0,
         };
@@ -500,10 +545,14 @@ impl AsyncComponent for ExecutableInfoDialogModel {
         let widgets = view_output!();
 
         model.cwd_entry_row = widgets.cwd_entry_row.clone();
+        model.icon_path_entry_row = widgets.icon_path_entry_row.clone();
 
         // Set tooltip text on the entry (can't be expressed as a GObject property in view! macro)
         widgets.cwd_entry_row.set_tooltip_text(Some(
             "Custom working directory for the executable (e.g., /path/to/game)",
+        ));
+        widgets.icon_path_entry_row.set_tooltip_text(Some(
+            "Absolute path or path relative to the prefix root. Leave empty to use the .exe's icon.",
         ));
 
         AsyncComponentParts { model, widgets }
@@ -524,6 +573,12 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                     .map(|p| p.display().to_string())
                     .unwrap_or_default();
                 self.cwd_entry_row.set_text(&cwd_str);
+                let icon_str = executable
+                    .icon_path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                self.icon_path_entry_row.set_text(&icon_str);
                 self.prefix_path = prefix_path;
                 self.set_executable(Some(executable));
                 self.set_visible(true);
@@ -539,6 +594,12 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                         None
                     } else {
                         Some(PathBuf::from(cwd_text.trim()))
+                    };
+                    let icon_text = self.icon_path_entry_row.text().to_string();
+                    exec.icon_path = if icon_text.trim().is_empty() {
+                        None
+                    } else {
+                        Some(PathBuf::from(icon_text.trim()))
                     };
                     self.set_executable(Some(exec.clone()));
                     let _ = sender.output(ExecutableInfoDialogOutput::ExecutableUpdated(exec));
@@ -564,6 +625,27 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                         },
                     );
                 }
+            }
+            ExecutableInfoDialogMsg::BrowseIcon => {
+                let parent_root = self.icon_path_entry_row.root();
+                if let Some(parent) = parent_root {
+                    let entry = self.icon_path_entry_row.clone();
+                    let parent_window = parent.downcast::<gtk::Window>().unwrap();
+
+                    crate::dialogs::pick_file(
+                        &parent_window,
+                        "Select Icon",
+                        &["ico", "icns", "png", "jpg", "jpeg", "svg", "bmp"],
+                        move |path| {
+                            if let Some(path) = path {
+                                entry.set_text(&path);
+                            }
+                        },
+                    );
+                }
+            }
+            ExecutableInfoDialogMsg::ClearIcon => {
+                self.icon_path_entry_row.set_text("");
             }
             ExecutableInfoDialogMsg::EditEnvVars => {
                 let parent_root = self.cwd_entry_row.root();

@@ -4,7 +4,7 @@ use crate::traits::{ConfigOperations, ExecutableManager};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PrefixConfig {
@@ -24,6 +24,17 @@ pub struct PrefixConfig {
 pub struct RegisteredExecutable {
     pub name: String,
     pub description: Option<String>,
+    /// Optional icon location.
+    ///
+    /// Resolution rules when displayed or persisted:
+    /// * `Some(absolute_path)` — used as-is, must exist on disk.
+    /// * `Some(relative_path)` — joined with the prefix root.
+    /// * `None` — caller should fall back to extracting the icon from the
+    ///   executable (see `scan::extract_icon_for_exe`).
+    ///
+    /// Paths that do not exist on disk are treated as if the field were
+    /// `None` so the fallback path can run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_path: Option<PathBuf>,
     pub executable_path: PathBuf,
     pub file_version: Option<String>,
@@ -300,6 +311,31 @@ impl RegisteredExecutable {
     pub fn with_imported_modules(mut self, modules: Vec<String>) -> Self {
         self.imported_modules = modules;
         self
+    }
+
+    /// Resolve the configured `icon_path` to a usable on-disk path.
+    ///
+    /// Behaviour:
+    /// * `None` → `None` (caller should fall back to extraction).
+    /// * Absolute path → returned verbatim if it exists, otherwise `None`.
+    /// * Relative path → joined with `prefix_path`; returned if it exists,
+    ///   otherwise `None`.
+    ///
+    /// This does not perform any extraction from the executable; the caller
+    /// is responsible for trying `scan::extract_icon_for_exe` when this
+    /// returns `None`.
+    pub fn resolve_icon_path(&self, prefix_path: &Path) -> Option<PathBuf> {
+        let raw = self.icon_path.as_ref()?;
+        let candidate = if raw.is_absolute() {
+            raw.clone()
+        } else {
+            prefix_path.join(raw)
+        };
+        if candidate.is_file() {
+            Some(candidate)
+        } else {
+            None
+        }
     }
 }
 

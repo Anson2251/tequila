@@ -1,10 +1,9 @@
 use adw::prelude::*;
-use gtk::prelude::*;
 use notify::{RecursiveMode, Watcher, recommended_watcher};
 use prefix::registry::cache::InMemoryRegistryCache;
 use prefix::registry::keys::*;
 use prefix::{
-    Manager as PrefixManager, PrefixError, ProcessTracker,
+    PrefixError, ProcessTracker,
     config::PrefixConfig,
     registry::{RegEditor, RegistryEditor},
 };

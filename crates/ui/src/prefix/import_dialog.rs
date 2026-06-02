@@ -1,5 +1,4 @@
 use adw::prelude::*;
-use gtk::prelude::*;
 use prefix::Manager as PrefixManager;
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 use std::path::PathBuf;

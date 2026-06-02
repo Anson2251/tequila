@@ -18,7 +18,6 @@ use walkdir::WalkDir;
 pub struct ApplicationScanner {
     app_dirs: Vec<&'static str>,
     executable_extensions: Vec<&'static str>,
-    icon_extensions: Vec<&'static str>,
     icon_cache: Arc<IconCache>,
 }
 
@@ -43,7 +42,6 @@ impl ApplicationScanner {
                 "drive_c/ProgramData/Desktop",
             ],
             executable_extensions: vec!["exe"],
-            icon_extensions: vec!["ico", "icns", "png", "jpg", "jpeg"],
             icon_cache,
         }
     }
@@ -108,10 +106,10 @@ impl ApplicationScanner {
             .unwrap_or("Unknown")
             .to_string();
 
-        let mut icon_path = self.find_icon_for_executable(path)?;
-        if icon_path.is_none() {
-            icon_path = self.extract_icon_with_cache(path);
-        }
+        // `icon_path` is intentionally left `None` here. Icon resolution
+        // (file lookup or PE extraction) is performed lazily by
+        // `prefix::resolve_or_extract_icon` whenever the executable is
+        // displayed or persisted.
 
         let description = self.extract_description_from_path(path);
 
@@ -128,9 +126,6 @@ impl ApplicationScanner {
         let mut executable = RegisteredExecutable::new(name, path.to_path_buf())
             .with_description(description.unwrap_or_default());
 
-        if let Some(icon) = icon_path {
-            executable = executable.with_icon_path(icon);
-        }
         if let Some(meta) = metadata {
             if let Some(file_version) = meta.file_version {
                 executable = executable.with_file_version(file_version);
@@ -206,37 +201,6 @@ impl ApplicationScanner {
             }
         }
         false
-    }
-
-    fn find_icon_for_executable(&self, exe_path: &PathBuf) -> Result<Option<PathBuf>> {
-        let parent = exe_path
-            .parent()
-            .ok_or_else(|| PrefixError::InvalidPath("No parent directory".to_string()))?;
-        let stem = exe_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| PrefixError::InvalidPath("Invalid file stem".to_string()))?;
-
-        let same_name_icon = self.icon_extensions.iter().find_map(|ext| {
-            let icon_path = parent.join(format!("{}.{}", stem, ext));
-            icon_path.exists().then(|| icon_path)
-        });
-        if same_name_icon.is_some() {
-            return Ok(same_name_icon);
-        }
-
-        let common_icon_names = ["icon", "app", "main", "logo"];
-        let common_icon = common_icon_names.iter().find_map(|icon_name| {
-            self.icon_extensions.iter().find_map(|ext| {
-                let icon_path = parent.join(format!("{}.{}", icon_name, ext));
-                icon_path.exists().then(|| icon_path)
-            })
-        });
-        Ok(common_icon)
-    }
-
-    fn extract_icon_with_cache(&self, exe_path: &Path) -> Option<PathBuf> {
-        extract_icon_for_exe(exe_path, &self.icon_cache)
     }
 
     fn extract_description_from_path(&self, path: &PathBuf) -> Option<String> {
@@ -397,7 +361,6 @@ impl Clone for ApplicationScanner {
         Self {
             app_dirs: self.app_dirs.clone(),
             executable_extensions: self.executable_extensions.clone(),
-            icon_extensions: self.icon_extensions.clone(),
             icon_cache: Arc::clone(&self.icon_cache),
         }
     }

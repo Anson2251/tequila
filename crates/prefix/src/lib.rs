@@ -6,6 +6,7 @@ mod process_tracker;
 mod runtime_ops;
 mod wine_processes;
 
+pub use app_ops::resolve_or_extract_icon;
 pub use manager::Manager;
 pub use prefix_ops::TQL_EXTENSION;
 pub use process_tracker::ProcessTracker;
