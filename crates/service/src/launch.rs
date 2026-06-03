@@ -125,3 +125,13 @@ pub fn poll_dead_processes(service: &AppService) -> std::collections::HashSet<Pa
     tracker.poll_dead();
     tracker.running_paths().into_iter().collect()
 }
+
+/// Check whether a process with the given executable path is still running.
+pub fn is_process_running(service: &AppService, path: &PathBuf) -> bool {
+    service.process_tracker().lock().unwrap().is_running(path)
+}
+
+/// Kill a running process by executable path. Returns true if the process was found and killed.
+pub fn kill_process(service: &AppService, path: &PathBuf) -> bool {
+    service.process_tracker().lock().unwrap().kill(path)
+}

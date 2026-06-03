@@ -54,6 +54,7 @@ pub struct AppManagerModel {
     #[tracker::do_not_track]
     prefix_store: Arc<prefix::PrefixStore>,
     #[tracker::do_not_track]
+    #[allow(dead_code)]
     process_tracker: Arc<Mutex<ProcessTracker>>,
     #[tracker::do_not_track]
     main_window: gtk::Window,
@@ -422,10 +423,7 @@ impl AsyncComponent for AppManagerModel {
                     ));
 
                 // Restore running highlight immediately
-                let paths = {
-                    let t = self.process_tracker.lock().unwrap();
-                    t.running_paths().into_iter().collect::<HashSet<_>>()
-                };
+                let paths = service::launch::poll_dead_processes(&self.service);
                 self.set_running_paths(paths.clone());
                 self.registered_apps_list
                     .emit(RegisteredAppsListMsg::SetRunningPaths(paths));
@@ -433,11 +431,10 @@ impl AsyncComponent for AppManagerModel {
                 // Update selected running state
                 if let Some(i) = self.selected_executable {
                     if let Some(exe) = self.config.registered_executables.get(i) {
-                        let running = self
-                            .process_tracker
-                            .lock()
-                            .unwrap()
-                            .is_running(&exe.executable_path);
+                        let running = service::launch::is_process_running(
+                            &self.service,
+                            &exe.executable_path,
+                        );
                         self.app_actions
                             .emit(AppActionsMsg::SetSelectedRunning(running));
                     }
@@ -500,11 +497,10 @@ impl AsyncComponent for AppManagerModel {
                         self.app_actions.emit(AppActionsMsg::SetSelection(true));
                         // Check if the selected app is running
                         if let Some(exe) = self.config.registered_executables.get(index) {
-                            let running = self
-                                .process_tracker
-                                .lock()
-                                .unwrap()
-                                .is_running(&exe.executable_path);
+                            let running = service::launch::is_process_running(
+                                &self.service,
+                                &exe.executable_path,
+                            );
                             self.app_actions
                                 .emit(AppActionsMsg::SetSelectedRunning(running));
                         }
@@ -531,19 +527,15 @@ impl AsyncComponent for AppManagerModel {
                     AppActionsOutput::Kill => {
                         if let Some(index) = self.selected_executable {
                             if let Some(exe) = self.config.registered_executables.get(index) {
-                                let killed = self
-                                    .process_tracker
-                                    .lock()
-                                    .unwrap()
-                                    .kill(&exe.executable_path);
+                                let killed = service::launch::kill_process(
+                                    &self.service,
+                                    &exe.executable_path,
+                                );
                                 if killed {
                                     self.app_actions
                                         .emit(AppActionsMsg::SetSelectedRunning(false));
                                     // Refresh the list highlight
-                                    let paths = {
-                                        let t = self.process_tracker.lock().unwrap();
-                                        t.running_paths().into_iter().collect::<HashSet<_>>()
-                                    };
+                                    let paths = service::launch::poll_dead_processes(&self.service);
                                     self.set_running_paths(paths.clone());
                                     self.registered_apps_list
                                         .emit(RegisteredAppsListMsg::SetRunningPaths(paths));
@@ -656,25 +648,17 @@ impl AsyncComponent for AppManagerModel {
                 }
             }
             AppManagerMsg::PollProcesses => {
-                {
-                    let mut t = self.process_tracker.lock().unwrap();
-                    t.poll_dead();
-                }
-                let paths = {
-                    let t = self.process_tracker.lock().unwrap();
-                    t.running_paths().into_iter().collect::<HashSet<_>>()
-                };
+                let paths = service::launch::poll_dead_processes(&self.service);
                 self.set_running_paths(paths.clone());
                 self.registered_apps_list
                     .emit(RegisteredAppsListMsg::SetRunningPaths(paths));
                 // Update selected running state
                 if let Some(i) = self.selected_executable {
                     if let Some(exe) = self.config.registered_executables.get(i) {
-                        let running = self
-                            .process_tracker
-                            .lock()
-                            .unwrap()
-                            .is_running(&exe.executable_path);
+                        let running = service::launch::is_process_running(
+                            &self.service,
+                            &exe.executable_path,
+                        );
                         self.app_actions
                             .emit(AppActionsMsg::SetSelectedRunning(running));
                     }
@@ -683,7 +667,7 @@ impl AsyncComponent for AppManagerModel {
                 let uninstaller_still_running = self
                     .uninstaller_track_path
                     .as_ref()
-                    .map(|p| self.process_tracker.lock().unwrap().is_running(p))
+                    .map(|p| service::launch::is_process_running(&self.service, p))
                     .unwrap_or(false);
                 if !uninstaller_still_running {
                     self.uninstaller_track_path = None;
@@ -693,7 +677,7 @@ impl AsyncComponent for AppManagerModel {
                 ));
                 // Update external (directly-run) exe running state
                 self.external_running
-                    .retain(|path| self.process_tracker.lock().unwrap().is_running(path));
+                    .retain(|path| service::launch::is_process_running(&self.service, path));
                 self.app_actions.emit(AppActionsMsg::SetExeRunning(
                     !self.external_running.is_empty(),
                 ));
