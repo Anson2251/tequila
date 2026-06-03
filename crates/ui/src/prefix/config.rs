@@ -1,5 +1,6 @@
 use crate::registry_editor::{RegistryEditorModel, RegistryEditorMsg};
 use adw::prelude::*;
+use prefix::Manager as PrefixManager;
 use prefix::ProcessTracker;
 use prefix::config::PrefixConfig;
 use prefix::runtime;
@@ -54,6 +55,8 @@ pub struct PrefixConfigModel {
     pulse_id: Option<gtk::glib::SourceId>,
     #[tracker::do_not_track]
     progress_dialog: Option<gtk::Window>,
+    #[tracker::do_not_track]
+    prefix_manager: PrefixManager,
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────
@@ -435,6 +438,7 @@ impl SimpleComponent for PrefixConfigModel {
             progress_bar: gtk::ProgressBar::new(),
             pulse_id: None,
             progress_dialog: None,
+            prefix_manager,
             tracker: 0,
         };
 
@@ -632,9 +636,11 @@ impl SimpleComponent for PrefixConfigModel {
                 }
                 self.set_selected_wine_runtime(idx);
 
-                // Save config
-                self.config.update_last_modified();
-                if let Err(e) = self.config.save_to_file(&self.prefix_path) {
+                // Save config via manager
+                if let Err(e) = self
+                    .prefix_manager
+                    .update_config(&self.prefix_path, &self.config)
+                {
                     log::error!("[prefix] failed to save config: {}", e);
                 }
                 self.saved_config = self.config.clone();
@@ -720,8 +726,10 @@ impl PrefixConfigModel {
         };
         self.set_editing(false);
         self.description_text.set_editable(false);
-        self.config.update_last_modified();
-        if let Err(e) = self.config.save_to_file(&self.prefix_path) {
+        if let Err(e) = self
+            .prefix_manager
+            .update_config(&self.prefix_path, &self.config)
+        {
             log::error!("[prefix] failed to save config: {}", e);
         }
         let _ = sender.output(PrefixConfigOutput::ConfigUpdated(self.config.clone()));

@@ -368,3 +368,128 @@ pub fn cleanup_temp_runtimes(runtimes_dir: &Path) {
         }
     }
 }
+
+/// Download and install a Homebrew-channel Wine runtime with phase progress.
+///
+/// Reports InstallPhase::Download, Verify, and Extract progress.
+pub async fn install_channel_with_phase(
+    channel: &Channel,
+    progress: &PhaseProgressFn,
+) -> Result<PathBuf> {
+    let cask = crate::homebrew::fetch_cask(channel.cask_name())
+        .await
+        .map_err(|e| PrefixError::Process(e))?;
+    let runtimes = runtimes_dir();
+    fs::create_dir_all(&runtimes)?;
+    let runtime_id = channel.runtime_id().to_string();
+    let tmp_dir = runtimes.join(format!(".tmp-{}", runtime_id));
+    let final_dir = runtimes.join(&runtime_id);
+    let _lock = LockGuard::acquire(&runtimes, &runtime_id)?;
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir)?;
+    }
+    fs::create_dir_all(&tmp_dir)?;
+    let archive_path = tmp_dir.join("wine.tar.xz");
+
+    // Download using reqwest directly for phase progress
+    let mut response = reqwest::get(&cask.url)
+        .await
+        .map_err(|e| PrefixError::Process(format!("Download failed: {}", e)))?;
+    let total = response.content_length().unwrap_or(0);
+    let mut file = fs::File::create(&archive_path)?;
+    let mut downloaded: u64 = 0;
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                file.write_all(&chunk)?;
+                downloaded += chunk.len() as u64;
+                progress(downloaded, total, InstallPhase::Download);
+            }
+            Ok(None) => break,
+            Err(e) => return Err(PrefixError::Process(format!("Download error: {}", e))),
+        }
+    }
+    file.flush()?;
+
+    progress(0, 1, InstallPhase::Verify);
+    verify_sha256(&archive_path, &cask.sha256)?;
+    progress(1, 1, InstallPhase::Verify);
+
+    progress(0, 1, InstallPhase::Extract);
+    extract_tar(&archive_path, &tmp_dir)?;
+    progress(1, 1, InstallPhase::Extract);
+
+    let _ = find_wine_binary(&tmp_dir)?;
+    let _ = fs::remove_file(&archive_path);
+    if final_dir.exists() {
+        fs::remove_dir_all(&final_dir)?;
+    }
+    fs::rename(&tmp_dir, &final_dir)?;
+    Ok(final_dir)
+}
+
+/// Download and install a Kron4ek Wine build with phase progress.
+///
+/// Reports InstallPhase::Download and Extract progress.
+pub async fn install_kron4ek_build(
+    version: &str,
+    archive_url: &str,
+    archive_name: &str,
+    progress: &PhaseProgressFn,
+) -> Result<PathBuf> {
+    let runtimes = runtimes_dir();
+    fs::create_dir_all(&runtimes)?;
+    let runtime_id = format!("wine-{}", version);
+    cleanup_temp_runtimes(&runtimes);
+    let tmp_dir = runtimes.join(format!(".tmp-{}", runtime_id));
+    let final_dir = runtimes.join(&runtime_id);
+    let _lock = LockGuard::acquire(&runtimes, &runtime_id)?;
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir)?;
+    }
+    fs::create_dir_all(&tmp_dir)?;
+    let archive_path = tmp_dir.join(archive_name);
+
+    // Download
+    let mut response = reqwest::get(archive_url)
+        .await
+        .map_err(|e| PrefixError::Process(format!("Download failed: {}", e)))?;
+    let total = response.content_length().unwrap_or(0);
+    let mut file = fs::File::create(&archive_path)?;
+    let mut downloaded: u64 = 0;
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                file.write_all(&chunk)?;
+                downloaded += chunk.len() as u64;
+                progress(downloaded, total, InstallPhase::Download);
+            }
+            Ok(None) => break,
+            Err(e) => return Err(PrefixError::Process(format!("Download error: {}", e))),
+        }
+    }
+    file.flush()?;
+
+    // Extract
+    progress(0, 1, InstallPhase::Extract);
+    extract_tar(&archive_path, &tmp_dir)?;
+    // Remove archive so find_content_dir only sees extracted content
+    let _ = fs::remove_file(&archive_path);
+
+    // Resolve content root & find wine binary
+    let content_dir = find_content_dir(&tmp_dir)?;
+    let _ = find_wine_binary(&content_dir)?;
+
+    if final_dir.exists() {
+        fs::remove_dir_all(&final_dir)?;
+    }
+    if content_dir != tmp_dir {
+        fs::rename(&content_dir, &final_dir)?;
+        let _ = fs::remove_dir_all(&tmp_dir);
+    } else {
+        fs::rename(&tmp_dir, &final_dir)?;
+    }
+    progress(1, 1, InstallPhase::Extract);
+
+    Ok(final_dir)
+}

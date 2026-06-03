@@ -95,22 +95,15 @@ fn runtime_subtitle(rm: &RuntimeManager) -> String {
 }
 
 fn graphics_subtitle() -> String {
-    let dir = prefix_graphics::graphics_dir();
-    if !dir.is_dir() {
-        return "No backends installed".to_string();
-    }
-    let backends: Vec<String> = std::fs::read_dir(&dir)
-        .ok()
-        .into_iter()
-        .flatten()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-        .map(|e| e.file_name().to_string_lossy().to_string())
-        .collect();
+    let backends = prefix_graphics::installed_backends();
     if backends.is_empty() {
         "No backends installed".to_string()
     } else {
-        backends.join(" · ")
+        backends
+            .iter()
+            .map(|b| b.display_name())
+            .collect::<Vec<_>>()
+            .join(" · ")
     }
 }
 

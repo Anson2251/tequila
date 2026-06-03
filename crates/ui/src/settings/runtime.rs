@@ -1,7 +1,7 @@
 use adw::prelude::*;
 use prefix::{
     GraphicsBackend, Manager as PrefixManager,
-    runtime::{self, RuntimeManager, RuntimeSource},
+    runtime::{RuntimeManager, RuntimeSource},
 };
 use relm4::prelude::*;
 use service::AppService;
@@ -54,6 +54,31 @@ impl RuntimeSettings {
             &mut self.rows,
         );
     }
+}
+
+/// Build a `perform_remove` closure for a managed download row.
+fn make_remove_runtime(
+    runtime_id: String,
+    sender: AsyncComponentSender<RuntimeSettings>,
+) -> Box<dyn FnMut() -> Result<(), String> + Send + 'static> {
+    Box::new(move || {
+        let dir = prefix::runtime::download::runtimes_dir().join(&runtime_id);
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        }
+        let mut runtime_manager: RuntimeManager = if let Some(settings) = prefix::Settings::load() {
+            settings.into()
+        } else {
+            RuntimeManager::new()
+        };
+        runtime_manager.remove(&runtime_id);
+        let settings: prefix::Settings = runtime_manager.clone().into();
+        if let Err(e) = settings.save() {
+            log::error!("[runtime] failed to save runtime settings: {}", e);
+        }
+        let _ = sender.input(RuntimeSettingsMsg::DownloadComplete(runtime_manager));
+        Ok(())
+    })
 }
 
 // ── Component ────────────────────────────────────────────────────────────
@@ -287,116 +312,51 @@ async fn build_available_channels(
             }
         });
 
-        // ── start_download (spawns blocking work on a thread to avoid freezing the UI) ──
-        let dl_pm = pm.clone();
+        // ── start_download ──
         let dl_sender = sender.clone();
         let dl_channel = channel;
         let start_download: managed_download_row::DownloadFn = Box::new(
             move |_data_dir: PathBuf,
                   progress: prefix::runtime::download::PhaseProgressFn,
                   cancel: std::sync::Arc<std::sync::atomic::AtomicBool>| {
-                let pm = dl_pm.clone();
                 let s = dl_sender.clone();
                 let channel = dl_channel.clone();
                 Box::pin(async move {
-                    // Shared state: (downloaded_bytes, total_bytes, phase)
-                    // phase: 0=Download, 1=Verify, 2=Extract
-                    let dl_state = std::sync::Arc::new(std::sync::Mutex::new((0u64, 0u64, 0u8)));
-                    let dl_state_t = dl_state.clone();
-
-                    let (tx, rx) = std::sync::mpsc::channel::<
-                        Result<RuntimeManager, prefix::base::error::PrefixError>,
-                    >();
+                    let (tx, rx) = std::sync::mpsc::channel::<Result<RuntimeManager, String>>();
 
                     std::thread::spawn(move || {
-                        let rt = tokio::runtime::Runtime::new()
-                            .expect("Failed to create tokio runtime for download thread");
+                        let rt =
+                            tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
-                        // Load latest state from disk
-                        let mut runtime_manager: RuntimeManager =
-                            if let Some(settings) = prefix::Settings::load() {
-                                settings.into()
-                            } else {
-                                RuntimeManager::new()
-                            };
-                        runtime_manager.ensure_system_runtime();
+                        let result: Result<RuntimeManager, String> = rt.block_on(async {
+                            // 1. Download + verify + extract with phase progress
+                            let final_dir = prefix::runtime::download::install_channel_with_phase(
+                                &channel, &progress,
+                            )
+                            .await
+                            .map_err(|e| e.to_string())?;
 
-                        // 1. Fetch cask info (needs tokio runtime for reqwest)
-                        let cask = match rt
-                            .block_on(prefix::runtime::homebrew::fetch_cask(channel.cask_name()))
-                        {
-                            Ok(c) => c,
-                            Err(e) => {
-                                let _ = tx.send(Err(e.into()));
-                                return;
+                            // 2. Fetch cask for version info
+                            let cask = prefix::runtime::homebrew::fetch_cask(channel.cask_name())
+                                .await
+                                .map_err(|e| e.to_string())?;
+
+                            // 3. Load state, register, save
+                            let mut runtime_manager: RuntimeManager =
+                                if let Some(settings) = prefix::Settings::load() {
+                                    settings.into()
+                                } else {
+                                    RuntimeManager::new()
+                                };
+                            runtime_manager.ensure_system_runtime();
+                            runtime_manager.register_channel(channel, cask.version, final_dir);
+                            let settings: prefix::Settings = runtime_manager.clone().into();
+                            if let Err(e) = settings.save() {
+                                log::error!("[runtime] failed to save: {}", e);
                             }
-                        };
-
-                        // 2. Setup temp directory
-                        let runtimes_dir = prefix::runtime::download::runtimes_dir();
-                        let _ = std::fs::create_dir_all(&runtimes_dir);
-                        prefix::runtime::download::cleanup_temp_runtimes(&runtimes_dir);
-                        let runtime_id = channel.runtime_id();
-                        let tmp_dir = runtimes_dir.join(format!(".tmp-{}", runtime_id));
-                        let final_dir = runtimes_dir.join(runtime_id);
-                        let _ = std::fs::remove_dir_all(&tmp_dir);
-                        let _ = std::fs::create_dir_all(&tmp_dir);
-                        let archive_path = tmp_dir.join("wine.tar.xz");
-
-                        // 3. Download (reports phase 0 via simple_prog)
-                        let dl_state_prog = dl_state_t.clone();
-                        let simple_prog: runtime::download::ProgressFn = Box::new(move |d, t| {
-                            *dl_state_prog.lock().unwrap() = (d, t, 0u8);
+                            Ok(runtime_manager)
                         });
-                        if let Err(e) = rt.block_on(prefix::runtime::download::download_file(
-                            &cask.url,
-                            &archive_path,
-                            &simple_prog,
-                        )) {
-                            let _ = tx.send(Err(e));
-                            return;
-                        }
-
-                        // 4. Verify checksum (slow — UI shows "Verifying checksum...")
-                        *dl_state_t.lock().unwrap() = (1, 1, 1u8);
-                        if let Err(e) =
-                            prefix::runtime::download::verify_sha256(&archive_path, &cask.sha256)
-                        {
-                            let _ = tx.send(Err(e));
-                            return;
-                        }
-
-                        // 5. Extract archive (slow — UI shows "Unpacking...")
-                        *dl_state_t.lock().unwrap() = (1, 1, 2u8);
-                        if let Err(e) =
-                            prefix::runtime::download::extract_tar(&archive_path, &tmp_dir)
-                        {
-                            let _ = tx.send(Err(e));
-                            return;
-                        }
-
-                        // 6. Finalize — verify extraction, clean up, move into place
-                        if let Err(e) = prefix::runtime::download::find_wine_binary(&tmp_dir) {
-                            let _ = tx.send(Err(e));
-                            return;
-                        }
-                        let _ = std::fs::remove_file(&archive_path);
-                        if final_dir.exists() {
-                            let _ = std::fs::remove_dir_all(&final_dir);
-                        }
-                        if let Err(e) = std::fs::rename(&tmp_dir, &final_dir) {
-                            let _ = tx.send(Err(prefix::base::error::PrefixError::Io(e)));
-                            return;
-                        }
-
-                        // 7. Register in runtime manager and save
-                        runtime_manager.register_channel(channel, cask.version, final_dir);
-                        let settings: prefix::Settings = runtime_manager.clone().into();
-                        if let Err(e) = settings.save() {
-                            log::error!("[runtime] failed to save runtime settings: {}", e);
-                        }
-                        let rm = runtime_manager;
-                        let _ = tx.send(Ok(rm));
+                        let _ = tx.send(result);
                     });
 
                     // Poll for completion
@@ -404,26 +364,12 @@ async fn build_available_channels(
                         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                             return Err("Download cancelled".into());
                         }
-
-                        // Bridge progress from shared state (includes phase)
-                        {
-                            let (d, t, phase) = *dl_state.lock().unwrap();
-                            if t > 0 {
-                                let phase = match phase {
-                                    1 => runtime::download::InstallPhase::Verify,
-                                    2 => runtime::download::InstallPhase::Extract,
-                                    _ => runtime::download::InstallPhase::Download,
-                                };
-                                progress(d, t, phase);
-                            }
-                        }
-
                         match rx.try_recv() {
                             Ok(Ok(rm)) => {
                                 let _ = s.input(RuntimeSettingsMsg::DownloadComplete(rm));
                                 return Ok(());
                             }
-                            Ok(Err(e)) => return Err(e.to_string()),
+                            Ok(Err(e)) => return Err(e),
                             Err(std::sync::mpsc::TryRecvError::Empty) => {
                                 gtk::glib::timeout_future(std::time::Duration::from_millis(200))
                                     .await;
@@ -438,31 +384,7 @@ async fn build_available_channels(
         );
 
         // ── perform_remove ──
-        let remove_id = runtime_id.clone();
-        let remove_sender = sender.clone();
-        let perform_remove = Box::new(move || {
-            // Delete the runtime directory from disk
-            let dir = prefix::runtime::download::runtimes_dir().join(&remove_id);
-            if dir.exists() {
-                std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
-            }
-
-            // Load the latest state from disk
-            let mut runtime_manager: RuntimeManager =
-                if let Some(settings) = prefix::Settings::load() {
-                    settings.into()
-                } else {
-                    RuntimeManager::new()
-                };
-            runtime_manager.remove(&remove_id);
-            let settings: prefix::Settings = runtime_manager.clone().into();
-            if let Err(e) = settings.save() {
-                log::error!("[runtime] failed to save runtime settings: {}", e);
-            }
-
-            let _ = remove_sender.input(RuntimeSettingsMsg::DownloadComplete(runtime_manager));
-            Ok(())
-        });
+        let perform_remove = make_remove_runtime(runtime_id.clone(), sender.clone());
 
         let ctrl = managed_download_row::ManagedDownloadRow::builder()
             .launch(managed_download_row::ManagedDownloadRowInit {
@@ -542,124 +464,56 @@ async fn build_available_channels(
             }
         });
 
-        // ── start_download ─────────────────────────────────────────
+        // ── start_download ──
         let dl_sender = sender.clone();
         let dl_build = build.clone();
-        let dl_runtime_id = runtime_id.clone();
         let start_download: managed_download_row::DownloadFn = Box::new(
             move |_data_dir: PathBuf,
                   progress: prefix::runtime::download::PhaseProgressFn,
                   cancel: std::sync::Arc<std::sync::atomic::AtomicBool>| {
                 let s = dl_sender.clone();
                 let build = dl_build.clone();
-                let runtime_id = dl_runtime_id.clone();
                 Box::pin(async move {
-                    // Shared state: (downloaded_bytes, total_bytes, phase)
-                    // phase: 0=Download, 1=Extract
-                    let dl_state = std::sync::Arc::new(std::sync::Mutex::new((0u64, 0u64, 0u8)));
-                    let dl_state_t = dl_state.clone();
-
-                    let (tx, rx) = std::sync::mpsc::channel::<
-                        Result<RuntimeManager, prefix::base::error::PrefixError>,
-                    >();
+                    let (tx, rx) = std::sync::mpsc::channel::<Result<RuntimeManager, String>>();
 
                     std::thread::spawn(move || {
-                        let rt = tokio::runtime::Runtime::new()
-                            .expect("Failed to create tokio runtime for download thread");
+                        let rt =
+                            tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
-                        // Load the latest runtime state from disk so that any
-                        // runtimes deleted between row creation and now are gone.
-                        let mut runtime_manager: RuntimeManager =
-                            if let Some(settings) = prefix::Settings::load() {
-                                let mut rm: RuntimeManager = settings.into();
-                                rm.ensure_system_runtime();
-                                rm
-                            } else {
-                                let mut rm = RuntimeManager::new();
-                                rm.ensure_system_runtime();
-                                rm
-                            };
+                        let result: Result<RuntimeManager, String> = rt.block_on(async {
+                            // 1. Download + extract with phase progress
+                            let final_dir = prefix::runtime::download::install_kron4ek_build(
+                                &build.version,
+                                &build.archive_url,
+                                &build.archive_name,
+                                &progress,
+                            )
+                            .await
+                            .map_err(|e| e.to_string())?;
 
-                        // 1. Setup temp directory
-                        let runtimes_dir = prefix::runtime::download::runtimes_dir();
-                        let _ = std::fs::create_dir_all(&runtimes_dir);
-                        prefix::runtime::download::cleanup_temp_runtimes(&runtimes_dir);
-                        let tmp_dir = runtimes_dir.join(format!(".tmp-{}", runtime_id));
-                        let final_dir = runtimes_dir.join(&runtime_id);
-                        let _ = std::fs::remove_dir_all(&tmp_dir);
-                        let _ = std::fs::create_dir_all(&tmp_dir);
-                        let archive_path = tmp_dir.join(&build.archive_name);
-
-                        // 2. Download (phase 0)
-                        let dl_state_prog = dl_state_t.clone();
-                        let simple_prog: runtime::download::ProgressFn = Box::new(move |d, t| {
-                            *dl_state_prog.lock().unwrap() = (d, t, 0u8);
+                            // 2. Load state, register, save
+                            let mut runtime_manager: RuntimeManager =
+                                if let Some(settings) = prefix::Settings::load() {
+                                    let mut rm: RuntimeManager = settings.into();
+                                    rm.ensure_system_runtime();
+                                    rm
+                                } else {
+                                    let mut rm = RuntimeManager::new();
+                                    rm.ensure_system_runtime();
+                                    rm
+                                };
+                            runtime_manager.register_version(
+                                &build.version,
+                                build.archive_url.clone(),
+                                final_dir,
+                            );
+                            let settings: prefix::Settings = runtime_manager.clone().into();
+                            if let Err(e) = settings.save() {
+                                log::error!("[runtime] failed to save: {}", e);
+                            }
+                            Ok(runtime_manager)
                         });
-                        if let Err(e) = rt.block_on(prefix::runtime::download::download_file(
-                            &build.archive_url,
-                            &archive_path,
-                            &simple_prog,
-                        )) {
-                            let _ = tx.send(Err(e));
-                            return;
-                        }
-
-                        // 3. Extract (phase 1)
-                        *dl_state_t.lock().unwrap() = (1, 1, 1u8);
-                        if let Err(e) =
-                            prefix::runtime::download::extract_tar(&archive_path, &tmp_dir)
-                        {
-                            let _ = tx.send(Err(e));
-                            return;
-                        }
-
-                        // Remove the archive file so find_content_dir below
-                        // only sees the extracted content directory.
-                        let _ = std::fs::remove_file(&archive_path);
-
-                        // 4. Resolve content root — Kron4ek archives contain a
-                        //    top-level directory (e.g. wine-11.8-amd64/).
-                        let content_dir =
-                            match prefix::runtime::download::find_content_dir(&tmp_dir) {
-                                Ok(d) => d,
-                                Err(e) => {
-                                    let _ = tx.send(Err(e));
-                                    return;
-                                }
-                            };
-
-                        // 5. Find wine binary inside the content root
-                        if let Err(e) = prefix::runtime::download::find_wine_binary(&content_dir) {
-                            let _ = tx.send(Err(e));
-                            return;
-                        }
-                        let _ = std::fs::remove_file(&archive_path);
-                        if final_dir.exists() {
-                            let _ = std::fs::remove_dir_all(&final_dir);
-                        }
-                        // Rename content_dir (not tmp_dir) so we drop the
-                        // synthetic top-level wrapper
-                        if let Err(e) = std::fs::rename(&content_dir, &final_dir) {
-                            let _ = tx.send(Err(prefix::base::error::PrefixError::Io(e)));
-                            return;
-                        }
-                        // Clean up tmp_dir if content_dir != tmp_dir
-                        if content_dir != tmp_dir {
-                            let _ = std::fs::remove_dir_all(&tmp_dir);
-                        }
-
-                        // 5. Register in runtime manager and save
-                        runtime_manager.register_version(
-                            &build.version,
-                            build.archive_url.clone(),
-                            final_dir,
-                        );
-                        let settings: prefix::Settings = runtime_manager.clone().into();
-                        if let Err(e) = settings.save() {
-                            log::error!("[runtime] failed to save runtime settings: {}", e);
-                        }
-                        let rm = runtime_manager;
-                        let _ = tx.send(Ok(rm));
+                        let _ = tx.send(result);
                     });
 
                     // Poll for completion
@@ -667,25 +521,12 @@ async fn build_available_channels(
                         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                             return Err("Download cancelled".into());
                         }
-
-                        // Bridge progress from shared state
-                        {
-                            let (d, t, phase) = *dl_state.lock().unwrap();
-                            if t > 0 {
-                                let phase = match phase {
-                                    1 => runtime::download::InstallPhase::Extract,
-                                    _ => runtime::download::InstallPhase::Download,
-                                };
-                                progress(d, t, phase);
-                            }
-                        }
-
                         match rx.try_recv() {
                             Ok(Ok(rm)) => {
                                 let _ = s.input(RuntimeSettingsMsg::DownloadComplete(rm));
                                 return Ok(());
                             }
-                            Ok(Err(e)) => return Err(e.to_string()),
+                            Ok(Err(e)) => return Err(e),
                             Err(std::sync::mpsc::TryRecvError::Empty) => {
                                 gtk::glib::timeout_future(std::time::Duration::from_millis(200))
                                     .await;
@@ -700,33 +541,7 @@ async fn build_available_channels(
         );
 
         // ── perform_remove ──
-        let remove_id = runtime_id.clone();
-        let remove_sender = sender.clone();
-        let perform_remove = Box::new(move || {
-            let dir = prefix::runtime::download::runtimes_dir().join(&remove_id);
-            if dir.exists() {
-                std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
-            }
-
-            // Load the latest state from disk, remove the runtime, and save back.
-            // We cannot use a stale in-memory clone to avoid resurrecting
-            // previously-deleted runtimes.
-            let mut runtime_manager: RuntimeManager =
-                if let Some(settings) = prefix::Settings::load() {
-                    settings.into()
-                } else {
-                    RuntimeManager::new()
-                };
-            runtime_manager.remove(&remove_id);
-            let settings: prefix::Settings = runtime_manager.clone().into();
-            if let Err(e) = settings.save() {
-                log::error!("[runtime] failed to save runtime settings: {}", e);
-            }
-
-            let rm = runtime_manager;
-            let _ = remove_sender.input(RuntimeSettingsMsg::DownloadComplete(rm));
-            Ok(())
-        });
+        let perform_remove = make_remove_runtime(runtime_id.clone(), sender.clone());
 
         let ctrl = managed_download_row::ManagedDownloadRow::builder()
             .launch(managed_download_row::ManagedDownloadRowInit {

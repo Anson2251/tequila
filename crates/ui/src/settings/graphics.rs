@@ -129,8 +129,9 @@ fn refresh_graphics_list(group: &adw::PreferencesGroup, rows: &mut Vec<adw::Acti
         group.remove(&row);
     }
 
-    let dir = runtime::graphics::graphics_dir();
-    if !dir.is_dir() {
+    let backends = runtime::graphics::installed_backends();
+
+    if backends.is_empty() {
         let row = adw::ActionRow::builder()
             .title("No backends installed")
             .subtitle("Download graphics backends to improve DirectX performance")
@@ -141,45 +142,65 @@ fn refresh_graphics_list(group: &adw::PreferencesGroup, rows: &mut Vec<adw::Acti
         return;
     }
 
-    let mut found = false;
-    for entry in std::fs::read_dir(&dir).ok().into_iter().flatten() {
-        let entry = match entry {
-            Ok(e) => e,
-            _ => continue,
-        };
-        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            continue;
+    for backend in &backends {
+        let name = backend.display_name();
+        let subtitle = format!("Version: {}", backend.version_string());
+
+        let row = adw::ActionRow::builder()
+            .title(name)
+            .subtitle(&subtitle)
+            .activatable(false)
+            .build();
+
+        group.add(&row);
+        rows.push(row);
+    }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────
+
+/// Check if any installed backend's directory name starts with the given prefix.
+fn has_backend_dir(prefix: &str) -> bool {
+    let dir = runtime::graphics::graphics_dir();
+    if !dir.is_dir() {
+        return false;
+    }
+    std::fs::read_dir(&dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .any(|e| {
+            e.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                && e.file_name().to_string_lossy().starts_with(prefix)
+        })
+}
+
+/// Build a `check_status` closure for a backend type.
+fn make_check_status(
+    prefix: &'static str,
+    status_installed: &'static str,
+    status_missing: &'static str,
+) -> Box<dyn Fn() -> managed_download_row::DownloadRowStatus + Send + 'static> {
+    Box::new(move || {
+        let installed = has_backend_dir(prefix);
+        managed_download_row::DownloadRowStatus {
+            installed,
+            managed: installed,
+            status_text: if installed {
+                status_installed.into()
+            } else {
+                status_missing.into()
+            },
         }
-        found = true;
-        let name = entry.file_name().to_string_lossy().to_string();
+    })
+}
 
-        let row = adw::ActionRow::builder()
-            .title(&name)
-            .subtitle(&format!("Installed in {}", entry.path().display()))
-            .activatable(false)
-            .build();
-
-        let remove_btn = gtk::Button::builder()
-            .icon_name("user-trash-symbolic")
-            .tooltip_text("Remove backend")
-            .css_classes(["flat", "circular", "destructive-action"])
-            .valign(gtk::Align::Center)
-            .build();
-        row.add_suffix(&remove_btn);
-
-        group.add(&row);
-        rows.push(row);
-    }
-
-    if !found {
-        let row = adw::ActionRow::builder()
-            .title("No backends installed")
-            .subtitle("Download from the Available section below")
-            .activatable(false)
-            .build();
-        group.add(&row);
-        rows.push(row);
-    }
+/// Build a `perform_remove` closure for a backend type.
+fn make_remove_backends(
+    prefix: &'static str,
+) -> Box<dyn FnMut() -> Result<(), String> + Send + 'static> {
+    Box::new(move || runtime::graphics::remove_backends(prefix).map_err(|e| e.to_string()))
 }
 
 // ── Available backends — each gets its own ManagedDownloadRow ───────────
@@ -196,29 +217,11 @@ fn build_available_graphics_rows(
         let dxmt_ctrl = managed_download_row::ManagedDownloadRow::builder()
             .launch(managed_download_row::ManagedDownloadRowInit {
                 title: "DXMT".into(),
-                check_status: Box::new(|| {
-                    let dir = runtime::graphics::graphics_dir();
-                    let found = std::fs::read_dir(&dir).ok().into_iter().flatten().any(|e| {
-                        e.as_ref()
-                            .ok()
-                            .and_then(|e| e.file_type().ok())
-                            .map(|t| t.is_dir())
-                            .unwrap_or(false)
-                            && e.as_ref()
-                                .ok()
-                                .map(|e| e.file_name().to_string_lossy().starts_with("dxmt-"))
-                                .unwrap_or(false)
-                    });
-                    managed_download_row::DownloadRowStatus {
-                        installed: found,
-                        managed: found,
-                        status_text: if found {
-                            "✓ Installed".into()
-                        } else {
-                            "DirectX → Metal translation layer (recommended)".into()
-                        },
-                    }
-                }),
+                check_status: make_check_status(
+                    "dxmt-",
+                    "✓ Installed",
+                    "DirectX → Metal translation layer (recommended)",
+                ),
                 check_update: None,
                 start_download: Box::new(|_data_dir, progress, cancel| {
                     Box::pin(async move {
@@ -237,22 +240,7 @@ fn build_available_graphics_rows(
                         Ok(())
                     })
                 }),
-                perform_remove: Box::new(|| {
-                    let dir = runtime::graphics::graphics_dir();
-                    if !dir.is_dir() {
-                        return Ok(());
-                    }
-                    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
-                        let entry = entry.map_err(|e| e.to_string())?;
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        if name.starts_with("dxmt-")
-                            && entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
-                        {
-                            std::fs::remove_dir_all(&entry.path()).map_err(|e| e.to_string())?;
-                        }
-                    }
-                    Ok(())
-                }),
+                perform_remove: make_remove_backends("dxmt-"),
                 data_dir: Default::default(),
             })
             .forward(sender.input_sender(), |_out| {
@@ -266,29 +254,11 @@ fn build_available_graphics_rows(
         let d3d_ctrl = managed_download_row::ManagedDownloadRow::builder()
             .launch(managed_download_row::ManagedDownloadRowInit {
                 title: "D3DMetal (via GPTK)".into(),
-                check_status: Box::new(|| {
-                    let dir = runtime::graphics::graphics_dir();
-                    let found = std::fs::read_dir(&dir).ok().into_iter().flatten().any(|e| {
-                        e.as_ref()
-                            .ok()
-                            .and_then(|e| e.file_type().ok())
-                            .map(|t| t.is_dir())
-                            .unwrap_or(false)
-                            && e.as_ref()
-                                .ok()
-                                .map(|e| e.file_name().to_string_lossy().starts_with("d3dmetal-"))
-                                .unwrap_or(false)
-                    });
-                    managed_download_row::DownloadRowStatus {
-                        installed: found,
-                        managed: found,
-                        status_text: if found {
-                            "✓ Installed".into()
-                        } else {
-                            "Apple's Game Porting Toolkit".into()
-                        },
-                    }
-                }),
+                check_status: make_check_status(
+                    "d3dmetal-",
+                    "✓ Installed",
+                    "Apple's Game Porting Toolkit",
+                ),
                 check_update: None,
                 start_download: Box::new({
                     let gs_sender = d3d_gs_sender.clone();
@@ -301,7 +271,7 @@ fn build_available_graphics_rows(
 
                             let (tx, rx) = channel::<Option<String>>();
 
-                            // Tell GraphicsSettings to show the pre-initialized dialog
+                            // Tell GraphicsSettings to show the dialog
                             if gs
                                 .send(GraphicsSettingsMsg::ShowD3DMetalImportDialog(tx))
                                 .is_err()
@@ -326,7 +296,7 @@ fn build_available_graphics_rows(
                                 }
                             };
 
-                            // ── Import (blocking — run on background thread) ──
+                            // Import (blocking) on background thread
                             let path = std::path::PathBuf::from(&selected);
                             let (tx_import, rx_import) = std::sync::mpsc::channel();
                             std::thread::spawn(move || {
@@ -336,39 +306,9 @@ fn build_available_graphics_rows(
                                             .map(|_| ())
                                             .map_err(|e| e.to_string())
                                     } else {
-                                        let r = (|| -> Result<(), String> {
-                                            let gfx_dir = runtime::graphics::graphics_dir();
-                                            let ts = std::time::SystemTime::now()
-                                                .duration_since(std::time::UNIX_EPOCH)
-                                                .unwrap()
-                                                .as_secs();
-                                            let dest =
-                                                gfx_dir.join(format!("d3dmetal-imported-{}", ts));
-                                            let lib =
-                                                [path.join("lib"), path.join("redist").join("lib")]
-                                                    .iter()
-                                                    .find(|p| p.is_dir())
-                                                    .cloned()
-                                                    .ok_or_else(|| {
-                                                        "Could not find GPTK lib directory in \
-                                                 the selected path."
-                                                            .to_string()
-                                                    })?;
-                                            std::fs::create_dir_all(&dest).map_err(|e| {
-                                                format!("Failed to create dir: {}", e)
-                                            })?;
-                                            let status = std::process::Command::new("cp")
-                                                .arg("-R")
-                                                .arg(&lib)
-                                                .arg(&dest)
-                                                .status()
-                                                .map_err(|e| format!("cp failed: {}", e))?;
-                                            if !status.success() {
-                                                return Err("Failed to copy GPTK files.".into());
-                                            }
-                                            Ok(())
-                                        })();
-                                        r
+                                        runtime::graphics::import_d3dmetal_from_folder(&path)
+                                            .map(|_| ())
+                                            .map_err(|e| e.to_string())
                                     };
                                 let _ = tx_import.send(result);
                             });
@@ -377,7 +317,7 @@ fn build_available_graphics_rows(
                             let result = loop {
                                 match rx_import.try_recv() {
                                     Ok(r) => break r,
-                                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                                    Err(TryRecvError::Empty) => {
                                         if cancel.load(Ordering::Relaxed) {
                                             return Err("Cancelled".into());
                                         }
@@ -393,22 +333,7 @@ fn build_available_graphics_rows(
                         })
                     }
                 }),
-                perform_remove: Box::new(|| {
-                    let dir = runtime::graphics::graphics_dir();
-                    if !dir.is_dir() {
-                        return Ok(());
-                    }
-                    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
-                        let entry = entry.map_err(|e| e.to_string())?;
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        if name.starts_with("d3dmetal-")
-                            && entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
-                        {
-                            std::fs::remove_dir_all(&entry.path()).map_err(|e| e.to_string())?;
-                        }
-                    }
-                    Ok(())
-                }),
+                perform_remove: make_remove_backends("d3dmetal-"),
                 data_dir: Default::default(),
             })
             .forward(sender.input_sender(), |_out| {
@@ -424,33 +349,11 @@ fn build_available_graphics_rows(
         let dxvk_ctrl = managed_download_row::ManagedDownloadRow::builder()
             .launch(managed_download_row::ManagedDownloadRowInit {
                 title: "DXVK + VKD3D".into(),
-                check_status: Box::new(|| {
-                    let dir = runtime::graphics::graphics_dir();
-                    let found = std::fs::read_dir(&dir).ok().into_iter().flatten().any(|e| {
-                        e.as_ref()
-                            .ok()
-                            .and_then(|e| e.file_type().ok())
-                            .map(|t| t.is_dir())
-                            .unwrap_or(false)
-                            && e.as_ref()
-                                .ok()
-                                .map(|e| {
-                                    let binding = e.file_name();
-                                    let n = binding.to_string_lossy();
-                                    n.starts_with("dxvk-") || n.starts_with("vkd3d-")
-                                })
-                                .unwrap_or(false)
-                    });
-                    managed_download_row::DownloadRowStatus {
-                        installed: found,
-                        managed: found,
-                        status_text: if found {
-                            "✓ Installed".into()
-                        } else {
-                            "DirectX → Vulkan translation layers".into()
-                        },
-                    }
-                }),
+                check_status: make_check_status(
+                    "dxvk-",
+                    "✓ Installed",
+                    "DirectX → Vulkan translation layers",
+                ),
                 check_update: None,
                 start_download: Box::new(|_data_dir, progress, cancel| {
                     Box::pin(async move {
@@ -458,7 +361,6 @@ fn build_available_graphics_rows(
                             progress(d, t, runtime::download::InstallPhase::Download);
                         });
 
-                        // Download DXVK
                         let (v_version, v_url) = runtime::graphics::fetch_dxvk_release()
                             .await
                             .map_err(|e| e.to_string())?;
@@ -478,7 +380,6 @@ fn build_available_graphics_rows(
                             return Err("Cancelled".into());
                         }
 
-                        // Download VKD3D-Proton
                         let (v3_version, v3_url) = runtime::graphics::fetch_vkd3d_release()
                             .await
                             .map_err(|e| e.to_string())?;
@@ -498,22 +399,7 @@ fn build_available_graphics_rows(
                         Ok(())
                     })
                 }),
-                perform_remove: Box::new(|| {
-                    let dir = runtime::graphics::graphics_dir();
-                    if !dir.is_dir() {
-                        return Ok(());
-                    }
-                    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
-                        let entry = entry.map_err(|e| e.to_string())?;
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        if (name.starts_with("dxvk-") || name.starts_with("vkd3d-"))
-                            && entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
-                        {
-                            std::fs::remove_dir_all(&entry.path()).map_err(|e| e.to_string())?;
-                        }
-                    }
-                    Ok(())
-                }),
+                perform_remove: make_remove_backends("dxvk-"),
                 data_dir: Default::default(),
             })
             .forward(sender.input_sender(), |_out| {

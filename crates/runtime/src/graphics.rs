@@ -908,6 +908,41 @@ pub fn import_d3dmetal_from_dmg(dmg_path: &Path) -> Result<PathBuf> {
     result
 }
 
+/// Import D3DMetal from a local folder (already extracted GPTK).
+///
+/// Copies the `lib/` directory to `graphics_dir/d3dmetal-imported-{ts}`.
+pub fn import_d3dmetal_from_folder(path: &Path) -> Result<PathBuf> {
+    let dest = d3dmetal_dest_dir();
+    copy_lib_dir(path, &dest)?;
+    Ok(dest)
+}
+
+/// Remove all installed graphics backends whose directory name starts with the given prefix.
+///
+/// Scans `graphics_dir()` for subdirectories matching the prefix and deletes them.
+pub fn remove_backends(prefix: &str) -> Result<()> {
+    let dir = graphics_dir();
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&dir)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with(prefix) && entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            fs::remove_dir_all(&entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+fn d3dmetal_dest_dir() -> PathBuf {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    graphics_dir().join(format!("d3dmetal-imported-{}", ts))
+}
+
 fn copy_lib_dir(mount: &Path, dest: &Path) -> Result<()> {
     let lib = [mount.join("lib"), mount.join("redist").join("lib")]
         .iter()
