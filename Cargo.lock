@@ -2888,6 +2888,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "service"
+version = "0.1.0"
+dependencies = [
+ "base",
+ "log",
+ "prefix",
+ "runtime",
+ "scan",
+ "store",
+ "tokio",
+]
+
+[[package]]
 name = "sha-1"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3426,6 +3439,7 @@ dependencies = [
  "objc2-foundation",
  "prefix",
  "relm4",
+ "service",
  "tokio",
  "tracker",
 ]

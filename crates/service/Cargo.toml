@@ -1,0 +1,13 @@
+[package]
+name = "service"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+base = { path = "../base" }
+prefix = { path = "../prefix" }
+scan = { path = "../scan" }
+store = { path = "../store" }
+runtime = { path = "../runtime" }
+log = "0.4"
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros"] }

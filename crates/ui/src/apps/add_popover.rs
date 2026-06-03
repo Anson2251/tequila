@@ -64,7 +64,6 @@ struct AvailableExecutable {
 enum AvailableExecutableMsg {
     #[allow(dead_code)]
     Select,
-    ResolvedIcon(Option<PathBuf>),
 }
 
 #[derive(Debug)]
@@ -182,9 +181,6 @@ impl FactoryComponent for AvailableExecutable {
         match msg {
             AvailableExecutableMsg::Select => {
                 self.selected = true;
-            }
-            AvailableExecutableMsg::ResolvedIcon(icon) => {
-                self.resolved_icon = icon;
             }
         }
     }

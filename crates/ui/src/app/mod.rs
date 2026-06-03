@@ -1,3 +1,4 @@
+pub mod handlers;
 pub mod menu;
 pub mod resources;
 pub use resources::initialize_custom_resources;
@@ -5,13 +6,12 @@ pub use resources::initialize_custom_resources;
 use adw::prelude::*;
 use gtk::glib;
 use gtk4::gio;
-use log::{error, info};
+use log::info;
 use relm4::prelude::{AsyncComponent, AsyncController};
 use relm4::{
     Component, ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent,
     adw, component::AsyncComponentController, gtk,
 };
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracker;
@@ -20,14 +20,18 @@ use crate::apps::AppManagerModel;
 use crate::prefix::config::PrefixConfigModel;
 use crate::prefix::list::PrefixListModel;
 use crate::settings::SettingsWindow;
+use handlers::ConfigUpdateAction;
 use menu::setup_menu_bar;
 use prefix::runtime::RuntimeManager;
 use prefix::{Manager as PrefixManager, ProcessTracker, WinePrefix};
+use service::AppService;
 
 #[tracker::track]
 pub struct AppModel {
     pub prefixes: Vec<WinePrefix>,
     pub prefix_manager: PrefixManager,
+    #[tracker::do_not_track]
+    pub service: AppService,
     pub selected_prefix: Option<usize>,
     #[tracker::do_not_track]
     pub prefix_list: Controller<PrefixListModel>,
@@ -100,18 +104,6 @@ pub enum AppMsg {
     ShowSettings,
     RuntimesUpdated(RuntimeManager),
     ReinitComplete(usize, std::result::Result<(), String>),
-}
-
-impl AppModel {
-    pub fn scan_wine_prefixes(prefix_manager: &PrefixManager) -> Vec<WinePrefix> {
-        match prefix_manager.scan_prefixes() {
-            Ok(prefixes) => prefixes,
-            Err(e) => {
-                error!("[app] error scanning prefixes: {}", e);
-                Vec::new()
-            }
-        }
-    }
 }
 
 #[relm4::component(pub)]
@@ -223,8 +215,14 @@ impl SimpleComponent for AppModel {
 
         let prefix_manager = PrefixManager::new(wine_dir.clone(), Arc::clone(&icon_cache));
 
+        let service = AppService::from_manager(
+            prefix_manager.clone(),
+            Arc::clone(&prefix_store),
+            Arc::clone(&process_tracker),
+        );
+
         // Load prefixes from filesystem + JSON config files (fast, user-editable)
-        let prefixes = AppModel::scan_wine_prefixes(&prefix_manager);
+        let prefixes = service.scan_prefixes();
         // Trigger background scan if no cached scan results exist yet
         let needs_sync = !prefixes.is_empty()
             && prefixes
@@ -287,11 +285,12 @@ impl SimpleComponent for AppModel {
                 _ => AppMsg::RefreshPrefixes,
             });
 
-        let settings = SettingsWindow::builder()
-            .launch(prefix_manager.clone())
-            .forward(sender.input_sender(), |msg| match msg {
+        let settings = SettingsWindow::builder().launch(service.clone()).forward(
+            sender.input_sender(),
+            |msg| match msg {
                 crate::settings::SettingsOutput::RuntimesUpdated(rm) => AppMsg::RuntimesUpdated(rm),
-            });
+            },
+        );
 
         let prefix_list_widget = prefix_list.widget().clone().upcast::<gtk::Widget>();
 
@@ -422,6 +421,7 @@ impl SimpleComponent for AppModel {
         let model = AppModel {
             prefixes,
             prefix_manager,
+            service,
             selected_prefix: None,
             prefix_list,
             prefix_config: config_tab,
@@ -493,13 +493,9 @@ impl SimpleComponent for AppModel {
             }
             AppMsg::DeletePrefix(index) => {
                 if index < self.prefixes.len() {
-                    let prefix_name = self.prefixes[index].name.clone();
                     let prefix_path = self.prefixes[index].path.clone();
 
-                    if let Err(e) = self.prefix_manager.delete_prefix(&prefix_path) {
-                        error!("[app] failed to delete prefix: {}", e);
-                    } else {
-                        self.prefixes.remove(index);
+                    if self.service.delete_prefix(&prefix_path, &mut self.prefixes) {
                         if self.selected_prefix == Some(index) {
                             self.selected_prefix = None;
                         } else if let Some(selected) = self.selected_prefix {
@@ -507,7 +503,6 @@ impl SimpleComponent for AppModel {
                                 self.selected_prefix = Some(selected - 1);
                             }
                         }
-                        info!("[app] deleted prefix: {}", prefix_name);
                         if self.prefixes.is_empty() {
                             sender.input(AppMsg::HideDetails);
                         }
@@ -517,41 +512,21 @@ impl SimpleComponent for AppModel {
             }
             AppMsg::LaunchPrefix(index) => {
                 if index < self.prefixes.len() {
-                    let prefix_name = self.prefixes[index].name.clone();
                     let prefix_path = self.prefixes[index].path.clone();
 
-                    info!(
-                        "[app] launching prefix: {} at {}",
-                        prefix_name,
-                        prefix_path.display()
-                    );
-
-                    // Launch winecfg for the prefix
-                    match self.prefix_manager.run_winecfg(&prefix_path) {
-                        Ok(_) => {
-                            info!(
-                                "[app] successfully launched winecfg for prefix: {}",
-                                prefix_name
-                            );
-                        }
-                        Err(e) => {
-                            error!(
-                                "[app] failed to launch winecfg for prefix {}: {}",
-                                prefix_name, e
-                            );
-                            let alert = adw::AlertDialog::new(
-                                Some("Launch Failed"),
-                                Some(&format!("Failed to launch winecfg:\n\n{}", e)),
-                            );
-                            alert.add_response("ok", "OK");
-                            alert.set_default_response(Some("ok"));
-                            alert.set_close_response("ok");
-                            alert.choose(
-                                Some(&self.main_window.clone().upcast::<gtk::Window>()),
-                                None::<&gtk::gio::Cancellable>,
-                                |_| {},
-                            );
-                        }
+                    if let Err(e) = service::launch::launch_winecfg(&self.service, &prefix_path) {
+                        let alert = adw::AlertDialog::new(
+                            Some("Launch Failed"),
+                            Some(&format!("Failed to launch winecfg:\n\n{}", e)),
+                        );
+                        alert.add_response("ok", "OK");
+                        alert.set_default_response(Some("ok"));
+                        alert.set_close_response("ok");
+                        alert.choose(
+                            Some(&self.main_window.clone().upcast::<gtk::Window>()),
+                            None::<&gtk::gio::Cancellable>,
+                            |_| {},
+                        );
                     }
                 }
             }
@@ -562,11 +537,11 @@ impl SimpleComponent for AppModel {
 
                     if executable_index < config.registered_executables.len() {
                         let executable = &config.registered_executables[executable_index];
-                        if let Err(e) = self
-                            .prefix_manager
-                            .launch_executable(prefix_path, executable)
-                        {
-                            error!("[app] failed to launch executable: {}", e);
+                        if let Err(e) = service::launch::launch_executable(
+                            &self.service,
+                            prefix_path,
+                            executable,
+                        ) {
                             let alert = adw::AlertDialog::new(
                                 Some("Launch Failed"),
                                 Some(&format!("Failed to launch '{}':\n\n{}", executable.name, e)),
@@ -654,46 +629,13 @@ impl SimpleComponent for AppModel {
                 self.import_dialog = Some(dialog);
             }
             AppMsg::OpenInFileManager(index) => {
-                if let Some(prefix) = self.prefixes.get(index) {
-                    let path = prefix.path.to_string_lossy().to_string();
-                    std::thread::spawn(move || {
-                        #[cfg(target_os = "macos")]
-                        let _ = std::process::Command::new("open").arg(&path).status();
-                        #[cfg(not(target_os = "macos"))]
-                        let _ = std::process::Command::new("xdg-open").arg(&path).status();
-                    });
-                }
+                handlers::handle_open_in_file_manager(&self.prefixes, index);
             }
             AppMsg::OpenInTerminal(index) => {
-                if let Some(prefix) = self.prefixes.get(index) {
-                    let prefix_path = prefix.path.clone();
-                    let pm = self.prefix_manager.clone();
-                    std::thread::spawn(move || match pm.generate_terminal_script(&prefix_path) {
-                        Ok(script) => {
-                            let tmp = std::env::temp_dir().join("tequila-terminal.sh");
-                            if let Err(e) = std::fs::write(&tmp, &script) {
-                                error!("[term] failed to write script: {}", e);
-                                return;
-                            }
-                            if let Err(e) = std::fs::set_permissions(
-                                &tmp,
-                                std::fs::Permissions::from_mode(0o755),
-                            ) {
-                                error!("[term] failed to chmod script: {}", e);
-                            }
-                            open_terminal_with_script(&tmp);
-                        }
-                        Err(e) => error!("[term] failed to generate script: {}", e),
-                    });
-                }
+                handlers::handle_open_in_terminal(&self.service, &self.prefixes, index);
             }
             AppMsg::RefreshPrefixes => {
-                let sm = self.prefix_manager.clone();
-                let s = sender.clone();
-                std::thread::spawn(move || {
-                    let fresh = AppModel::scan_wine_prefixes(&sm);
-                    s.input(AppMsg::ReloadPrefixes(fresh));
-                });
+                handlers::handle_refresh_prefixes(self.service.clone(), sender.clone());
             }
             AppMsg::SelectPrefix(index) => {
                 if index < self.prefixes.len() {
@@ -724,18 +666,7 @@ impl SimpleComponent for AppModel {
                         .emit(crate::apps::AppManagerMsg::PrefixPathUpdated(prefix_path));
 
                     // Resolve runtime display name
-                    let runtime_display = config
-                        .wine_version
-                        .as_ref()
-                        .and_then(|id| self.prefix_manager.runtime_manager().get(id))
-                        .map(|r| format!("{} ({})", r.name, r.wine_version))
-                        .unwrap_or_else(|| {
-                            config
-                                .wine_version
-                                .as_deref()
-                                .unwrap_or("Unknown")
-                                .to_string()
-                        });
+                    let runtime_display = self.service.resolve_runtime_display_name(&config);
                     self.prefix_config.emit(
                         crate::prefix::config::PrefixConfigMsg::SetWineVersionDisplay(
                             runtime_display,
@@ -758,132 +689,92 @@ impl SimpleComponent for AppModel {
                 self.content_box.set_visible_child_name("empty");
             }
             AppMsg::ConfigUpdated(index, config) => {
-                // Handle config updates from both app_manager and prefix_details
-                if let Some(selected_index) = self.selected_prefix {
-                    let actual_index = if index == 0 { selected_index } else { index };
+                // Capture old wine version BEFORE handle_config_updated mutates prefixes
+                let old_wine_version: Option<String> = self.selected_prefix.and_then(|si| {
+                    let actual = if index == 0 { si } else { index };
+                    self.prefixes
+                        .get(actual)
+                        .and_then(|p| p.config.wine_version.clone())
+                });
 
-                    if actual_index < self.prefixes.len() {
-                        let prefix_path = self.prefixes[actual_index].path.clone();
-                        let old_graphics = self.prefixes[actual_index].config.graphics.clone();
-                        let new_graphics = config.graphics.clone();
-                        let old_wine_version =
-                            self.prefixes[actual_index].config.wine_version.clone();
-                        let new_wine_version = config.wine_version.clone();
+                if let Some(action) = handlers::handle_config_updated(
+                    &self.service,
+                    index,
+                    config.clone(),
+                    &mut self.prefixes,
+                    self.selected_prefix,
+                ) {
+                    let actual_index = if index == 0 {
+                        self.selected_prefix.unwrap_or(0)
+                    } else {
+                        index
+                    };
 
-                        // Detect if the graphics backend changed
-                        let graphics_changed = match (&old_graphics, &new_graphics) {
-                            (None, None) => false,
-                            (Some(a), Some(b)) => a.backend != b.backend || a.version != b.version,
-                            _ => true, // None <-> Some
-                        };
-
-                        if graphics_changed {
-                            // Save the full pre-change config so we can roll
-                            // back on disk + notify UIs if anything fails.
-                            let rollback_config = self.prefixes[actual_index].config.clone();
-
-                            // Update in-memory state + notify UIs immediately.
-                            // This gives instant visual feedback; if the async
-                            // operation fails below we restore the old state.
-                            self.prefixes[actual_index].config = config.clone();
-                            self.prefix_config.emit(
-                                crate::prefix::config::PrefixConfigMsg::ConfigUpdated(
-                                    config.clone(),
-                                ),
-                            );
-                            self.app_manager
-                                .emit(crate::apps::AppManagerMsg::ConfigUpdated(config.clone()));
-
-                            // Async: deactivate old backend, then activate new one
-                            let pm = self.prefix_manager.clone();
-                            let pp = prefix_path.clone();
-                            let window = self.main_window.clone().upcast::<gtk::Window>();
-                            let s = sender.clone();
-                            glib::MainContext::default().spawn_local(async move {
-                                let mut failed = false;
-
-                                if let Some(ref old_gfx) = old_graphics {
-                                    info!("[config] deactivating old graphics backend");
-                                    if let Err(e) = pm
-                                        .deactivate_graphics_backend(&pp, Some(old_gfx.clone()))
-                                        .await
-                                    {
-                                        error!("[app] failed to deactivate old graphics: {}", e);
-                                        failed = true;
-                                        show_error_dialog(
-                                            &window,
-                                            "Failed to Deactivate Graphics Backend",
-                                            &e,
-                                        );
-                                    }
-                                }
-
-                                if !failed {
-                                    if let Some(ref gfx) = new_graphics {
-                                        if let Some(backend) = gfx.to_backend() {
-                                            info!(
-                                                "[config] activating {} graphics backend",
-                                                backend.display_name()
-                                            );
-                                            if let Err(e) =
-                                                pm.activate_graphics_backend(&backend, &pp).await
-                                            {
-                                                error!("[app] failed to activate graphics: {}", e);
-                                                failed = true;
-                                                show_error_dialog(
-                                                    &window,
-                                                    "Failed to Activate Graphics Backend",
-                                                    &e,
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // On failure: restore the old config on disk
-                                // and emit updates so all UIs revert.
-                                if failed {
-                                    let _ = pm.update_config(&pp, &rollback_config);
-                                    // Emit the rollback config so the UI reverts
-                                    s.input(AppMsg::ConfigUpdated(0, rollback_config));
-                                }
-                            });
-                        } else {
-                            // No backend change — normal config save
-                            if let Err(e) = self.prefix_manager.update_config(&prefix_path, &config)
-                            {
-                                error!("[app] failed to update config: {}", e)
-                            } else {
-                                self.prefixes[actual_index].config = config.clone();
+                    match action {
+                        ConfigUpdateAction::SwitchGraphics {
+                            service,
+                            prefix_path,
+                            old_graphics,
+                            new_graphics,
+                            rollback_config,
+                        } => {
+                            // Update UIs immediately for visual feedback
+                            if actual_index < self.prefixes.len() {
                                 self.prefix_config.emit(
                                     crate::prefix::config::PrefixConfigMsg::ConfigUpdated(
-                                        config.clone(),
+                                        self.prefixes[actual_index].config.clone(),
                                     ),
                                 );
                                 self.app_manager
                                     .emit(crate::apps::AppManagerMsg::ConfigUpdated(
-                                        config.clone(),
+                                        self.prefixes[actual_index].config.clone(),
                                     ));
                             }
-                        }
 
-                        // Detect if wine version changed — reinitialize prefix on a
-                        // background thread if it did.
-                        if old_wine_version != new_wine_version {
-                            let pm = self.prefix_manager.clone();
-                            let pp = prefix_path.clone();
+                            // Async graphics backend switch with rollback
+                            let window = self.main_window.clone().upcast::<gtk::Window>();
+                            let s = sender.clone();
+                            glib::MainContext::default().spawn_local(async move {
+                                if let Err(e) = service::sync::switch_graphics_backend(
+                                    &service,
+                                    &prefix_path,
+                                    &old_graphics,
+                                    &new_graphics,
+                                    &rollback_config,
+                                )
+                                .await
+                                {
+                                    let alert = adw::AlertDialog::new(
+                                        Some("Failed to Switch Graphics Backend"),
+                                        Some(&e),
+                                    );
+                                    alert.add_response("ok", "OK");
+                                    alert.set_default_response(Some("ok"));
+                                    alert.set_close_response("ok");
+                                    alert.choose(Some(&window), None::<&gio::Cancellable>, |_| {});
+                                    // Emit rollback so UIs revert
+                                    s.input(AppMsg::ConfigUpdated(0, rollback_config));
+                                }
+                            });
+                        }
+                    }
+                }
+
+                // Detect if wine version changed — reinitialize prefix
+                if let Some(selected_index) = self.selected_prefix {
+                    let actual_index = if index == 0 { selected_index } else { index };
+                    if actual_index < self.prefixes.len() {
+                        let old_ver = old_wine_version.as_deref();
+                        let new_ver = config.wine_version.as_deref();
+                        if old_ver != new_ver && old_ver.is_some() && new_ver.is_some() {
+                            let svc = self.service.clone();
+                            let pp = self.prefixes[actual_index].path.clone();
                             let cfg = config.clone();
                             let s = sender.clone();
                             let prefix_index = actual_index;
-
                             std::thread::spawn(move || {
-                                let result = pm.reinitialize_prefix(&pp, &cfg);
-                                let msg = AppMsg::ReinitComplete(
-                                    prefix_index,
-                                    result.map_err(|e| e.to_string()),
-                                );
-                                // Send back to main thread via component channel
-                                let _ = s.input(msg);
+                                let result = service::launch::reinitialize_prefix(&svc, &pp, &cfg);
+                                let _ = s.input(AppMsg::ReinitComplete(prefix_index, result));
                             });
                         }
                     }
@@ -897,55 +788,7 @@ impl SimpleComponent for AppModel {
                     ));
             }
             AppMsg::ScanForApplications(index) => {
-                if index < self.prefixes.len() {
-                    let prefix_path = self.prefixes[index].path.clone();
-                    let prefix_name = self.prefixes[index].name.clone();
-
-                    match self.prefix_manager.scan_for_applications(&prefix_path) {
-                        Ok(executables) => {
-                            info!(
-                                "[app] found {} applications in prefix '{}'",
-                                executables.len(),
-                                prefix_name
-                            );
-
-                            // Get the current config and update it
-                            let mut config = self.prefixes[index].config.clone();
-                            let initial_count = config.registered_executables.len();
-
-                            for executable in executables {
-                                config.add_executable(executable);
-                            }
-
-                            let new_count = config.registered_executables.len();
-                            let added_count = new_count - initial_count;
-
-                            // Save the updated config
-                            if let Err(e) = self.prefix_manager.update_config(&prefix_path, &config)
-                            {
-                                error!(
-                                    "[app] failed to save updated config for prefix '{}': {}",
-                                    prefix_name, e
-                                );
-                            } else {
-                                info!(
-                                    "[app] successfully updated prefix '{}' config with {} new executables (total: {})",
-                                    prefix_name, added_count, new_count
-                                );
-
-                                // Update the local copy
-                                self.prefixes[index].config = config;
-                            }
-                        }
-                        Err(e) => {
-                            error!(
-                                "[app] failed to scan for applications in prefix '{}': {}",
-                                prefix_name, e
-                            );
-                            // TODO: Show error dialog to user
-                        }
-                    }
-                }
+                handlers::handle_scan_for_applications(&self.service, &mut self.prefixes, index);
             }
             AppMsg::SyncComplete(fresh) => {
                 self.set_syncing(false);
@@ -986,26 +829,11 @@ impl SimpleComponent for AppModel {
                     self.sync_overlay.set_visible(true);
                     self.sync_progress_bar.set_fraction(0.0);
                     self.sync_progress_label.set_label("Scanning...");
-                    let ss = sender.clone();
-                    let sp = sender.clone();
-                    let sm = self.prefix_manager.clone();
-                    let st = Arc::clone(&self.prefix_store);
-                    std::thread::spawn(move || {
-                        let mut fresh = AppModel::scan_wine_prefixes(&sm);
-                        let total = fresh.len();
-                        for (i, p) in fresh.iter_mut().enumerate() {
-                            if let Ok(exes) = sm.scan_for_applications(&p.path) {
-                                let _ =
-                                    st.save_scanned_executables(&p.path.to_string_lossy(), &exes);
-                            }
-                            let changed = sm.enrich_executables(&p.path, &mut p.config);
-                            if changed {
-                                let _ = sm.update_config(&p.path, &p.config);
-                            }
-                            let _ = sp.input(AppMsg::SyncProgress(i + 1, total));
-                        }
-                        let _ = ss.input(AppMsg::SyncComplete(fresh));
-                    });
+                    handlers::handle_sync_prefixes(
+                        self.service.clone(),
+                        sender.clone(),
+                        sender.clone(),
+                    );
                 }
             }
             AppMsg::SyncProgress(completed, total) => {
@@ -1041,59 +869,4 @@ impl SimpleComponent for AppModel {
 
         // Update the view based on current state will be handled by Relm4 automatically
     }
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────
-
-/// Try to open a terminal emulator that runs the given shell script.
-///
-/// The script should be executable and self-contained (it sets up the Wine
-/// environment and starts an interactive shell). On macOS we use
-/// Terminal.app via AppleScript; on Linux we try common terminals.
-pub fn open_terminal_with_script(script_path: &std::path::Path) {
-    let path_str = script_path.to_string_lossy();
-
-    #[cfg(target_os = "macos")]
-    {
-        let template = include_str!("../../../../scripts/tequila-terminal.applescript");
-        let src = template.replace("__TEQUILA_SCRIPT_PATH__", &path_str.replace('"', "\\\""));
-        let _ = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg(&src)
-            .status();
-        let _ = std::process::Command::new("open")
-            .args(["-a", "Terminal"])
-            .status();
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        // Try terminals that support -e with a script path.
-        // We run `bash /path/to/script` so the script's shebang and trap work.
-        let cmds: &[&[&str]] = &[
-            &["x-terminal-emulator", "-e", "bash", &path_str],
-            &["gnome-terminal", "--", "bash", &path_str],
-            &["xfce4-terminal", "-e", "bash", &path_str],
-            &["konsole", "-e", "bash", &path_str],
-            &["lxterminal", "-e", "bash", &path_str],
-            &["xterm", "-e", "bash", &path_str],
-            &["kgx", "-e", "bash", &path_str],
-        ];
-        for args in cmds {
-            let cmd = args[0];
-            let rest = &args[1..];
-            if std::process::Command::new(cmd).args(rest).spawn().is_ok() {
-                return;
-            }
-        }
-    }
-}
-
-/// Show a simple error dialog with an OK button.
-fn show_error_dialog(parent: &gtk::Window, title: &str, msg: &dyn std::fmt::Display) {
-    let alert = adw::AlertDialog::new(Some(title), Some(&msg.to_string()));
-    alert.add_response("ok", "OK");
-    alert.set_default_response(Some("ok"));
-    alert.set_close_response("ok");
-    alert.choose(Some(parent), None::<&gio::Cancellable>, |_| {});
 }

@@ -4,6 +4,7 @@ use prefix::{
     runtime::{self, RuntimeManager, RuntimeSource},
 };
 use relm4::prelude::*;
+use service::AppService;
 use std::path::PathBuf;
 use tracker;
 
@@ -13,7 +14,8 @@ use super::managed_download_row;
 
 #[tracker::track]
 pub struct RuntimeSettings {
-    pub prefix_manager: PrefixManager,
+    #[tracker::do_not_track]
+    pub service: AppService,
     parent: gtk::Window,
 
     #[tracker::do_not_track]
@@ -41,11 +43,24 @@ pub enum RuntimeSettingsOutput {
     RuntimesUpdated(RuntimeManager),
 }
 
+// ── Internal helpers ─────────────────────────────────────────────────────
+
+impl RuntimeSettings {
+    fn refresh_list(&mut self, sender: &AsyncComponentSender<Self>) {
+        refresh_runtime_list(
+            &self.list_group,
+            self.service.prefix_manager().runtime_manager(),
+            sender,
+            &mut self.rows,
+        );
+    }
+}
+
 // ── Component ────────────────────────────────────────────────────────────
 
 #[relm4::component(pub, async)]
 impl AsyncComponent for RuntimeSettings {
-    type Init = (PrefixManager, gtk::Window);
+    type Init = (AppService, gtk::Window);
     type Input = RuntimeSettingsMsg;
     type Output = RuntimeSettingsOutput;
     type CommandOutput = ();
@@ -85,14 +100,14 @@ impl AsyncComponent for RuntimeSettings {
     }
 
     async fn init(
-        (prefix_manager, parent): Self::Init,
+        (service, parent): Self::Init,
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
         // Placeholder groups — replaced with real ones from view! after view_output!()
         let placeholder_group = adw::PreferencesGroup::new();
         let mut model = RuntimeSettings {
-            prefix_manager,
+            service,
             parent,
             list_group: placeholder_group,
             rows: Vec::new(),
@@ -108,12 +123,16 @@ impl AsyncComponent for RuntimeSettings {
         // Populate the groups
         refresh_runtime_list(
             &model.list_group,
-            model.prefix_manager.runtime_manager(),
+            model.service.prefix_manager().runtime_manager(),
             &sender,
             &mut model.rows,
         );
-        model.available_ctrls =
-            build_available_channels(&widgets.avail_group, &model.prefix_manager, &sender).await;
+        model.available_ctrls = build_available_channels(
+            &widgets.avail_group,
+            model.service.prefix_manager(),
+            &sender,
+        )
+        .await;
 
         // Platform-specific group description
         #[cfg(target_os = "macos")]
@@ -138,43 +157,24 @@ impl AsyncComponent for RuntimeSettings {
         match msg {
             RuntimeSettingsMsg::RefreshRuntimes => {
                 // Re-detect system Wine in case it was installed/uninstalled/updated
-                self.prefix_manager
-                    .runtime_manager_mut()
-                    .ensure_system_runtime();
-                refresh_runtime_list(
-                    &self.list_group,
-                    self.prefix_manager.runtime_manager(),
-                    &sender,
-                    &mut self.rows,
-                );
+                service::runtime_ops::ensure_system_runtime(&mut self.service);
+                self.refresh_list(&sender);
             }
             RuntimeSettingsMsg::SetDefault(id) => {
-                self.prefix_manager.set_default_runtime(&id);
-                self.prefix_manager.save_runtime_state();
-                refresh_runtime_list(
-                    &self.list_group,
-                    self.prefix_manager.runtime_manager(),
-                    &sender,
-                    &mut self.rows,
-                );
-                emit_runtimes_updated(&self.prefix_manager, &sender);
+                if let Ok(updated_rm) =
+                    service::runtime_ops::set_default_runtime(&mut self.service, &id)
+                {
+                    // Replace the runtime manager in the SettingsWindow parent
+                    let _ = sender.output(RuntimeSettingsOutput::RuntimesUpdated(updated_rm));
+                    self.refresh_list(&sender);
+                }
             }
             RuntimeSettingsMsg::RemoveRuntime(id) => {
-                if id != "wine-system" {
-                    // Delete the runtime directory from disk
-                    let dir = prefix::runtime::download::runtimes_dir().join(&id);
-                    if dir.exists() {
-                        let _ = std::fs::remove_dir_all(&dir);
-                    }
-                    // Remove from the runtime list and save config
-                    self.prefix_manager.remove_runtime(&id);
-                    refresh_runtime_list(
-                        &self.list_group,
-                        self.prefix_manager.runtime_manager(),
-                        &sender,
-                        &mut self.rows,
-                    );
-                    emit_runtimes_updated(&self.prefix_manager, &sender);
+                if let Ok(updated_rm) =
+                    service::runtime_ops::remove_runtime_full(&mut self.service, &id)
+                {
+                    let _ = sender.output(RuntimeSettingsOutput::RuntimesUpdated(updated_rm));
+                    self.refresh_list(&sender);
                     // Refresh the Available section rows so they show Install again
                     for ctrl in &self.available_ctrls {
                         ctrl.emit(managed_download_row::ManagedDownloadRowMsg::RefreshStatus);
@@ -182,16 +182,15 @@ impl AsyncComponent for RuntimeSettings {
                 }
             }
             RuntimeSettingsMsg::DownloadComplete(updated_rm) => {
-                let rm_ref = self.prefix_manager.runtime_manager_mut();
-                let _old = std::mem::replace(rm_ref, updated_rm);
-                self.prefix_manager.save_runtime_state();
-                refresh_runtime_list(
-                    &self.list_group,
-                    self.prefix_manager.runtime_manager(),
-                    &sender,
-                    &mut self.rows,
-                );
-                emit_runtimes_updated(&self.prefix_manager, &sender);
+                // Replace the runtime manager in our service
+                let pm = self.service.prefix_manager_mut();
+                let _old = std::mem::replace(pm.runtime_manager_mut(), updated_rm);
+                pm.save_runtime_state();
+
+                let _ = sender.output(RuntimeSettingsOutput::RuntimesUpdated(
+                    pm.runtime_manager().clone(),
+                ));
+                self.refresh_list(&sender);
                 // Refresh Available rows so their check_status picks up the new state
                 for ctrl in &self.available_ctrls {
                     ctrl.emit(managed_download_row::ManagedDownloadRowMsg::RefreshStatus);
@@ -225,16 +224,14 @@ impl AsyncComponent for RuntimeSettings {
                     .and_then(|n| n.to_str())
                     .unwrap_or("imported")
                     .to_string();
-                match self.prefix_manager.import_runtime(&path, &dir_name) {
-                    Ok(_runtime) => {
-                        self.prefix_manager.save_runtime_state();
-                        refresh_runtime_list(
-                            &self.list_group,
-                            self.prefix_manager.runtime_manager(),
-                            &sender,
-                            &mut self.rows,
-                        );
-                        emit_runtimes_updated(&self.prefix_manager, &sender);
+                match service::runtime_ops::import_runtime_from_path(
+                    &mut self.service,
+                    &path,
+                    &dir_name,
+                ) {
+                    Ok(updated_rm) => {
+                        let _ = sender.output(RuntimeSettingsOutput::RuntimesUpdated(updated_rm));
+                        self.refresh_list(&sender);
                     }
                     Err(e) => {
                         let alert = adw::AlertDialog::new(
@@ -863,12 +860,6 @@ fn refresh_runtime_list(
         group.add(&row);
         rows.push(row);
     }
-}
-
-fn emit_runtimes_updated(pm: &PrefixManager, sender: &AsyncComponentSender<RuntimeSettings>) {
-    let _ = sender.output(RuntimeSettingsOutput::RuntimesUpdated(
-        pm.runtime_manager().clone(),
-    ));
 }
 
 // ── Native file dialog (macOS) ──────────────────────────────────────────

@@ -4,6 +4,7 @@ use prefix::{
     runtime::{RuntimeManager, download, graphics as prefix_graphics},
 };
 use relm4::prelude::*;
+use service::AppService;
 use std::path::PathBuf;
 use tracker;
 
@@ -117,7 +118,7 @@ fn graphics_subtitle() -> String {
 
 #[relm4::component(pub, async)]
 impl AsyncComponent for SettingsWindow {
-    type Init = PrefixManager;
+    type Init = AppService;
     type Input = SettingsMsg;
     type Output = SettingsOutput;
     type CommandOutput = ();
@@ -219,11 +220,11 @@ impl AsyncComponent for SettingsWindow {
     }
 
     async fn init(
-        init: Self::Init,
+        service: Self::Init,
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
-        let prefix_manager = init;
+        let prefix_manager = service.prefix_manager().clone();
 
         // ── Build header bar (must exist before view_output! for the titlebar reference) ──
         let header_bar = gtk::HeaderBar::new();
@@ -242,7 +243,7 @@ impl AsyncComponent for SettingsWindow {
 
         // Create child subpage controllers (independent of widgets)
         let runtime_ctrl = runtime::RuntimeSettings::builder()
-            .launch((prefix_manager.clone(), root.clone()))
+            .launch((service.clone(), root.clone()))
             .forward(sender.input_sender(), |msg| match msg {
                 runtime::RuntimeSettingsOutput::RuntimesUpdated(rm) => {
                     SettingsMsg::RuntimesUpdated(rm)

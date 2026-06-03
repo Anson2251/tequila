@@ -7,6 +7,7 @@ members = [
     "crates/scan",
     "crates/store",
     "crates/prefix",
+    "crates/service",
     "crates/ui",
     "crates/tequila",
 ]
