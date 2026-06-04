@@ -2,6 +2,9 @@ use crate::app::AppMsg;
 use adw::prelude::*;
 use relm4::{ComponentSender, adw, gtk};
 
+#[cfg(target_os = "macos")]
+use std::sync::OnceLock;
+
 /// Configure the application menu bar with platform-appropriate menus.
 ///
 /// On macOS, creates a native NSMenu bar with AppKit APIs.
@@ -110,7 +113,7 @@ objc2::define_class!(
                     about.set_version("0.1.0");
                     about.set_comments("Wine Prefix Manager");
                     about.set_developer_name("Anson2251");
-                    let parent = gio::Application::default()
+                    let parent = gtk::gio::Application::default()
                         .and_then(|a| a.downcast::<gtk::Application>().ok())
                         .and_then(|app| app.active_window());
                     about.present(parent.as_ref());
@@ -131,7 +134,7 @@ objc2::define_class!(
                     }
                 }
                 5 => {
-                    if let Some(gio_app) = gio::Application::default() {
+                    if let Some(gio_app) = gtk::gio::Application::default() {
                         if let Ok(gtk_app) = gio_app.downcast::<gtk::Application>() {
                             gtk_app.quit();
                         }
@@ -172,11 +175,11 @@ fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<crat
         .ok();
 
     // Poll the channel every 50ms on the GTK main loop
-    glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
+    gtk::glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
         while let Ok(msg) = rx.try_recv() {
             s.input(msg);
         }
-        glib::ControlFlow::Continue
+        gtk::glib::ControlFlow::Continue
     });
 
     // Store the target permanently — menu items hold references to it

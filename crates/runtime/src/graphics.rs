@@ -807,7 +807,7 @@ pub fn installed_backends() -> Vec<GraphicsBackend> {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         let mut dxvk_versions: Vec<String> = Vec::new();
         let mut vkd3d_versions: Vec<String> = Vec::new();

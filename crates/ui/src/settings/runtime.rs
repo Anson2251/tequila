@@ -3,6 +3,7 @@ use prefix::{
     GraphicsBackend, Manager as PrefixManager,
     runtime::{RuntimeManager, RuntimeSource},
 };
+use prefix::runtime::Channel;
 use relm4::prelude::*;
 use service::AppService;
 use std::path::PathBuf;

@@ -134,12 +134,15 @@ fn macos_save_file<F>(
 
     // Set allowed file types if extensions are provided
     if !_extensions.is_empty() {
-        use objc2_foundation::NSArray;
-        let allowed: Vec<&objc2_foundation::NSString> = _extensions
+        use objc2::rc::Retained;
+        use objc2_foundation::{NSArray, NSString};
+        let retained: Vec<Retained<NSString>> = _extensions
             .iter()
-            .map(|e| objc2_foundation::NSString::from_str(e))
+            .map(|e| NSString::from_str(e))
             .collect();
-        let arr = NSArray::from_vec(&allowed);
+        let refs: Vec<&NSString> = retained.iter().map(|s| &**s).collect();
+        let arr = NSArray::from_slice(&refs);
+        #[allow(deprecated)]
         panel.setAllowedFileTypes(Some(&arr));
     }
 

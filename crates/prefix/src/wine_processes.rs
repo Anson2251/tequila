@@ -1,7 +1,6 @@
-use base::GraphicsBackend;
 use base::config::PrefixConfig;
-use base::error::{PrefixError, Result};
-use log::info;
+use base::GraphicsBackend;
+use log::{info, warn};
 use runtime::Runtime;
 use runtime::graphics;
 use std::path::{Path, PathBuf};
@@ -13,7 +12,22 @@ pub fn apply_runtime_env(cmd: &mut Command, runtime: &Runtime, prefix_path: &Pat
     let system_path = std::env::var("PATH").unwrap_or_default();
     let path = if runtime.bundle_dir.as_os_str().is_empty() {
         system_path.clone()
+    } else if runtime.bundle_dir.join("bin").join("wine").exists() {
+        // Fast path: standard bin/wine layout
+        format!(
+            "{}:{}",
+            runtime.bundle_dir.join("bin").display(),
+            system_path
+        )
+    } else if let Some(wine_bin) = runtime::discover_wine_binary(&runtime.bundle_dir) {
+        // Handles macOS .app bundles where wine is nested inside Contents/Resources/wine/bin/wine
+        let wine_dir = wine_bin
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| runtime.bundle_dir.join("bin"));
+        format!("{}:{}", wine_dir.display(), system_path)
     } else {
+        // Fallback: assume standard layout even if wine binary wasn't found yet
         format!(
             "{}:{}",
             runtime.bundle_dir.join("bin").display(),
@@ -77,13 +91,16 @@ fn apply_graphics_env(cmd: &mut Command, prefix_path: &Path) {
         GraphicsBackend::Dxmt { version } => {
             // WINEDLLPATH only for .so (unixlib) files — DXMT provides winemetal.so.
             // All .dll files are symlinked into prefix system32 as native overrides.
-            vec![
-                gfx_dir
-                    .join(format!("dxmt-{}", version))
-                    .join("lib")
-                    .join("wine")
-                    .join("x86_64-unix"),
-            ]
+            // Some DXMT archives unpack to x86_64-unix/ directly, others nest under
+            // lib/wine/x86_64-unix/ — detect and use whichever layout is present.
+            let base = gfx_dir.join(format!("dxmt-{}", version));
+            let flat = base.join("x86_64-unix");
+            let nested = base.join("lib").join("wine").join("x86_64-unix");
+            vec![if nested.exists() && !flat.exists() {
+                nested
+            } else {
+                flat
+            }]
         }
         GraphicsBackend::D3DMetal { version } => {
             vec![
@@ -98,38 +115,36 @@ fn apply_graphics_env(cmd: &mut Command, prefix_path: &Path) {
             dxvk_version,
             vkd3d_version,
         } => {
-            let mut paths = Vec::new();
-            let dxvk_path = gfx_dir
-                .join(format!("dxvk-{}", dxvk_version))
-                .join("lib")
-                .join("wine")
-                .join("x86_64-unix");
-            if dxvk_path.exists() {
-                paths.push(dxvk_path);
-            }
-            let vkd3d_path = gfx_dir
-                .join(format!("vkd3d-{}", vkd3d_version))
-                .join("lib")
-                .join("wine")
-                .join("x86_64-unix");
-            if vkd3d_path.exists() {
-                paths.push(vkd3d_path);
-            }
-            paths
+            vec![
+                gfx_dir
+                    .join(format!("dxvk-{}", dxvk_version))
+                    .join("lib")
+                    .join("wine")
+                    .join("x86_64-unix"),
+                gfx_dir
+                    .join(format!("vkd3d-{}", vkd3d_version))
+                    .join("lib")
+                    .join("wine")
+                    .join("x86_64-unix"),
+            ]
         }
     };
 
-    // Only set WINEDLLPATH for directories that actually exist
-    let existing: Vec<String> = so_dirs
+    // Always set WINEDLLPATH — even if a directory doesn't exist yet, we still
+    // set the env var so Wine fails informatively instead of silently falling back.
+    let winedllpath = so_dirs
         .into_iter()
-        .filter(|p| p.exists())
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect();
-    if !existing.is_empty() {
-        let winedllpath = existing.join(":");
-        cmd.env("WINEDLLPATH", &winedllpath);
-        info!("[spawn] WINEDLLPATH={}", winedllpath);
-    }
+        .map(|p| {
+            let s = p.to_string_lossy().into_owned();
+            if !p.exists() {
+                warn!("[spawn] WINEDLLPATH dir missing: {}", s);
+            }
+            s
+        })
+        .collect::<Vec<_>>()
+        .join(":");
+    cmd.env("WINEDLLPATH", &winedllpath);
+    info!("[spawn] WINEDLLPATH={}", winedllpath);
 
     // ── WINEDLLOVERRIDES ──────────────────────────────────────────
     // Ensure native DLLs (symlinked during activation) are loaded before
@@ -195,160 +210,5 @@ fn find_gstreamer_dir() -> Option<PathBuf> {
         Some(gst_dir)
     } else {
         None
-    }
-}
-
-pub trait WineProcesses {
-    fn get_wine_version(&self) -> Result<String>;
-    fn start_winecfg(&self) -> Result<()>;
-    fn start_regedit(&self) -> Result<()>;
-    fn start_control_panel(&self) -> Result<()>;
-    fn run_executable(&self, executable_path: &PathBuf) -> Result<()>;
-    fn run_windows_command(&self, command: &str) -> Result<()>;
-}
-
-impl WineProcesses for base::traits::WinePrefix {
-    fn get_wine_version(&self) -> Result<String> {
-        let wine_prefix = self.path.to_string_lossy().to_string();
-        let output = Command::new("wine")
-            .env("WINEPREFIX", &wine_prefix)
-            .arg("--version")
-            .output()
-            .map_err(|e| PrefixError::Process(format!("Failed to get wine version: {}", e)))?;
-        if output.status.success() {
-            let version = String::from_utf8(output.stdout).map_err(|e| {
-                PrefixError::Process(format!("Failed to parse wine version: {}", e))
-            })?;
-            Ok(version.trim().to_string())
-        } else {
-            Err(PrefixError::Process(format!(
-                "Failed to get wine version: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )))
-        }
-    }
-
-    fn start_winecfg(&self) -> Result<()> {
-        let wine_prefix = self.path.to_string_lossy().to_string();
-        Command::new("winecfg")
-            .env("WINEPREFIX", &wine_prefix)
-            .spawn()
-            .map_err(|e| PrefixError::Process(format!("Failed to start winecfg: {}", e)))?;
-        Ok(())
-    }
-
-    fn start_regedit(&self) -> Result<()> {
-        let wine_prefix = self.path.to_string_lossy().to_string();
-        Command::new("wine")
-            .env("WINEPREFIX", &wine_prefix)
-            .arg("regedit")
-            .spawn()
-            .map_err(|e| PrefixError::Process(format!("Failed to start regedit: {}", e)))?;
-        Ok(())
-    }
-
-    fn start_control_panel(&self) -> Result<()> {
-        let wine_prefix = self.path.to_string_lossy().to_string();
-        Command::new("wine")
-            .env("WINEPREFIX", &wine_prefix)
-            .arg("control")
-            .spawn()
-            .map_err(|e| PrefixError::Process(format!("Failed to start control panel: {}", e)))?;
-        Ok(())
-    }
-
-    fn run_executable(&self, executable_path: &PathBuf) -> Result<()> {
-        if !executable_path.exists() {
-            return Err(PrefixError::NotFound(format!(
-                "Executable not found: {}",
-                executable_path.display()
-            )));
-        }
-        let wine_prefix = self.path.to_string_lossy().to_string();
-        Command::new("wine")
-            .env("WINEPREFIX", &wine_prefix)
-            .arg(executable_path)
-            .spawn()
-            .map_err(|e| PrefixError::Process(format!("Failed to run executable: {}", e)))?;
-        Ok(())
-    }
-
-    fn run_windows_command(&self, command: &str) -> Result<()> {
-        let wine_prefix = self.path.to_string_lossy().to_string();
-        Command::new("wine")
-            .env("WINEPREFIX", &wine_prefix)
-            .arg("cmd")
-            .arg("/c")
-            .arg(command)
-            .spawn()
-            .map_err(|e| PrefixError::Process(format!("Failed to run Windows command: {}", e)))?;
-        Ok(())
-    }
-}
-
-impl WineProcesses for crate::Manager {
-    fn get_wine_version(&self) -> Result<String> {
-        let output = Command::new("wine")
-            .arg("--version")
-            .output()
-            .map_err(|e| PrefixError::Process(format!("Failed to get wine version: {}", e)))?;
-        if output.status.success() {
-            let version = String::from_utf8(output.stdout).map_err(|e| {
-                PrefixError::Process(format!("Failed to parse wine version: {}", e))
-            })?;
-            Ok(version.trim().to_string())
-        } else {
-            Err(PrefixError::Process(format!(
-                "Failed to get wine version: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )))
-        }
-    }
-
-    fn start_winecfg(&self) -> Result<()> {
-        Command::new("winecfg")
-            .spawn()
-            .map_err(|e| PrefixError::Process(format!("Failed to start winecfg: {}", e)))?;
-        Ok(())
-    }
-
-    fn start_regedit(&self) -> Result<()> {
-        Command::new("wine")
-            .arg("regedit")
-            .spawn()
-            .map_err(|e| PrefixError::Process(format!("Failed to start regedit: {}", e)))?;
-        Ok(())
-    }
-
-    fn start_control_panel(&self) -> Result<()> {
-        Command::new("wine")
-            .arg("control")
-            .spawn()
-            .map_err(|e| PrefixError::Process(format!("Failed to start control panel: {}", e)))?;
-        Ok(())
-    }
-
-    fn run_executable(&self, executable_path: &PathBuf) -> Result<()> {
-        if !executable_path.exists() {
-            return Err(PrefixError::NotFound(format!(
-                "Executable not found: {}",
-                executable_path.display()
-            )));
-        }
-        Command::new("wine")
-            .arg(executable_path)
-            .spawn()
-            .map_err(|e| PrefixError::Process(format!("Failed to run executable: {}", e)))?;
-        Ok(())
-    }
-
-    fn run_windows_command(&self, command: &str) -> Result<()> {
-        Command::new("wine")
-            .arg("cmd")
-            .arg("/c")
-            .arg(command)
-            .spawn()
-            .map_err(|e| PrefixError::Process(format!("Failed to run Windows command: {}", e)))?;
-        Ok(())
     }
 }

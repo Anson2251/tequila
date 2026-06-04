@@ -209,12 +209,30 @@ pub async fn download_channel_runtime(channel: &Channel, progress: &ProgressFn) 
     download_file(&cask.url, &archive_path, progress).await?;
     verify_sha256(&archive_path, &cask.sha256)?;
     extract_tar(&archive_path, &tmp_dir)?;
-    let _ = find_wine_binary(&tmp_dir)?;
+    let wine_bin = find_wine_binary(&tmp_dir)?;
+    let bundle_dir = bundle_dir_from_wine_bin(&wine_bin);
     let _ = fs::remove_file(&archive_path);
     if final_dir.exists() {
         fs::remove_dir_all(&final_dir)?;
     }
-    fs::rename(&tmp_dir, &final_dir)?;
+    if bundle_dir == tmp_dir {
+        // Classic layout: tmp_dir/bin/wine — just rename
+        fs::rename(&tmp_dir, &final_dir)?;
+    } else {
+        // Nested inside .app bundle: move the actual wine bundle contents to final_dir
+        fs::create_dir_all(&final_dir)?;
+        for entry in fs::read_dir(&bundle_dir)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let src = entry.path();
+            let dst = final_dir.join(&name);
+            if dst.exists() {
+                fs::remove_dir_all(&dst)?;
+            }
+            fs::rename(&src, &dst)?;
+        }
+        let _ = fs::remove_dir_all(&tmp_dir);
+    }
     Ok(final_dir)
 }
 
@@ -419,12 +437,30 @@ pub async fn install_channel_with_phase(
     extract_tar(&archive_path, &tmp_dir)?;
     progress(1, 1, InstallPhase::Extract);
 
-    let _ = find_wine_binary(&tmp_dir)?;
+    let wine_bin = find_wine_binary(&tmp_dir)?;
+    let bundle_dir = bundle_dir_from_wine_bin(&wine_bin);
     let _ = fs::remove_file(&archive_path);
     if final_dir.exists() {
         fs::remove_dir_all(&final_dir)?;
     }
-    fs::rename(&tmp_dir, &final_dir)?;
+    if bundle_dir == tmp_dir {
+        // Classic layout: tmp_dir/bin/wine — just rename
+        fs::rename(&tmp_dir, &final_dir)?;
+    } else {
+        // Nested inside .app bundle: move the actual wine bundle contents to final_dir
+        fs::create_dir_all(&final_dir)?;
+        for entry in fs::read_dir(&bundle_dir)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let src = entry.path();
+            let dst = final_dir.join(&name);
+            if dst.exists() {
+                fs::remove_dir_all(&dst)?;
+            }
+            fs::rename(&src, &dst)?;
+        }
+        let _ = fs::remove_dir_all(&tmp_dir);
+    }
     Ok(final_dir)
 }
 

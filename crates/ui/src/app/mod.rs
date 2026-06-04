@@ -379,7 +379,7 @@ impl SimpleComponent for AppModel {
                 "window, .background, .titlebar, headerbar, .window-frame { border-radius: 0px; }",
             );
             gtk::style_context_add_provider_for_display(
-                &gdk::Display::default().unwrap(),
+                &gtk::gdk::Display::default().unwrap(),
                 &provider,
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
             );
