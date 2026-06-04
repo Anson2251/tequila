@@ -27,3 +27,12 @@
 .app-item.running {
     border-color: @accent_color;
 }
+
+/* macOS lacks a default monospace font that Pango/libadwaita can resolve.
+   Provide explicit fallbacks so text stays properly aligned in code views,
+   registry editor, logs, etc. */
+.monospace,
+textview,
+text {
+    font-family: "SF Mono", "Menlo", "Monaco", monospace;
+}
