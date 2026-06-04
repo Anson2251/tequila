@@ -2,13 +2,12 @@ use log::{error, info};
 use runtime::RuntimeManager;
 use std::path::PathBuf;
 
-use crate::AppService;
+use crate::state;
 
 /// Download a channel-based runtime and install it.
 ///
 /// This is a blocking operation — run it on a background thread.
 pub fn download_channel_runtime_blocking(
-    service: &mut AppService,
     channel: runtime::Channel,
     progress: runtime::download::ProgressFn,
 ) -> std::result::Result<RuntimeManager, String> {
@@ -17,36 +16,37 @@ pub fn download_channel_runtime_blocking(
 
     rt.block_on(async {
         let _ = progress(0, 0); // signal start
-        service
-            .prefix_manager_mut()
-            .download_channel_runtime(channel, progress)
+
+        // Async download OUTSIDE the Manager lock
+        let bundle_dir = runtime::download::download_channel_runtime(&channel, &progress)
+            .await
+            .map_err(|e| e.to_string())?;
+        let cask = runtime::homebrew::fetch_cask(channel.cask_name())
             .await
             .map_err(|e| e.to_string())?;
 
-        // Return the updated runtime manager
-        Ok(service.prefix_manager().runtime_manager().clone())
+        // Lock Manager briefly for registration + save
+        let mut mgr = state::manager().blocking_lock();
+        mgr.register_channel_runtime(channel, cask.version, bundle_dir);
+        Ok(mgr.runtime_manager().clone())
     })
 }
 
 /// Import a runtime from a local directory.
 pub fn import_runtime_from_path(
-    service: &mut AppService,
     source_path: &PathBuf,
     label: &str,
 ) -> std::result::Result<RuntimeManager, String> {
-    let _ = service
-        .prefix_manager_mut()
+    let mut mgr = state::manager().blocking_lock();
+    let _ = mgr
         .import_runtime(source_path, label)
         .map_err(|e| e.to_string())?;
-    service.prefix_manager().save_runtime_state();
-    Ok(service.prefix_manager().runtime_manager().clone())
+    mgr.save_runtime_state();
+    Ok(mgr.runtime_manager().clone())
 }
 
 /// Remove a runtime's directory from disk and unregister it.
-pub fn remove_runtime_full(
-    service: &mut AppService,
-    id: &str,
-) -> std::result::Result<RuntimeManager, String> {
+pub fn remove_runtime_full(id: &str) -> std::result::Result<RuntimeManager, String> {
     if id == "wine-system" {
         return Err("Cannot remove system Wine runtime".to_string());
     }
@@ -60,27 +60,24 @@ pub fn remove_runtime_full(
     }
 
     // Remove from the runtime manager and save
-    service.prefix_manager_mut().remove_runtime(id);
-    service.prefix_manager().save_runtime_state();
+    let mut mgr = state::manager().blocking_lock();
+    mgr.remove_runtime(id);
+    mgr.save_runtime_state();
 
     info!("[service] removed runtime '{}'", id);
-    Ok(service.prefix_manager().runtime_manager().clone())
+    Ok(mgr.runtime_manager().clone())
 }
 
 /// Set the default runtime and persist.
-pub fn set_default_runtime(
-    service: &mut AppService,
-    id: &str,
-) -> std::result::Result<RuntimeManager, String> {
-    service.prefix_manager_mut().set_default_runtime(id);
-    service.prefix_manager().save_runtime_state();
-    Ok(service.prefix_manager().runtime_manager().clone())
+pub fn set_default_runtime(id: &str) -> std::result::Result<RuntimeManager, String> {
+    let mut mgr = state::manager().blocking_lock();
+    mgr.set_default_runtime(id);
+    mgr.save_runtime_state();
+    Ok(mgr.runtime_manager().clone())
 }
 
 /// Ensure the system Wine runtime is detected.
-pub fn ensure_system_runtime(service: &mut AppService) {
-    service
-        .prefix_manager_mut()
-        .runtime_manager_mut()
-        .ensure_system_runtime();
+pub fn ensure_system_runtime() {
+    let mut mgr = state::manager().blocking_lock();
+    mgr.runtime_manager_mut().ensure_system_runtime();
 }

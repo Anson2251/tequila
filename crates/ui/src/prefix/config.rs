@@ -1,15 +1,13 @@
 use crate::registry_editor::{RegistryEditorModel, RegistryEditorMsg};
 use adw::prelude::*;
-use prefix::Manager as PrefixManager;
-use prefix::ProcessTracker;
 use prefix::config::PrefixConfig;
 use prefix::runtime;
 use relm4::{
     Component, ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent,
     adw, gtk,
 };
+use service::AppService;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use tracker;
 
 // ── Model ────────────────────────────────────────────────────────────────
@@ -55,8 +53,6 @@ pub struct PrefixConfigModel {
     pulse_id: Option<gtk::glib::SourceId>,
     #[tracker::do_not_track]
     progress_dialog: Option<gtk::Window>,
-    #[tracker::do_not_track]
-    prefix_manager: PrefixManager,
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────
@@ -125,16 +121,7 @@ fn graphics_index_for_config(
 
 #[relm4::component(pub)]
 impl SimpleComponent for PrefixConfigModel {
-    type Init = (
-        PathBuf,
-        PrefixConfig,
-        Arc<prefix::PrefixStore>,
-        Arc<Mutex<ProcessTracker>>,
-        gtk::Button,
-        prefix::RuntimeManager,
-        gtk::Window,
-        prefix::Manager,
-    );
+    type Init = (PathBuf, PrefixConfig, gtk::Button, gtk::Window);
     type Input = PrefixConfigMsg;
     type Output = PrefixConfigOutput;
     type Widgets = PrefixConfigWidgets;
@@ -345,18 +332,13 @@ impl SimpleComponent for PrefixConfigModel {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let (
-            prefix_path,
-            config,
-            prefix_store,
-            process_tracker,
-            back_btn,
-            runtime_manager,
-            parent_window,
-            prefix_manager,
-        ) = init;
+        let (prefix_path, config, back_btn, parent_window) = init;
 
         // ── Build wine runtime dropdown ──
+        let runtime_manager = AppService::global()
+            .prefix_manager()
+            .runtime_manager()
+            .clone();
         let mut runtime_items: Vec<String> = Vec::new();
         let mut runtime_ids: Vec<String> = Vec::new();
         let mut selected_wine_runtime: u32 = 0;
@@ -375,15 +357,16 @@ impl SimpleComponent for PrefixConfigModel {
         let runtime_items_str: Vec<&str> = runtime_items.iter().map(|s| s.as_str()).collect();
         let wine_runtime_items = gtk::StringList::new(&runtime_items_str);
 
-        // ── Registry editor ──
+        // ── Registry editor (get dependencies from global) ──
+        let prefix_store = AppService::global().prefix_store().clone();
+        let process_tracker = AppService::global().process_tracker().clone();
         let registry_ctrl = RegistryEditorModel::builder()
             .launch((
                 prefix_path.clone(),
                 config.clone(),
-                Arc::clone(&prefix_store),
-                Arc::clone(&process_tracker),
+                prefix_store,
+                process_tracker,
                 parent_window.clone(),
-                prefix_manager.clone(),
             ))
             .forward(sender.input_sender(), |output| {
                 PrefixConfigMsg::RegistryEditor(output)
@@ -438,7 +421,6 @@ impl SimpleComponent for PrefixConfigModel {
             progress_bar: gtk::ProgressBar::new(),
             pulse_id: None,
             progress_dialog: None,
-            prefix_manager,
             tracker: 0,
         };
 
@@ -541,6 +523,9 @@ impl SimpleComponent for PrefixConfigModel {
                 self.set_editing(false);
                 self.description_text.set_editable(false);
                 self.sync_selected_graphics();
+                // Refresh runtime IDs so the display name reflects newly
+                // downloaded runtimes (the cached list may be stale).
+                self.refresh_runtime_cache();
                 self.sync_wine_runtime_display();
                 self.sync_wine_runtime_selection();
             }
@@ -556,6 +541,10 @@ impl SimpleComponent for PrefixConfigModel {
             PrefixConfigMsg::SetPrefixIndex(index) => self.set_prefix_index(index),
             PrefixConfigMsg::SetWineVersionDisplay(d) => self.set_wine_runtime_display(d),
             PrefixConfigMsg::SelectWineVersion => {
+                // Refresh runtime list from global state (user may have
+                // downloaded new runtimes since this model was initialised).
+                self.refresh_runtime_cache();
+
                 let dropdown = gtk::DropDown::builder()
                     .model(&self.wine_runtime_items)
                     .selected(self.selected_wine_runtime)
@@ -637,8 +626,8 @@ impl SimpleComponent for PrefixConfigModel {
                 self.set_selected_wine_runtime(idx);
 
                 // Save config via manager
-                if let Err(e) = self
-                    .prefix_manager
+                if let Err(e) = AppService::global()
+                    .prefix_manager()
                     .update_config(&self.prefix_path, &self.config)
                 {
                     log::error!("[prefix] failed to save config: {}", e);
@@ -680,8 +669,6 @@ impl SimpleComponent for PrefixConfigModel {
                     );
                 }
             }
-            PrefixConfigMsg::SetPrefixIndex(index) => self.set_prefix_index(index),
-            PrefixConfigMsg::SetWineVersionDisplay(d) => self.set_wine_runtime_display(d),
             PrefixConfigMsg::GraphicsBackendChanged(idx) => {
                 // Only update in-memory config — actual save happens on SaveConfig.
                 let backend = self
@@ -726,8 +713,8 @@ impl PrefixConfigModel {
         };
         self.set_editing(false);
         self.description_text.set_editable(false);
-        if let Err(e) = self
-            .prefix_manager
+        if let Err(e) = AppService::global()
+            .prefix_manager()
             .update_config(&self.prefix_path, &self.config)
         {
             log::error!("[prefix] failed to save config: {}", e);
@@ -740,6 +727,32 @@ impl PrefixConfigModel {
         // set_selected with same value is a no-op in GTK4,
         // so no infinite loop when ConfigUpdated comes back from our own change.
         self.set_selected_graphics(idx);
+    }
+
+    /// Re-read the runtime list from the global singleton and update
+    /// the cached dropdown model + selection index.
+    ///
+    /// Must be called before showing the dropdown or after a
+    /// `ConfigUpdated` to keep display names in sync with newly
+    /// downloaded runtimes.
+    fn refresh_runtime_cache(&mut self) {
+        let svc = AppService::global();
+        let pm = svc.prefix_manager();
+        let rm = pm.runtime_manager();
+        self.wine_runtime_ids = rm.runtimes.iter().map(|rt| rt.id.clone()).collect();
+        let fresh_items: Vec<String> = rm
+            .runtimes
+            .iter()
+            .map(|rt| format!("{} ({})", rt.name, rt.wine_version))
+            .collect();
+        self.selected_wine_runtime = self
+            .config
+            .wine_version
+            .as_ref()
+            .and_then(|id| self.wine_runtime_ids.iter().position(|rid| rid == id))
+            .unwrap_or(0) as u32;
+        let str_refs: Vec<&str> = fresh_items.iter().map(|s| s.as_str()).collect();
+        self.wine_runtime_items = gtk::StringList::new(&str_refs);
     }
 
     fn sync_wine_runtime_display(&mut self) {

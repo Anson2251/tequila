@@ -128,7 +128,8 @@ pub async fn switch_graphics_backend(
     if let Some(old_gfx) = old_graphics {
         info!("[service] deactivating old graphics backend");
         if let Err(e) = service
-            .prefix_manager()
+            .prefix_manager_async()
+            .await
             .deactivate_graphics_backend(prefix_path, Some(old_gfx.clone()))
             .await
         {
@@ -147,7 +148,8 @@ pub async fn switch_graphics_backend(
                     backend.display_name()
                 );
                 if let Err(e) = service
-                    .prefix_manager()
+                    .prefix_manager_async()
+                    .await
                     .activate_graphics_backend(&backend, prefix_path)
                     .await
                 {

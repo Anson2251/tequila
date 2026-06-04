@@ -11,9 +11,9 @@ pub fn handle_open_in_file_manager(prefixes: &[base::WinePrefix], index: usize) 
 }
 
 /// Open terminal for prefix
-pub fn handle_open_in_terminal(service: &AppService, prefixes: &[base::WinePrefix], index: usize) {
+pub fn handle_open_in_terminal(prefixes: &[base::WinePrefix], index: usize) {
     if let Some(prefix) = prefixes.get(index) {
-        let svc = service.clone();
+        let svc = AppService::global();
         let pp = prefix.path.clone();
         std::thread::spawn(move || {
             if let Err(e) = service::terminal::open_terminal_for_prefix(&svc, &pp) {
@@ -24,15 +24,14 @@ pub fn handle_open_in_terminal(service: &AppService, prefixes: &[base::WinePrefi
 }
 
 /// Scan for applications and update config in-place
-pub fn handle_scan_for_applications(
-    service: &AppService,
-    prefixes: &mut [base::WinePrefix],
-    index: usize,
-) {
+pub fn handle_scan_for_applications(prefixes: &mut [base::WinePrefix], index: usize) {
     if index < prefixes.len() {
         let prefix_path = prefixes[index].path.clone();
-        let result =
-            service::sync::scan_prefix_apps(service, &prefix_path, prefixes[index].config.clone());
+        let result = service::sync::scan_prefix_apps(
+            &AppService::global(),
+            &prefix_path,
+            prefixes[index].config.clone(),
+        );
         prefixes[index].config = result.config;
 
         if let Some(err) = result.error {
@@ -43,12 +42,11 @@ pub fn handle_scan_for_applications(
 
 /// Sync all prefixes (background thread)
 pub fn handle_sync_prefixes(
-    service: AppService,
     sender: relm4::ComponentSender<crate::app::AppModel>,
     progress_sender: relm4::ComponentSender<crate::app::AppModel>,
 ) {
     std::thread::spawn(move || {
-        let result = service::sync::sync_all_prefixes(&service);
+        let result = service::sync::sync_all_prefixes(&AppService::global());
         let total = result.prefixes.len();
         for i in 0..total {
             let _ = progress_sender.input(AppMsg::SyncProgress(i + 1, total));
@@ -58,19 +56,15 @@ pub fn handle_sync_prefixes(
 }
 
 /// Refresh prefix list (background thread)
-pub fn handle_refresh_prefixes(
-    service: AppService,
-    sender: relm4::ComponentSender<crate::app::AppModel>,
-) {
+pub fn handle_refresh_prefixes(sender: relm4::ComponentSender<crate::app::AppModel>) {
     std::thread::spawn(move || {
-        let fresh = service.scan_prefixes();
+        let fresh = AppService::global().scan_prefixes();
         let _ = sender.input(AppMsg::ReloadPrefixes(fresh));
     });
 }
 
 /// Handle config update with optional graphics backend switching
 pub fn handle_config_updated(
-    service: &AppService,
     index: usize,
     config: base::PrefixConfig,
     prefixes: &mut Vec<base::WinePrefix>,
@@ -96,7 +90,6 @@ pub fn handle_config_updated(
         prefixes[actual_index].config = config;
 
         Some(ConfigUpdateAction::SwitchGraphics {
-            service: service.clone(),
             prefix_path,
             old_graphics,
             new_graphics,
@@ -104,7 +97,7 @@ pub fn handle_config_updated(
         })
     } else {
         // Normal config save
-        if let Err(e) = service.update_config(&prefix_path, &config) {
+        if let Err(e) = AppService::global().update_config(&prefix_path, &config) {
             error!("[app] failed to update config: {}", e);
         } else {
             prefixes[actual_index].config = config;
@@ -115,7 +108,6 @@ pub fn handle_config_updated(
 
 pub enum ConfigUpdateAction {
     SwitchGraphics {
-        service: AppService,
         prefix_path: PathBuf,
         old_graphics: Option<base::GraphicsConfig>,
         new_graphics: Option<base::GraphicsConfig>,

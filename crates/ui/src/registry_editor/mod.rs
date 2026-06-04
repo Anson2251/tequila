@@ -11,6 +11,7 @@ use relm4::{
     Component, ComponentController, ComponentParts, ComponentSender, Controller, RelmWidgetExt,
     SimpleComponent, adw, gtk,
 };
+use service::AppService;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -67,8 +68,6 @@ pub struct RegistryEditorModel {
     regedit_icon: gtk::Image,
     #[tracker::do_not_track]
     regedit_spinner: gtk::Spinner,
-    #[tracker::do_not_track]
-    prefix_manager: prefix::Manager,
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────
@@ -104,7 +103,6 @@ impl SimpleComponent for RegistryEditorModel {
         Arc<prefix::PrefixStore>,
         Arc<std::sync::Mutex<ProcessTracker>>,
         gtk::Window,
-        prefix::Manager,
     );
     type Input = RegistryEditorMsg;
     type Output = RegistryEditorMsg;
@@ -230,8 +228,7 @@ impl SimpleComponent for RegistryEditorModel {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let (prefix_path, config, prefix_store, process_tracker, parent_window, prefix_manager) =
-            init;
+        let (prefix_path, config, prefix_store, process_tracker, parent_window) = init;
 
         // ── Tab controllers ──
         let general_ctrl = GeneralTabModel::builder()
@@ -304,7 +301,6 @@ impl SimpleComponent for RegistryEditorModel {
             regedit_btn: gtk::Button::new(),
             regedit_icon: regedit_icon.clone(),
             regedit_spinner: regedit_spinner.clone(),
-            prefix_manager,
             tracker: 0,
         };
 
@@ -476,7 +472,10 @@ impl SimpleComponent for RegistryEditorModel {
                     log::info!("[regedit] winecfg already running");
                     return;
                 }
-                match self.prefix_manager.run_winecfg(&pp) {
+                // Read from the global singleton so newly downloaded runtimes are visible.
+                let svc = AppService::global();
+                let pm = svc.prefix_manager();
+                match pm.run_winecfg(&pp) {
                     Ok(child) => {
                         log::info!("[regedit] launched winecfg");
                         self.process_tracker
@@ -511,7 +510,10 @@ impl SimpleComponent for RegistryEditorModel {
                     log::info!("[regedit] regedit already running");
                     return;
                 }
-                match self.prefix_manager.run_regedit(&pp) {
+                // Read from the global singleton so newly downloaded runtimes are visible.
+                let svc = AppService::global();
+                let pm = svc.prefix_manager();
+                match pm.run_regedit(&pp) {
                     Ok(child) => {
                         log::info!("[regedit] launched regedit");
                         self.process_tracker

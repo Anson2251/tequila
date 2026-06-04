@@ -1,6 +1,6 @@
 use adw::prelude::*;
 use prefix::{
-    GraphicsBackend, Manager as PrefixManager,
+    GraphicsBackend,
     runtime::{RuntimeManager, download, graphics as prefix_graphics},
 };
 use relm4::prelude::*;
@@ -16,8 +16,6 @@ mod runtime;
 
 #[tracker::track]
 pub struct SettingsWindow {
-    pub prefix_manager: PrefixManager,
-
     // Page subtitle data
     runtime_subtitle: String,
     graphics_subtitle: String,
@@ -213,30 +211,36 @@ impl AsyncComponent for SettingsWindow {
     }
 
     async fn init(
-        service: Self::Init,
+        _service: Self::Init,
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
-        let prefix_manager = service.prefix_manager().clone();
-
         // ── Build header bar (must exist before view_output! for the titlebar reference) ──
         let header_bar = gtk::HeaderBar::new();
         #[cfg(target_os = "macos")]
         header_bar.set_property("use-native-controls", true);
 
         // ── Compute model data (before view_output! so #[watch] can reference it) ──
-        let rm = prefix_manager.runtime_manager();
-        let runtime_subtitle = runtime_subtitle(rm);
+        // NOTE: scope each `prefix_manager()` lock acquisition so we never
+        // hold two guards on the same Mutex at once (would deadlock).
+        let runtime_subtitle = {
+            let svc = AppService::global();
+            let pm = svc.prefix_manager();
+            runtime_subtitle(pm.runtime_manager())
+        };
         let graphics_subtitle_str = graphics_subtitle();
 
         let data_dir = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("tequila");
-        let prefixes_dir = prefix_manager.wine_dir().clone();
+        let prefixes_dir = {
+            let svc = AppService::global();
+            svc.prefix_manager().wine_dir().clone()
+        };
 
         // Create child subpage controllers (independent of widgets)
         let runtime_ctrl = runtime::RuntimeSettings::builder()
-            .launch((service.clone(), root.clone()))
+            .launch(root.clone())
             .forward(sender.input_sender(), |msg| match msg {
                 runtime::RuntimeSettingsOutput::RuntimesUpdated(rm) => {
                     SettingsMsg::RuntimesUpdated(rm)
@@ -287,7 +291,6 @@ impl AsyncComponent for SettingsWindow {
         // Placeholder nav — will be replaced with the real one from view! after view_output!()
         let placeholder_nav = adw::NavigationView::new();
         let mut model = SettingsWindow {
-            prefix_manager,
             runtime_subtitle,
             graphics_subtitle: graphics_subtitle_str,
             gst_ctrl,
@@ -358,10 +361,12 @@ impl AsyncComponent for SettingsWindow {
 
             // ── Forwarded from RuntimeSettings ──
             SettingsMsg::RuntimesUpdated(rm) => {
-                *self.prefix_manager.runtime_manager_mut() = rm;
-                self.runtime_subtitle = runtime_subtitle(self.prefix_manager.runtime_manager());
+                let svc = AppService::global();
+                *svc.prefix_manager_mut().runtime_manager_mut() = rm;
+                let pm = svc.prefix_manager();
+                self.runtime_subtitle = runtime_subtitle(pm.runtime_manager());
                 let _ = sender.output(SettingsOutput::RuntimesUpdated(
-                    self.prefix_manager.runtime_manager().clone(),
+                    pm.runtime_manager().clone(),
                 ));
             }
 

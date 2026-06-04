@@ -1,13 +1,11 @@
 use adw::prelude::*;
-use prefix::{
-    Manager as PrefixManager,
-    runtime::{Channel, RuntimeManager, RuntimeSource},
-};
+use prefix::runtime::{Channel, RuntimeManager, RuntimeSource};
 use relm4::{
     RelmWidgetExt, adw,
     component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
     gtk,
 };
+use service::AppService;
 use std::path::PathBuf;
 use tracker;
 
@@ -15,8 +13,6 @@ use tracker;
 pub struct RuntimeManagerModel {
     downloading: bool,
     download_progress: f64,
-    #[tracker::do_not_track]
-    prefix_manager: PrefixManager,
     #[tracker::do_not_track]
     list_box: gtk::ListBox,
     #[tracker::do_not_track]
@@ -61,7 +57,7 @@ pub enum RuntimeManagerOutput {
 
 #[relm4::component(pub, async)]
 impl AsyncComponent for RuntimeManagerModel {
-    type Init = PrefixManager;
+    type Init = ();
     type Input = RuntimeManagerMsg;
     type Output = RuntimeManagerOutput;
     type CommandOutput = ();
@@ -122,11 +118,10 @@ impl AsyncComponent for RuntimeManagerModel {
     }
 
     async fn init(
-        init: Self::Init,
+        _init: Self::Init,
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
-        let prefix_manager = init;
         let widgets = view_output!();
 
         // Title widget
@@ -172,7 +167,6 @@ impl AsyncComponent for RuntimeManagerModel {
         let model = RuntimeManagerModel {
             downloading: false,
             download_progress: 0.0,
-            prefix_manager,
             list_box: widgets.list_box.clone(),
             add_popover,
             channel_combo,
@@ -185,12 +179,12 @@ impl AsyncComponent for RuntimeManagerModel {
             tracker: 0,
         };
 
-        populate_runtime_list(
-            &model.list_box,
-            &model.prefix_manager.runtime_manager(),
-            sender.clone(),
-        );
-        update_count_label(&model.count_label, &model.prefix_manager.runtime_manager());
+        let rm = AppService::global()
+            .prefix_manager()
+            .runtime_manager()
+            .clone();
+        populate_runtime_list(&model.list_box, &rm, sender.clone());
+        update_count_label(&model.count_label, &rm);
 
         AsyncComponentParts { model, widgets }
     }
@@ -204,24 +198,33 @@ impl AsyncComponent for RuntimeManagerModel {
         self.reset();
         match msg {
             RuntimeManagerMsg::Refresh => {
-                let rm = self.prefix_manager.runtime_manager().clone();
+                let rm = AppService::global()
+                    .prefix_manager()
+                    .runtime_manager()
+                    .clone();
                 populate_runtime_list(&self.list_box, &rm, sender.clone());
                 update_count_label(&self.count_label, &rm);
             }
             RuntimeManagerMsg::SetDefault(id) => {
-                self.prefix_manager.set_default_runtime(&id);
-                self.prefix_manager.save_runtime_state();
-                let rm = self.prefix_manager.runtime_manager().clone();
+                let svc = AppService::global();
+                let mut pm = svc.prefix_manager_mut();
+                pm.set_default_runtime(&id);
+                pm.save_runtime_state();
+                let rm = pm.runtime_manager().clone();
+                drop(pm);
                 populate_runtime_list(&self.list_box, &rm, sender.clone());
-                emit_updated(&self.prefix_manager, &sender);
+                emit_updated(&rm, &sender);
             }
             RuntimeManagerMsg::RemoveRuntime(id) => {
                 if id != "wine-system" {
-                    self.prefix_manager.remove_runtime(&id);
-                    let rm = self.prefix_manager.runtime_manager().clone();
+                    let svc = AppService::global();
+                    let mut pm = svc.prefix_manager_mut();
+                    pm.remove_runtime(&id);
+                    let rm = pm.runtime_manager().clone();
+                    drop(pm);
                     populate_runtime_list(&self.list_box, &rm, sender.clone());
                     update_count_label(&self.count_label, &rm);
-                    emit_updated(&self.prefix_manager, &sender);
+                    emit_updated(&rm, &sender);
                 }
             }
             RuntimeManagerMsg::ShowAddMenu => {
@@ -235,7 +238,7 @@ impl AsyncComponent for RuntimeManagerModel {
                 self.progress_label.set_label("Starting download...");
                 self.progress_bar.set_fraction(0.0);
 
-                let mut pm = self.prefix_manager.clone();
+                let mut pm = AppService::global().prefix_manager().clone();
                 let s = sender.clone();
 
                 gtk::glib::spawn_future_local(async move {
@@ -271,9 +274,11 @@ impl AsyncComponent for RuntimeManagerModel {
                 }
             }
             RuntimeManagerMsg::DownloadComplete(updated_rm) => {
-                let rm_ref = self.prefix_manager.runtime_manager_mut();
+                let svc = AppService::global();
+                let mut pm = svc.prefix_manager_mut();
+                let rm_ref = pm.runtime_manager_mut();
                 let _old = std::mem::replace(rm_ref, updated_rm);
-                self.prefix_manager.save_runtime_state();
+                pm.save_runtime_state();
 
                 self.set_downloading(false);
                 self.set_download_progress(0.0);
@@ -283,10 +288,13 @@ impl AsyncComponent for RuntimeManagerModel {
                 self.download_stack.set_visible_child_name("menu");
                 self.add_popover.popdown();
 
-                let rm = self.prefix_manager.runtime_manager().clone();
+                let rm = AppService::global()
+                    .prefix_manager()
+                    .runtime_manager()
+                    .clone();
                 populate_runtime_list(&self.list_box, &rm, sender.clone());
                 update_count_label(&self.count_label, &rm);
-                emit_updated(&self.prefix_manager, &sender);
+                emit_updated(&rm, &sender);
             }
             RuntimeManagerMsg::DownloadFailed(err) => {
                 self.set_downloading(false);
@@ -329,13 +337,16 @@ impl AsyncComponent for RuntimeManagerModel {
                     .unwrap_or("imported")
                     .to_string();
 
-                match self.prefix_manager.import_runtime(&path, &dir_name) {
+                let svc = AppService::global();
+                let mut pm_import = svc.prefix_manager_mut();
+                match pm_import.import_runtime(&path, &dir_name) {
                     Ok(_runtime) => {
-                        self.prefix_manager.save_runtime_state();
-                        let rm = self.prefix_manager.runtime_manager().clone();
+                        pm_import.save_runtime_state();
+                        let rm = pm_import.runtime_manager().clone();
+                        drop(pm_import);
                         populate_runtime_list(&self.list_box, &rm, sender.clone());
                         update_count_label(&self.count_label, &rm);
-                        emit_updated(&self.prefix_manager, &sender);
+                        emit_updated(&rm, &sender);
                     }
                     Err(e) => {
                         log::error!("[runtime] import failed: {}", e);
@@ -705,8 +716,6 @@ fn update_count_label(label: &gtk::Label, rm: &RuntimeManager) {
     ));
 }
 
-fn emit_updated(pm: &PrefixManager, sender: &AsyncComponentSender<RuntimeManagerModel>) {
-    let _ = sender.output(RuntimeManagerOutput::RuntimesUpdated(
-        pm.runtime_manager().clone(),
-    ));
+fn emit_updated(rm: &RuntimeManager, sender: &AsyncComponentSender<RuntimeManagerModel>) {
+    let _ = sender.output(RuntimeManagerOutput::RuntimesUpdated(rm.clone()));
 }

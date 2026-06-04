@@ -1,12 +1,11 @@
 use adw::prelude::*;
-use prefix::Manager as PrefixManager;
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
+use service::AppService;
 use std::path::PathBuf;
 
 use crate::AppMsg;
 
 pub struct ImportDialogModel {
-    prefix_manager: PrefixManager,
     archive_path: PathBuf,
     prefix_name: String,
     runtime_combo: gtk::DropDown,
@@ -27,7 +26,7 @@ pub enum ImportDialogMsg {
 
 #[relm4::component(pub)]
 impl SimpleComponent for ImportDialogModel {
-    type Init = (PrefixManager, PathBuf, String, gtk::ApplicationWindow);
+    type Init = (PathBuf, String, gtk::ApplicationWindow);
     type Input = ImportDialogMsg;
     type Output = AppMsg;
 
@@ -81,12 +80,14 @@ impl SimpleComponent for ImportDialogModel {
     }
 
     fn init(
-        (prefix_manager, archive_path, prefix_name, parent): Self::Init,
+        (archive_path, prefix_name, parent): Self::Init,
         _root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         // Build runtime dropdown
-        let rm = prefix_manager.runtime_manager();
+        let svc = AppService::global();
+        let pm = svc.prefix_manager();
+        let rm = pm.runtime_manager();
         let items: Vec<String> = rm
             .runtimes
             .iter()
@@ -126,7 +127,6 @@ impl SimpleComponent for ImportDialogModel {
         widgets.dialog.present();
 
         let model = ImportDialogModel {
-            prefix_manager,
             archive_path,
             prefix_name,
             runtime_combo,
@@ -149,7 +149,7 @@ impl SimpleComponent for ImportDialogModel {
                 let runtime_id = self.runtime_ids.get(idx).cloned().unwrap_or_default();
 
                 let pp = self.archive_path.clone();
-                let pm = self.prefix_manager.clone();
+                let pm = AppService::global().prefix_manager().clone();
 
                 // Disable + show progress
                 self.import_btn.set_sensitive(false);

@@ -23,13 +23,12 @@ use crate::settings::SettingsWindow;
 use handlers::ConfigUpdateAction;
 use menu::setup_menu_bar;
 use prefix::runtime::RuntimeManager;
-use prefix::{Manager as PrefixManager, ProcessTracker, WinePrefix};
+use prefix::{ProcessTracker, WinePrefix};
 use service::AppService;
 
 #[tracker::track]
 pub struct AppModel {
     pub prefixes: Vec<WinePrefix>,
-    pub prefix_manager: PrefixManager,
     #[tracker::do_not_track]
     pub service: AppService,
     pub selected_prefix: Option<usize>,
@@ -47,8 +46,6 @@ pub struct AppModel {
     pub flap: adw::OverlaySplitView,
     #[tracker::do_not_track]
     pub switcher: adw::ViewSwitcher,
-    #[tracker::do_not_track]
-    pub prefix_store: Arc<prefix::PrefixStore>,
     pub syncing: bool,
     pub sidebar_visible: bool,
     #[tracker::do_not_track]
@@ -213,13 +210,13 @@ impl SimpleComponent for AppModel {
         let prefix_store =
             Arc::new(prefix::PrefixStore::open(&state_path).expect("Failed to open state store"));
 
-        let prefix_manager = PrefixManager::new(wine_dir.clone(), Arc::clone(&icon_cache));
-
-        let service = AppService::from_manager(
-            prefix_manager.clone(),
-            Arc::clone(&prefix_store),
-            Arc::clone(&process_tracker),
+        AppService::init_global(
+            wine_dir.clone(),
+            icon_cache.clone(),
+            prefix_store.clone(),
+            process_tracker.clone(),
         );
+        let service = AppService::global();
 
         // Load prefixes from filesystem + JSON config files (fast, user-editable)
         let prefixes = service.scan_prefixes();
@@ -227,7 +224,7 @@ impl SimpleComponent for AppModel {
         let needs_sync = !prefixes.is_empty()
             && prefixes
                 .iter()
-                .all(|p| !prefix_store.has_scanned_prefix(&p.path.to_string_lossy()));
+                .all(|p| !service.has_scanned_prefix(&p.path.to_string_lossy()));
         info!("[app] loaded {} prefixes", prefixes.len());
 
         let prefix_list = PrefixListModel::builder()
@@ -255,12 +252,8 @@ impl SimpleComponent for AppModel {
             .launch((
                 PathBuf::new(),
                 prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()),
-                Arc::clone(&prefix_store),
-                Arc::clone(&process_tracker),
                 back_btn,
-                prefix_manager.runtime_manager().clone(),
                 root.clone().upcast::<gtk::Window>(),
-                prefix_manager.clone(),
             ))
             .forward(sender.input_sender(), |msg| match msg {
                 crate::prefix::config::PrefixConfigOutput::ConfigUpdated(config) => {
@@ -272,10 +265,6 @@ impl SimpleComponent for AppModel {
             .launch((
                 PathBuf::new(),
                 prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()),
-                prefix_manager.clone(),
-                Arc::clone(&icon_cache),
-                Arc::clone(&prefix_store),
-                Arc::clone(&process_tracker),
                 root.clone().upcast::<gtk::Window>(),
             ))
             .forward(sender.input_sender(), |msg| match msg {
@@ -285,12 +274,11 @@ impl SimpleComponent for AppModel {
                 _ => AppMsg::RefreshPrefixes,
             });
 
-        let settings = SettingsWindow::builder().launch(service.clone()).forward(
-            sender.input_sender(),
-            |msg| match msg {
+        let settings = SettingsWindow::builder()
+            .launch(AppService::global())
+            .forward(sender.input_sender(), |msg| match msg {
                 crate::settings::SettingsOutput::RuntimesUpdated(rm) => AppMsg::RuntimesUpdated(rm),
-            },
-        );
+            });
 
         let prefix_list_widget = prefix_list.widget().clone().upcast::<gtk::Widget>();
 
@@ -420,7 +408,6 @@ impl SimpleComponent for AppModel {
 
         let model = AppModel {
             prefixes,
-            prefix_manager,
             service,
             selected_prefix: None,
             prefix_list,
@@ -435,7 +422,6 @@ impl SimpleComponent for AppModel {
             content_box,
             flap,
             switcher,
-            prefix_store,
             syncing: false,
             sidebar_visible: has_prefixes,
             main_window: root.clone(),
@@ -483,7 +469,7 @@ impl SimpleComponent for AppModel {
         match msg {
             AppMsg::ShowCreatePrefixDialog => {
                 let dialog = crate::prefix::create_dialog::CreatePrefixDialog::builder()
-                    .launch((self.prefix_manager.clone(), self.main_window.clone()))
+                    .launch((self.main_window.clone(),))
                     .forward(sender.input_sender(), |msg| msg);
                 self.create_prefix_dialog = Some(dialog);
             }
@@ -566,27 +552,22 @@ impl SimpleComponent for AppModel {
                 let prefix_name = self.prefixes[index].name.clone();
 
                 let dialog = crate::prefix::export_dialog::ExportDialogModel::builder()
-                    .launch((
-                        self.prefix_manager.clone(),
-                        prefix_path,
-                        prefix_name,
-                        self.main_window.clone(),
-                    ))
+                    .launch((prefix_path, prefix_name, self.main_window.clone()))
                     .forward(sender.input_sender(), |msg| msg);
                 self.export_dialog = Some(dialog);
             }
             AppMsg::ImportPrefix => {
                 let parent: gtk::Window = self.main_window.clone().upcast();
-                let pm = self.prefix_manager.clone();
                 let s = sender.clone();
 
                 let exts = [&format!("zst.{}", prefix::TQL_EXTENSION)[..]];
                 crate::dialogs::pick_file(&parent, "Import Prefix", &exts, move |path| {
                     if let Some(path) = path {
                         let p = PathBuf::from(&path);
-                        let pm = pm.clone();
                         let s = s.clone();
                         std::thread::spawn(move || {
+                            let svc = AppService::global();
+                            let pm = svc.prefix_manager();
                             let (name, archive_wine) = match pm.inspect_archive(&p) {
                                 Ok(v) => v,
                                 Err(e) => {
@@ -619,12 +600,7 @@ impl SimpleComponent for AppModel {
             }
             AppMsg::ShowImportDialog { name, path, .. } => {
                 let dialog = crate::prefix::import_dialog::ImportDialogModel::builder()
-                    .launch((
-                        self.prefix_manager.clone(),
-                        path,
-                        name,
-                        self.main_window.clone(),
-                    ))
+                    .launch((path, name, self.main_window.clone()))
                     .forward(sender.input_sender(), |msg| msg);
                 self.import_dialog = Some(dialog);
             }
@@ -632,10 +608,10 @@ impl SimpleComponent for AppModel {
                 handlers::handle_open_in_file_manager(&self.prefixes, index);
             }
             AppMsg::OpenInTerminal(index) => {
-                handlers::handle_open_in_terminal(&self.service, &self.prefixes, index);
+                handlers::handle_open_in_terminal(&self.prefixes, index);
             }
             AppMsg::RefreshPrefixes => {
-                handlers::handle_refresh_prefixes(self.service.clone(), sender.clone());
+                handlers::handle_refresh_prefixes(sender.clone());
             }
             AppMsg::SelectPrefix(index) => {
                 if index < self.prefixes.len() {
@@ -698,7 +674,6 @@ impl SimpleComponent for AppModel {
                 });
 
                 if let Some(action) = handlers::handle_config_updated(
-                    &self.service,
                     index,
                     config.clone(),
                     &mut self.prefixes,
@@ -712,7 +687,6 @@ impl SimpleComponent for AppModel {
 
                     match action {
                         ConfigUpdateAction::SwitchGraphics {
-                            service,
                             prefix_path,
                             old_graphics,
                             new_graphics,
@@ -736,7 +710,7 @@ impl SimpleComponent for AppModel {
                             let s = sender.clone();
                             glib::MainContext::default().spawn_local(async move {
                                 if let Err(e) = service::sync::switch_graphics_backend(
-                                    &service,
+                                    &AppService::global(),
                                     &prefix_path,
                                     &old_graphics,
                                     &new_graphics,
@@ -767,13 +741,16 @@ impl SimpleComponent for AppModel {
                         let old_ver = old_wine_version.as_deref();
                         let new_ver = config.wine_version.as_deref();
                         if old_ver != new_ver && old_ver.is_some() && new_ver.is_some() {
-                            let svc = self.service.clone();
                             let pp = self.prefixes[actual_index].path.clone();
                             let cfg = config.clone();
                             let s = sender.clone();
                             let prefix_index = actual_index;
                             std::thread::spawn(move || {
-                                let result = service::launch::reinitialize_prefix(&svc, &pp, &cfg);
+                                let result = service::launch::reinitialize_prefix(
+                                    &AppService::global(),
+                                    &pp,
+                                    &cfg,
+                                );
                                 let _ = s.input(AppMsg::ReinitComplete(prefix_index, result));
                             });
                         }
@@ -788,7 +765,7 @@ impl SimpleComponent for AppModel {
                     ));
             }
             AppMsg::ScanForApplications(index) => {
-                handlers::handle_scan_for_applications(&self.service, &mut self.prefixes, index);
+                handlers::handle_scan_for_applications(&mut self.prefixes, index);
             }
             AppMsg::SyncComplete(fresh) => {
                 self.set_syncing(false);
@@ -829,11 +806,7 @@ impl SimpleComponent for AppModel {
                     self.sync_overlay.set_visible(true);
                     self.sync_progress_bar.set_fraction(0.0);
                     self.sync_progress_label.set_label("Scanning...");
-                    handlers::handle_sync_prefixes(
-                        self.service.clone(),
-                        sender.clone(),
-                        sender.clone(),
-                    );
+                    handlers::handle_sync_prefixes(sender.clone(), sender.clone());
                 }
             }
             AppMsg::SyncProgress(completed, total) => {
@@ -861,9 +834,11 @@ impl SimpleComponent for AppModel {
             }
             AppMsg::RuntimesUpdated(rm) => {
                 // Sync the updated RuntimeManager into our PrefixManager
-                let pm_rm = self.prefix_manager.runtime_manager_mut();
+                let svc = AppService::global();
+                let mut pm = svc.prefix_manager_mut();
+                let pm_rm = pm.runtime_manager_mut();
                 let _old = std::mem::replace(pm_rm, rm);
-                self.prefix_manager.save_runtime_state();
+                pm.save_runtime_state();
             }
         }
 

@@ -1,12 +1,11 @@
 use adw::prelude::*;
-use prefix::Manager as PrefixManager;
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
+use service::AppService;
 use std::path::PathBuf;
 
 use crate::AppMsg;
 
 pub struct ExportDialogModel {
-    prefix_manager: PrefixManager,
     prefix_path: PathBuf,
     prefix_name: String,
     dest_entry: gtk::Entry,
@@ -36,7 +35,7 @@ type ExportProgress = (u64, u64, Option<std::result::Result<PathBuf, String>>);
 
 #[relm4::component(pub)]
 impl SimpleComponent for ExportDialogModel {
-    type Init = (PrefixManager, PathBuf, String, gtk::ApplicationWindow);
+    type Init = (PathBuf, String, gtk::ApplicationWindow);
     type Input = ExportDialogMsg;
     type Output = AppMsg;
 
@@ -143,7 +142,7 @@ impl SimpleComponent for ExportDialogModel {
     }
 
     fn init(
-        (prefix_manager, prefix_path, prefix_name, parent): Self::Init,
+        (prefix_path, prefix_name, parent): Self::Init,
         _root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
@@ -182,7 +181,6 @@ impl SimpleComponent for ExportDialogModel {
         widgets.dialog.present();
 
         let model = ExportDialogModel {
-            prefix_manager,
             prefix_path,
             prefix_name,
             dest_entry: widgets.dest_entry.clone(),
@@ -229,7 +227,7 @@ impl SimpleComponent for ExportDialogModel {
                 let include_user_data = self.user_data_check.is_active();
                 let compression_level = self.level_scale.value() as i32;
                 let pp = self.prefix_path.clone();
-                let pm = self.prefix_manager.clone();
+                let pm = AppService::global().prefix_manager().clone();
 
                 self.exporting = true;
 

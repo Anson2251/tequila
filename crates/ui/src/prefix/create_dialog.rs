@@ -1,13 +1,12 @@
 use crate::AppMsg;
 use adw::prelude::*;
 use gtk::glib;
-use prefix::Manager as PrefixManager;
 use prefix::base::GraphicsBackend;
 use prefix::runtime;
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
+use service::AppService;
 
 pub struct CreatePrefixDialog {
-    prefix_manager: PrefixManager,
     name_entry: gtk::Entry,
     arch_combo: gtk::DropDown,
     runtime_combo: gtk::DropDown,
@@ -26,7 +25,7 @@ pub enum CreatePrefixMsg {
 }
 
 impl CreatePrefixDialog {
-    fn build_runtime_combo(prefix_manager: &PrefixManager) -> gtk::DropDown {
+    fn build_runtime_combo(prefix_manager: &prefix::Manager) -> gtk::DropDown {
         let rm = prefix_manager.runtime_manager();
         let default_id = &rm.default_id;
         let items: Vec<String> = rm
@@ -64,7 +63,7 @@ impl CreatePrefixDialog {
 
 #[relm4::component(pub)]
 impl SimpleComponent for CreatePrefixDialog {
-    type Init = (PrefixManager, gtk::ApplicationWindow);
+    type Init = (gtk::ApplicationWindow,);
     type Input = CreatePrefixMsg;
     type Output = AppMsg;
 
@@ -166,10 +165,12 @@ impl SimpleComponent for CreatePrefixDialog {
     }
 
     fn init(
-        (prefix_manager, parent): Self::Init,
+        (parent,): Self::Init,
         _root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
+        let svc = AppService::global();
+        let prefix_manager = svc.prefix_manager();
         let runtime_combo = Self::build_runtime_combo(&prefix_manager);
         let (graphics_combo, graphics_backends) = Self::build_graphics_combo();
 
@@ -209,7 +210,6 @@ impl SimpleComponent for CreatePrefixDialog {
             progress_label: widgets.progress_label.clone(),
             dialog: widgets.dialog.clone(),
             parent,
-            prefix_manager,
         };
 
         ComponentParts { model, widgets }
@@ -232,7 +232,9 @@ impl SimpleComponent for CreatePrefixDialog {
 
                 let runtime_id = {
                     let i = self.runtime_combo.selected() as usize;
-                    let rm = self.prefix_manager.runtime_manager();
+                    let svc = AppService::global();
+                    let pm = svc.prefix_manager();
+                    let rm = pm.runtime_manager();
                     rm.runtimes
                         .get(i)
                         .map(|r| r.id.clone())
@@ -262,8 +264,7 @@ impl SimpleComponent for CreatePrefixDialog {
                     });
 
                 let prefix_name = name.clone();
-                let pm_create = self.prefix_manager.clone(); // consumed by spawn_blocking
-                let pm_async = self.prefix_manager.clone(); // kept for async activation
+                let pm = AppService::global().prefix_manager().clone();
                 let mw = self.parent.clone();
                 let dlg = self.dialog.clone();
                 let sc = sender.clone();
@@ -273,6 +274,7 @@ impl SimpleComponent for CreatePrefixDialog {
                     let n = prefix_name.clone();
                     let a = architecture;
                     let rid = runtime_id.clone();
+                    let pm_create = pm.clone();
                     let create_result = tokio::task::spawn_blocking(move || {
                         pm_create.create_prefix_with_runtime(&n, &a, &rid)
                     })
@@ -317,10 +319,7 @@ impl SimpleComponent for CreatePrefixDialog {
 
                     // Step 2: Activate graphics backend (symlink DLLs + registry + config)
                     if let Some(backend) = selected_backend {
-                        if let Err(e) = pm_async
-                            .activate_graphics_backend(&backend, &prefix_path)
-                            .await
-                        {
+                        if let Err(e) = pm.activate_graphics_backend(&backend, &prefix_path).await {
                             log::error!(
                                 "[create] failed to activate {}: {}",
                                 backend.display_name(),

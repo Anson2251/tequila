@@ -12,6 +12,31 @@ impl Manager {
         }
     }
 
+    /// Register a channel runtime after a successful download.
+    ///
+    /// This is the **sync** counterpart of the former async
+    /// `download_channel_runtime`.  The async I/O (download + brew
+    /// cask metadata) must be done **before** calling this method
+    /// so that no lock is held across await points.
+    pub fn register_channel_runtime(
+        &mut self,
+        channel: Channel,
+        version: String,
+        bundle_dir: PathBuf,
+    ) -> Runtime {
+        let runtime = self
+            .runtime_manager
+            .register_channel(channel, version, bundle_dir)
+            .clone();
+        self.save_runtime_state();
+        runtime
+    }
+
+    /// Download a channel-based runtime and install it.
+    ///
+    /// DEPRECATED: Prefer the split workflow — call the async
+    /// download helpers directly, then register via
+    /// [`Manager::register_channel_runtime`].
     pub async fn download_channel_runtime(
         &mut self,
         channel: Channel,
