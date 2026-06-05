@@ -1,4 +1,5 @@
 use gtk::gio;
+use log::info;
 use prefix::WinePrefix;
 use relm4::adw::prelude::*;
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};

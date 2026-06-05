@@ -16,23 +16,44 @@ pub struct SyncResult {
 /// 4. Persist any config changes
 ///
 /// This is a blocking operation — run it on a background thread.
+///
+/// NOTE: We clone the Manager upfront and release the global lock before
+/// entering the I/O-heavy loop. This prevents blocking the main thread
+/// when it needs the lock (e.g. `resolve_runtime_display_name` during
+/// prefix selection).  The lock is re-acquired briefly only when we need
+/// to persist config changes.
 pub fn sync_all_prefixes(service: &AppService) -> SyncResult {
-    let mut fresh = service.scan_prefixes();
+    // Acquire the lock ONCE: clone the Manager and get the initial prefix
+    // list, then release the lock immediately.  All subsequent I/O-heavy
+    // operations use the cloned Manager without holding the global lock,
+    // so the main thread can still acquire it (e.g. during prefix selection).
+    let (mgr, mut fresh) = {
+        let pm = service.prefix_manager();
+        let mgr = pm.clone();
+        let fresh = match pm.scan_prefixes() {
+            Ok(p) => p,
+            Err(e) => {
+                log::error!("[service] error scanning prefixes: {}", e);
+                Vec::new()
+            }
+        };
+        (mgr, fresh)
+    }; // MutexGuard dropped → lock released
+
     let total = fresh.len();
     info!("[sync] starting full sync of {} prefixes", total);
 
     for (i, p) in fresh.iter_mut().enumerate() {
-        // Scan for applications
-        if let Ok(exes) = service.prefix_manager().scan_for_applications(&p.path) {
+        // Scan for applications (uses cloned scanner, no lock held)
+        if let Ok(exes) = mgr.scan_for_applications(&p.path) {
             let _ = service
                 .prefix_store()
                 .save_scanned_executables(&p.path.to_string_lossy(), &exes);
         }
-        // Enrich executables with icon/metadata
-        let changed = service
-            .prefix_manager()
-            .enrich_executables(&p.path, &mut p.config);
+        // Enrich executables with icon/metadata (no lock held)
+        let changed = mgr.enrich_executables(&p.path, &mut p.config);
         if changed {
+            // Re-acquire lock briefly only for the file write
             let _ = service.update_config(&p.path, &p.config);
         }
 
@@ -124,12 +145,15 @@ pub async fn switch_graphics_backend(
 ) -> std::result::Result<(), String> {
     let mut last_error: Option<String> = None;
 
+    // Clone the Manager upfront so we don't hold the lock across I/O.
+    let mgr = service.prefix_manager().clone();
+    // `mgr` is a cloned Manager, not a guard — the MutexGuard from
+    // prefix_manager() was a temporary, dropped after .clone().
+
     // Deactivate old
     if let Some(old_gfx) = old_graphics {
         info!("[service] deactivating old graphics backend");
-        if let Err(e) = service
-            .prefix_manager_async()
-            .await
+        if let Err(e) = mgr
             .deactivate_graphics_backend(prefix_path, Some(old_gfx.clone()))
             .await
         {
@@ -147,12 +171,7 @@ pub async fn switch_graphics_backend(
                     "[service] activating {} graphics backend",
                     backend.display_name()
                 );
-                if let Err(e) = service
-                    .prefix_manager_async()
-                    .await
-                    .activate_graphics_backend(&backend, prefix_path)
-                    .await
-                {
+                if let Err(e) = mgr.activate_graphics_backend(&backend, prefix_path).await {
                     let msg = format!(
                         "failed to activate {} graphics: {}",
                         backend.display_name(),

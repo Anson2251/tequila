@@ -39,29 +39,14 @@ impl AppService {
 
     // ── Internal state access (locked) ─────────────────────────────────
 
-    /// Lock the prefix manager for any access (read or write) — **sync**.
-    ///
-    /// Blocks the current thread until the lock is acquired.
-    /// Prefer [`prefix_manager_async`](Self::prefix_manager_async) when calling
-    /// from an async context to avoid blocking the executor thread.
-    pub fn prefix_manager(&self) -> tokio::sync::MutexGuard<'_, prefix::Manager> {
-        state::manager().blocking_lock()
+    /// Lock the prefix manager for any access (read or write).
+    pub fn prefix_manager(&self) -> std::sync::RwLockReadGuard<'_, prefix::Manager> {
+        state::manager_read()
     }
 
-    /// Lock the prefix manager — **async** version, suitable for `.await`
-    /// contexts (e.g. `glib::spawn_local`).
-    pub async fn prefix_manager_async(&self) -> tokio::sync::MutexGuard<'_, prefix::Manager> {
-        state::manager().lock().await
-    }
-
-    /// Alias for code clarity — same as [`prefix_manager`](Self::prefix_manager).
-    pub fn prefix_manager_mut(&self) -> tokio::sync::MutexGuard<'_, prefix::Manager> {
-        state::manager().blocking_lock()
-    }
-
-    /// Async alias for mutable semantics.
-    pub async fn prefix_manager_mut_async(&self) -> tokio::sync::MutexGuard<'_, prefix::Manager> {
-        state::manager().lock().await
+    /// Lock the prefix manager for write access.
+    pub fn prefix_manager_mut(&self) -> std::sync::RwLockWriteGuard<'_, prefix::Manager> {
+        state::manager_write()
     }
 
     /// Shared access to the persistent prefix store.
