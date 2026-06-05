@@ -21,6 +21,8 @@ pub struct ExecutableInfoDialogModel {
     #[tracker::do_not_track]
     icon_cache: Arc<IconCache>,
     #[tracker::do_not_track]
+    name_entry_row: adw::EntryRow,
+    #[tracker::do_not_track]
     cwd_entry_row: adw::EntryRow,
     #[tracker::do_not_track]
     icon_path_entry_row: adw::EntryRow,
@@ -76,9 +78,9 @@ impl ExecutableInfoDialogModel {
     /// honouring both absolute and prefix-relative paths. Falls back to
     /// extracting the icon from the .exe if no usable `icon_path` is set.
     fn resolved_icon_path(&self) -> Option<PathBuf> {
-        self.executable.as_ref().and_then(|exe| {
-            resolve_or_extract_icon(exe, &self.prefix_path, &self.icon_cache)
-        })
+        self.executable
+            .as_ref()
+            .and_then(|exe| resolve_or_extract_icon(exe, &self.prefix_path, &self.icon_cache))
     }
 }
 
@@ -292,8 +294,8 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                             gtk::Label {
                                 #[watch]
                                 set_label: model.executable.as_ref()
-                                    .and_then(|e| e.product_name.as_deref())
-                                    .unwrap_or(model.executable.as_ref().map(|e| e.name.as_str()).unwrap_or("")),
+                                    .map(|e| e.name.as_str())
+                                    .unwrap_or(""),
                                 add_css_class: "title-2",
                                 set_halign: gtk::Align::Start,
                                 set_wrap: true,
@@ -438,10 +440,20 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                     adw::PreferencesGroup {
                         set_title: "Execution Settings",
 
+                        // Display Name
+                        #[name = "name_entry_row"]
+                        adw::EntryRow {
+                            set_title: "Display Name",
+                            set_tooltip_text: Some("Custom name for this executable (used in the desktop launcher and UI)"),
+                        },
+
                         // Working Directory
                         #[name = "cwd_entry_row"]
                         adw::EntryRow {
                             set_title: "Working Directory",
+                            set_tooltip_text: Some(
+                                "Custom working directory for the executable (e.g., /path/to/game)",
+                            ),
 
                             add_suffix = &gtk::Button {
                                 set_icon_name: "folder-open-symbolic",
@@ -457,6 +469,9 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                         #[name = "icon_path_entry_row"]
                         adw::EntryRow {
                             set_title: "Icon Path",
+                            set_tooltip_text: Some(
+                                "Absolute path or path relative to the prefix root. Leave empty to use the .exe's icon.",
+                            ),
 
                             add_suffix = &gtk::Button {
                                 set_icon_name: "image-x-generic-symbolic",
@@ -536,6 +551,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
             visible: false,
             prefix_path: prefix_path_init.canonicalize().unwrap_or(prefix_path_init),
             icon_cache,
+            name_entry_row: adw::EntryRow::new(),
             cwd_entry_row: adw::EntryRow::new(),
             icon_path_entry_row: adw::EntryRow::new(),
             env_vars_editor: None,
@@ -544,16 +560,9 @@ impl AsyncComponent for ExecutableInfoDialogModel {
 
         let widgets = view_output!();
 
+        model.name_entry_row = widgets.name_entry_row.clone();
         model.cwd_entry_row = widgets.cwd_entry_row.clone();
         model.icon_path_entry_row = widgets.icon_path_entry_row.clone();
-
-        // Set tooltip text on the entry (can't be expressed as a GObject property in view! macro)
-        widgets.cwd_entry_row.set_tooltip_text(Some(
-            "Custom working directory for the executable (e.g., /path/to/game)",
-        ));
-        widgets.icon_path_entry_row.set_tooltip_text(Some(
-            "Absolute path or path relative to the prefix root. Leave empty to use the .exe's icon.",
-        ));
 
         AsyncComponentParts { model, widgets }
     }
@@ -567,11 +576,13 @@ impl AsyncComponent for ExecutableInfoDialogModel {
         self.reset();
         match msg {
             ExecutableInfoDialogMsg::ShowInfo(executable, prefix_path) => {
+                let name_str = executable.name.clone();
                 let cwd_str = executable
                     .cwd
                     .as_ref()
                     .map(|p| p.display().to_string())
                     .unwrap_or_default();
+                self.name_entry_row.set_text(&name_str);
                 self.cwd_entry_row.set_text(&cwd_str);
                 let icon_str = executable
                     .icon_path
@@ -589,6 +600,10 @@ impl AsyncComponent for ExecutableInfoDialogModel {
             }
             ExecutableInfoDialogMsg::SaveChanges => {
                 if let Some(mut exec) = self.executable.clone() {
+                    let name_text = self.name_entry_row.text().to_string();
+                    if !name_text.trim().is_empty() {
+                        exec.name = name_text.trim().to_string();
+                    }
                     let cwd_text = self.cwd_entry_row.text().to_string();
                     exec.cwd = if cwd_text.trim().is_empty() {
                         None

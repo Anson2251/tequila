@@ -12,6 +12,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use uuid::Uuid;
 
 use crate::Manager;
 use crate::wine_processes::apply_runtime_env;
@@ -63,7 +64,7 @@ impl Manager {
                         self.load_or_create_config(&path, name, &system_wine_version)
                     {
                         prefixes.push(WinePrefix {
-                            name: name.to_string(),
+                            name: config.name.clone(),
                             path: path.clone(),
                             config,
                         });
@@ -126,11 +127,12 @@ impl Manager {
         architecture: &str,
         runtime_id: &str,
     ) -> Result<PathBuf> {
-        let prefix_path = self.wine_dir.join(name);
+        let dir_name = Uuid::new_v4().to_string();
+        let prefix_path = self.wine_dir.join(&dir_name);
         if prefix_path.exists() {
             return Err(PrefixError::AlreadyExists(format!(
                 "Prefix '{}' already exists",
-                name
+                dir_name
             )));
         }
         fs::create_dir_all(&prefix_path)?;
@@ -207,16 +209,16 @@ impl Manager {
         backend: &GraphicsBackend,
         prefix_path: &PathBuf,
     ) -> Result<GraphicsConfig> {
-        let name = prefix_path
+        let dir_name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        let config = self.load_or_create_config(prefix_path, name, &None)?;
+        let config = self.load_or_create_config(prefix_path, dir_name, &None)?;
 
         info!(
             "[prefix] activating {} for prefix '{}' (arch: {})",
             backend.display_name(),
-            name,
+            config.name,
             config.architecture
         );
 
@@ -224,7 +226,7 @@ impl Manager {
             warn!(
                 "[prefix] {} requires 64-bit prefix, but '{}' is {}",
                 backend.display_name(),
-                name,
+                config.name,
                 config.architecture
             );
             return Err(PrefixError::Validation(format!(
@@ -239,7 +241,7 @@ impl Manager {
         info!(
             "[prefix] symlinked DLLs for {} into prefix '{}'\n",
             backend.display_name(),
-            name
+            config.name
         );
 
         // 2. Write DLL overrides to registry
@@ -263,7 +265,7 @@ impl Manager {
         editor.save_registry(prefix_path).await?;
 
         // 3. Save to tequila-config.json
-        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
+        let mut config = self.load_or_create_config(prefix_path, dir_name, &None)?;
         config.graphics = Some(gfx_config.clone());
         config.update_last_modified();
         config.save_to_file(prefix_path)?;
@@ -271,7 +273,7 @@ impl Manager {
         info!(
             "[prefix] successfully activated {} for prefix '{}'",
             backend.display_name(),
-            name
+            config.name
         );
         Ok(gfx_config)
     }
@@ -294,15 +296,15 @@ impl Manager {
         progress: runtime::download::PhaseProgressFn,
         cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<GraphicsConfig> {
-        let name = prefix_path
+        let dir_name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
+        let mut config = self.load_or_create_config(prefix_path, dir_name, &None)?;
 
         info!(
             "[prefix] patching prefix '{}' with DXVK+VKD3D (arch: {})",
-            name, config.architecture
+            config.name, config.architecture
         );
 
         if !(GraphicsBackend::DxvkVkd3d {
@@ -331,7 +333,7 @@ impl Manager {
         runtime::graphics::patch_dxvk_vkd3d_for_prefix(&dxvk_dir, &vkd3d_dir, prefix_path)?;
         info!(
             "[prefix] patched DXVK+VKD3D DLLs and config into prefix '{}'",
-            name
+            config.name
         );
 
         // 6. Write DLL overrides to registry
@@ -350,7 +352,7 @@ impl Manager {
         editor.save_registry(prefix_path).await?;
         info!(
             "[prefix] wrote DLL overrides to registry for prefix '{}'",
-            name
+            config.name
         );
 
         // 7. Save config
@@ -365,7 +367,7 @@ impl Manager {
 
         info!(
             "[prefix] successfully patched prefix '{}' with DXVK+VKD3D",
-            name
+            config.name
         );
         Ok(gfx_config)
     }
@@ -385,11 +387,11 @@ impl Manager {
         prefix_path: &PathBuf,
         old_graphics: Option<GraphicsConfig>,
     ) -> Result<()> {
-        let name = prefix_path
+        let dir_name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
+        let mut config = self.load_or_create_config(prefix_path, dir_name, &None)?;
 
         // Use the caller-provided config, or fall back to loading from disk
         let gfx_config = match old_graphics {
@@ -405,7 +407,7 @@ impl Manager {
         info!(
             "[prefix] deactivating {} for prefix '{}'",
             gfx_config.display_name(),
-            name
+            config.name
         );
 
         // 1. Remove DLL symlinks
@@ -439,7 +441,7 @@ impl Manager {
         info!(
             "[prefix] done deactivating {} for prefix '{}'",
             gfx_config.display_name(),
-            name
+            config.name
         );
         Ok(())
     }
@@ -456,11 +458,11 @@ impl Manager {
     /// This is safe to call even if the prefix has no DXVK+VKD3D backend
     /// configured — it returns `Ok(())` without doing anything.
     pub async fn unpatch_prefix_with_dxvk_vkd3d(&self, prefix_path: &PathBuf) -> Result<()> {
-        let name = prefix_path
+        let dir_name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
+        let mut config = self.load_or_create_config(prefix_path, dir_name, &None)?;
 
         // Only proceed if the prefix currently has a DXVK+VKD3D backend
         let gfx_config = match config.graphics.take() {
@@ -473,13 +475,16 @@ impl Manager {
             None => return Ok(()),
         };
 
-        info!("[prefix] unpatching DXVK+VKD3D for prefix '{}'", name);
+        info!(
+            "[prefix] unpatching DXVK+VKD3D for prefix '{}'",
+            config.name
+        );
 
         // 1. Remove DLL symlinks + config files + state cache
         runtime::graphics::deactivate_for_prefix(&gfx_config, prefix_path)?;
         info!(
             "[prefix] removed DXVK+VKD3D DLL symlinks and config for '{}'",
-            name
+            config.name
         );
 
         // 2. Remove DLL overrides from registry
@@ -491,14 +496,17 @@ impl Manager {
         editor.save_registry(prefix_path).await?;
         info!(
             "[prefix] removed DLL overrides from registry for '{}'",
-            name
+            config.name
         );
 
         // 3. Clear graphics field in config (graphics already taken above)
         config.update_last_modified();
         config.save_to_file(prefix_path)?;
 
-        info!("[prefix] successfully unpatched DXVK+VKD3D from '{}'", name);
+        info!(
+            "[prefix] successfully unpatched DXVK+VKD3D from '{}'",
+            config.name
+        );
         Ok(())
     }
 
@@ -516,15 +524,15 @@ impl Manager {
         progress: runtime::download::PhaseProgressFn,
         cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<GraphicsConfig> {
-        let name = prefix_path
+        let dir_name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
+        let mut config = self.load_or_create_config(prefix_path, dir_name, &None)?;
 
         info!(
             "[prefix] patching prefix '{}' with DXMT (arch: {})",
-            name, config.architecture
+            config.name, config.architecture
         );
 
         if config.architecture != "win64" {
@@ -556,7 +564,7 @@ impl Manager {
 
         // 2. Activate (symlink DLLs)
         runtime::graphics::activate_dxmt_for_prefix(&dxmt_dir, prefix_path)?;
-        info!("[prefix] activated DXMT DLLs for prefix '{}'", name);
+        info!("[prefix] activated DXMT DLLs for prefix '{}'", config.name);
 
         // 3. Write registry overrides
         let backend = GraphicsBackend::Dxmt {
@@ -573,7 +581,7 @@ impl Manager {
         editor.save_registry(prefix_path).await?;
         info!(
             "[prefix] wrote DLL overrides to registry for prefix '{}'",
-            name
+            config.name
         );
 
         // 4. Save config
@@ -585,17 +593,20 @@ impl Manager {
         config.update_last_modified();
         config.save_to_file(prefix_path)?;
 
-        info!("[prefix] successfully patched prefix '{}' with DXMT", name);
+        info!(
+            "[prefix] successfully patched prefix '{}' with DXMT",
+            config.name
+        );
         Ok(gfx_config)
     }
 
     /// Unpatch DXMT from a prefix.
     pub async fn unpatch_prefix_with_dxmt(&self, prefix_path: &PathBuf) -> Result<()> {
-        let name = prefix_path
+        let dir_name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
+        let mut config = self.load_or_create_config(prefix_path, dir_name, &None)?;
 
         let gfx_config = match config.graphics.take() {
             Some(g) if g.backend == "dxmt" => g,
@@ -606,11 +617,11 @@ impl Manager {
             None => return Ok(()),
         };
 
-        info!("[prefix] unpatching DXMT for prefix '{}'", name);
+        info!("[prefix] unpatching DXMT for prefix '{}'", config.name);
 
         // 1. Remove DLL symlinks
         runtime::graphics::deactivate_for_prefix(&gfx_config, prefix_path)?;
-        info!("[prefix] removed DXMT DLL symlinks for '{}'", name);
+        info!("[prefix] removed DXMT DLL symlinks for '{}'", config.name);
 
         // 2. Remove registry overrides
         let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
@@ -624,7 +635,10 @@ impl Manager {
         config.update_last_modified();
         config.save_to_file(prefix_path)?;
 
-        info!("[prefix] successfully unpatched DXMT from '{}'", name);
+        info!(
+            "[prefix] successfully unpatched DXMT from '{}'",
+            config.name
+        );
         Ok(())
     }
 
@@ -640,15 +654,15 @@ impl Manager {
         prefix_path: &PathBuf,
         source_path: &std::path::Path,
     ) -> Result<GraphicsConfig> {
-        let name = prefix_path
+        let dir_name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
+        let mut config = self.load_or_create_config(prefix_path, dir_name, &None)?;
 
         info!(
             "[prefix] patching prefix '{}' with D3DMetal (arch: {})",
-            name, config.architecture
+            config.name, config.architecture
         );
 
         if config.architecture != "win64" {
@@ -705,11 +719,14 @@ impl Manager {
         })
         .await
         .map_err(|e| PrefixError::Process(format!("Blocking task failed: {}", e)))??;
-        info!("[prefix] imported D3DMetal for prefix '{}'", name);
+        info!("[prefix] imported D3DMetal for prefix '{}'", config.name);
 
         // 2. Activate (symlink DLLs + frameworks)
         runtime::graphics::activate_d3dmetal_for_prefix(&d3dmetal_dir, prefix_path)?;
-        info!("[prefix] activated D3DMetal DLLs for prefix '{}'", name);
+        info!(
+            "[prefix] activated D3DMetal DLLs for prefix '{}'",
+            config.name
+        );
 
         // 3. Write registry overrides
         let version = d3dmetal_dir
@@ -732,7 +749,7 @@ impl Manager {
         editor.save_registry(prefix_path).await?;
         info!(
             "[prefix] wrote DLL overrides to registry for prefix '{}'",
-            name
+            config.name
         );
 
         // 4. Save config
@@ -746,18 +763,18 @@ impl Manager {
 
         info!(
             "[prefix] successfully patched prefix '{}' with D3DMetal",
-            name
+            config.name
         );
         Ok(gfx_config)
     }
 
     /// Unpatch D3DMetal from a prefix.
     pub async fn unpatch_prefix_with_d3dmetal(&self, prefix_path: &PathBuf) -> Result<()> {
-        let name = prefix_path
+        let dir_name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        let mut config = self.load_or_create_config(prefix_path, name, &None)?;
+        let mut config = self.load_or_create_config(prefix_path, dir_name, &None)?;
 
         let gfx_config = match config.graphics.take() {
             Some(g) if g.backend == "d3dmetal" => g,
@@ -768,11 +785,11 @@ impl Manager {
             None => return Ok(()),
         };
 
-        info!("[prefix] unpatching D3DMetal for prefix '{}'", name);
+        info!("[prefix] unpatching D3DMetal for prefix '{}'", config.name);
 
         // 1. Remove DLL/framework symlinks
         runtime::graphics::deactivate_for_prefix(&gfx_config, prefix_path)?;
-        info!("[prefix] removed D3DMetal symlinks for '{}'", name);
+        info!("[prefix] removed D3DMetal symlinks for '{}'", config.name);
 
         // 2. Remove registry overrides
         let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
@@ -786,7 +803,10 @@ impl Manager {
         config.update_last_modified();
         config.save_to_file(prefix_path)?;
 
-        info!("[prefix] successfully unpatched D3DMetal from '{}'", name);
+        info!(
+            "[prefix] successfully unpatched D3DMetal from '{}'",
+            config.name
+        );
         Ok(())
     }
 
@@ -820,13 +840,18 @@ impl Manager {
     where
         F: Fn(u64, u64) + Send + 'static,
     {
-        let prefix_name = prefix_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or_else(|| PrefixError::InvalidPath("Invalid prefix name".to_string()))?;
+        let prefix_config = PrefixConfig::load_from_file(prefix_path)?.unwrap_or_else(|| {
+            let name = prefix_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("prefix")
+                .to_string();
+            PrefixConfig::new(name, "win64".to_string())
+        });
+        let prefix_name = prefix_config.name;
 
         let output_path = if dest_path.is_dir() {
-            dest_path.join(format!("{}.zst.{}", prefix_name, TQL_EXTENSION))
+            dest_path.join(format!("{}.zst.{}", &prefix_name, TQL_EXTENSION))
         } else {
             dest_path.clone()
         };
@@ -851,12 +876,12 @@ impl Manager {
 
         // Root prefix directory in the archive
         builder
-            .append_dir(prefix_name, prefix_path)
+            .append_dir(&prefix_name, prefix_path)
             .map_err(|e| PrefixError::Process(format!("Failed to add prefix dir: {}", e)))?;
 
         let drive_c = prefix_path.join("drive_c");
         if drive_c.exists() {
-            let drive_arc = format!("{}/drive_c", prefix_name);
+            let drive_arc = format!("{}/drive_c", &prefix_name);
             // Add the drive_c directory itself first
             builder
                 .append_dir(&drive_arc, &drive_c)
@@ -890,7 +915,7 @@ impl Manager {
                         builder.append_path_with_name(&entry.path(), &archive_path)?;
                     }
                 } else if name_str == "tequila-config.json" {
-                    Self::append_clean_config(&mut builder, prefix_path, prefix_name)?;
+                    Self::append_clean_config(&mut builder, prefix_path, &prefix_name)?;
                 }
             }
         }
@@ -1112,17 +1137,20 @@ impl Manager {
 
         let (name, wine_version) = match prefix_dir {
             Some(ref dir) => {
-                let name = dir
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_string();
                 let config_path = dir.join("tequila-config.json");
-                let wine_version = fs::read_to_string(&config_path).ok().and_then(|c| {
-                    serde_json::from_str::<base::config::PrefixConfig>(&c)
-                        .ok()
-                        .and_then(|cfg| cfg.wine_version)
-                });
+                let config = fs::read_to_string(&config_path)
+                    .ok()
+                    .and_then(|c| serde_json::from_str::<base::config::PrefixConfig>(&c).ok());
+                let name = config
+                    .as_ref()
+                    .map(|c| c.name.clone())
+                    .or_else(|| {
+                        dir.file_name()
+                            .and_then(|n| n.to_str())
+                            .map(|s| s.to_string())
+                    })
+                    .unwrap_or_else(|| "prefix".to_string());
+                let wine_version = config.and_then(|c| c.wine_version);
                 (name, wine_version)
             }
             None => ("prefix".to_string(), None),
@@ -1205,28 +1233,27 @@ impl Manager {
             }
         };
 
-        let prefix_name = prefix_dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or_else(|| {
-                PrefixError::InvalidPath("Invalid prefix name in archive".to_string())
-            })?;
+        // Read display name from config; fall back to directory name (legacy)
+        let display_name = PrefixConfig::load_from_file(&prefix_dir)?
+            .map(|c| c.name.clone())
+            .or_else(|| {
+                prefix_dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| "prefix".to_string());
 
-        let target = self.wine_dir.join(prefix_name);
-        if target.exists() {
-            let _ = fs::remove_dir_all(&tmp);
-            return Err(PrefixError::AlreadyExists(format!(
-                "Prefix '{}' already exists",
-                prefix_name
-            )));
-        }
+        // Use UUID for the target directory name
+        let dir_name = Uuid::new_v4().to_string();
+        let target = self.wine_dir.join(&dir_name);
 
         // Validate the prefix before moving
         if !self.is_valid_wine_prefix(&prefix_dir) {
             let _ = fs::remove_dir_all(&tmp);
             return Err(PrefixError::Validation(format!(
                 "'{}' is not a valid Wine prefix (missing drive_c or registry files)",
-                prefix_name
+                display_name
             )));
         }
 
@@ -1249,7 +1276,7 @@ impl Manager {
         // Reinit the prefix with the specified runtime
         if !runtime_id.is_empty() {
             let mut config = PrefixConfig::load_from_file(&target)?
-                .unwrap_or_else(|| PrefixConfig::new(prefix_name.to_string(), "win64".to_string()));
+                .unwrap_or_else(|| PrefixConfig::new(display_name.clone(), "win64".to_string()));
             config.wine_version = Some(runtime_id.to_string());
             config.update_last_modified();
 
@@ -1262,7 +1289,7 @@ impl Manager {
 
         info!(
             "[prefix] imported '{}' from {}",
-            prefix_name,
+            display_name,
             archive_path.display()
         );
         Ok(target)
@@ -1303,11 +1330,11 @@ impl Manager {
     /// `scripts/tequila-terminal.sh` and are embedded at compile time via
     /// `include_str!`.
     pub fn generate_terminal_script(&self, prefix_path: &PathBuf) -> Result<String> {
-        let name = prefix_path
+        let dir_name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("prefix");
-        let config = self.load_or_create_config(prefix_path, name, &None)?;
+        let config = self.load_or_create_config(prefix_path, dir_name, &None)?;
 
         // Build a dummy Command and apply the full runtime env setup to it.
         // We then iterate over the explicitly-set env vars to generate
@@ -1339,7 +1366,7 @@ impl Manager {
             }
         }
 
-        let safe_name = name.replace('\'', "'\\''");
+        let safe_name = config.name.replace('\'', "'\\''");
         let safe_path = prefix_path.to_string_lossy().replace('\'', "'\\''");
         let ps1 = format!("(tequila: {})", safe_name);
 

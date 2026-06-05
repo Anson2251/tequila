@@ -21,8 +21,14 @@ struct Cli {
 enum Subcmd {
     /// Launch an executable in a Wine prefix (headless, no GUI)
     Run {
-        /// Prefix name (looked up under ~/Wine/<name>) or direct path
+        /// Prefix name (matched by display name by default) or direct path.
+        /// Use --uuid to match by UUID directory name instead.
         prefix: String,
+
+        /// Treat `prefix` as a UUID directory name under ~/Wine/ rather than
+        /// matching by the display name stored in the prefix config.
+        #[arg(short = 'u', long)]
+        uuid: bool,
 
         /// Registered executable name, or path to a .exe file
         exe: String,
@@ -52,7 +58,12 @@ fn main() -> ExitCode {
         start_gui()
     } else {
         match cli.command.unwrap() {
-            Subcmd::Run { prefix, exe, args } => match run(&prefix, &exe, &args) {
+            Subcmd::Run {
+                prefix,
+                uuid,
+                exe,
+                args,
+            } => match run(&prefix, uuid, &exe, &args) {
                 Ok(code) => ExitCode::from(code),
                 Err(e) => {
                     eprintln!("error: {e}");
@@ -75,8 +86,13 @@ fn start_gui() -> ExitCode {
 
 // ── CLI mode ───────────────────────────────────────────────────────────
 
-fn run(prefix_arg: &str, exe_arg: &str, extra_args: &[String]) -> Result<u8, String> {
-    let prefix_path = resolve_prefix(prefix_arg)?;
+fn run(
+    prefix_arg: &str,
+    uuid_mode: bool,
+    exe_arg: &str,
+    extra_args: &[String],
+) -> Result<u8, String> {
+    let prefix_path = resolve_prefix(prefix_arg, uuid_mode)?;
 
     let config = base::config::PrefixConfig::load_from_file(&prefix_path)
         .map_err(|e| format!("failed to load prefix config: {e}"))?
@@ -149,7 +165,8 @@ fn run(prefix_arg: &str, exe_arg: &str, extra_args: &[String]) -> Result<u8, Str
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-fn resolve_prefix(arg: &str) -> Result<PathBuf, String> {
+fn resolve_prefix(arg: &str, uuid_mode: bool) -> Result<PathBuf, String> {
+    // 1. Try as a direct path first (always, regardless of uuid_mode)
     let candidate = PathBuf::from(arg);
     if candidate.is_dir() {
         if is_valid_prefix(&candidate) {
@@ -162,13 +179,50 @@ fn resolve_prefix(arg: &str) -> Result<PathBuf, String> {
     }
 
     let wine_dir = default_wine_dir();
-    let by_name = wine_dir.join(arg);
-    if by_name.is_dir() && is_valid_prefix(&by_name) {
-        return Ok(by_name);
+
+    // 2. UUID mode: match by directory name under ~/Wine/
+    if uuid_mode {
+        let by_dir = wine_dir.join(arg);
+        if by_dir.is_dir() && is_valid_prefix(&by_dir) {
+            return Ok(by_dir);
+        }
+        return Err(format!(
+            "prefix '{}' not found — no matching directory under {}",
+            arg,
+            wine_dir.display()
+        ));
+    }
+
+    // 3. Default mode: match by display name (config.name)
+    //    Scan all prefixes under ~/Wine/ and find one whose config.name matches.
+    if let Ok(entries) = std::fs::read_dir(&wine_dir) {
+        let mut matches: Vec<PathBuf> = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() || !is_valid_prefix(&path) {
+                continue;
+            }
+            if let Ok(Some(config)) = base::config::PrefixConfig::load_from_file(&path) {
+                if config.name == arg {
+                    matches.push(path);
+                }
+            }
+        }
+
+        match matches.len() {
+            0 => {}
+            1 => return Ok(matches.into_iter().next().unwrap()),
+            _ => {
+                return Err(format!(
+                    "multiple prefixes match the name '{}'. Use --uuid to select by directory name",
+                    arg
+                ));
+            }
+        }
     }
 
     Err(format!(
-        "prefix '{}' not found — not a valid path and no matching directory under {}",
+        "prefix '{}' not found — not a valid path and no prefix with that display name under {}",
         arg,
         wine_dir.display()
     ))

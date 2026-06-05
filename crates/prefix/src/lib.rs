@@ -1,4 +1,5 @@
 mod app_ops;
+pub mod desktop;
 mod launch_ops;
 mod manager;
 mod prefix_ops;

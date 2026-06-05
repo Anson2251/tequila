@@ -1,6 +1,6 @@
 use gtk::prelude::*;
-use prefix::IconCache;
 use prefix::config::RegisteredExecutable;
+use prefix::{IconCache, resolve_or_extract_icon};
 use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender, FactoryVecDeque};
 use relm4::{
     RelmWidgetExt,
@@ -21,6 +21,8 @@ pub struct RegisteredAppsListModel {
     selection_handler_id: Option<gtk::glib::SignalHandlerId>,
     #[tracker::do_not_track]
     prefix_path: PathBuf,
+    #[tracker::do_not_track]
+    icon_cache: Arc<IconCache>,
 }
 
 #[derive(Debug)]
@@ -203,7 +205,7 @@ impl AsyncComponent for RegisteredAppsListModel {
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
-        let (executables_init, prefix_path, _icon_cache) = init;
+        let (executables_init, prefix_path, icon_cache) = init;
 
         // Initialize factory for registered executables (grid layout)
         let executables = FactoryVecDeque::builder()
@@ -211,11 +213,13 @@ impl AsyncComponent for RegisteredAppsListModel {
             .detach();
 
         let prefix_path_for_init = prefix_path.clone();
+        let icon_cache_for_init = Arc::clone(&icon_cache);
         let mut model = RegisteredAppsListModel {
             executables,
             registered_executables: executables_init.clone(),
             selection_handler_id: None,
             prefix_path,
+            icon_cache,
             tracker: 0,
         };
 
@@ -223,7 +227,8 @@ impl AsyncComponent for RegisteredAppsListModel {
         {
             let mut guard = model.executables.guard();
             for (idx, exe) in executables_init.iter().enumerate() {
-                let resolved = resolve_lightweight_icon(exe, &prefix_path_for_init);
+                let resolved =
+                    resolve_or_extract_icon(exe, &prefix_path_for_init, &icon_cache_for_init);
                 guard.push_back((exe.clone(), idx, resolved));
             }
         }
@@ -263,10 +268,11 @@ impl AsyncComponent for RegisteredAppsListModel {
                 }
 
                 let prefix_path = self.prefix_path.clone();
+                let icon_cache = Arc::clone(&self.icon_cache);
                 let mut guard = self.executables.guard();
                 guard.clear();
                 for (idx, exe) in executables.iter().enumerate() {
-                    let resolved = resolve_lightweight_icon(exe, &prefix_path);
+                    let resolved = resolve_or_extract_icon(exe, &prefix_path, &icon_cache);
                     guard.push_back((exe.clone(), idx, resolved));
                 }
                 drop(guard);
@@ -292,9 +298,11 @@ impl AsyncComponent for RegisteredAppsListModel {
 
                 // Re-resolve icons in case the prefix location changed
                 let prefix_path = self.prefix_path.clone();
+                let icon_cache = Arc::clone(&self.icon_cache);
                 let mut guard = self.executables.guard();
                 for item in guard.iter_mut() {
-                    item.resolved_icon = resolve_lightweight_icon(&item.executable, &prefix_path);
+                    item.resolved_icon =
+                        resolve_or_extract_icon(&item.executable, &prefix_path, &icon_cache);
                 }
             }
             RegisteredAppsListMsg::SelectionChanged => {
@@ -312,11 +320,4 @@ impl AsyncComponent for RegisteredAppsListModel {
             }
         }
     }
-}
-
-fn resolve_lightweight_icon(
-    executable: &RegisteredExecutable,
-    prefix_path: &std::path::Path,
-) -> Option<PathBuf> {
-    executable.resolve_icon_path(prefix_path)
 }

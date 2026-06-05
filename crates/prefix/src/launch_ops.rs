@@ -88,11 +88,11 @@ impl Manager {
                 "Executable file does not exist".to_string(),
             ));
         }
-        let name = prefix_path
+        let dir_name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        let config = self.load_or_create_config(prefix_path, name, &None)?;
+        let config = self.load_or_create_config(prefix_path, dir_name, &None)?;
 
         // Check wine is available before building the command
         self.check_wine_available("wine", &config)?;
@@ -105,7 +105,7 @@ impl Manager {
 
         info!(
             "[launch] launching '{}' in prefix '{}'",
-            executable.name, name
+            executable.name, config.name
         );
 
         // Log the full command line
@@ -148,16 +148,16 @@ impl Manager {
     }
 
     pub fn run_winecfg(&self, prefix_path: &PathBuf) -> Result<Child> {
-        let name = prefix_path
+        let dir_name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        let config = self.load_or_create_config(prefix_path, name, &None)?;
+        let config = self.load_or_create_config(prefix_path, dir_name, &None)?;
 
         // Check winecfg is available before spawning
         self.check_wine_available("winecfg", &config)?;
 
-        info!("[launch] opening winecfg for prefix '{}'", name);
+        info!("[launch] opening winecfg for prefix '{}'", config.name);
         let child = self
             .build_wine_command_for_exe("winecfg", &config, prefix_path)
             .current_dir(prefix_path)
@@ -167,16 +167,16 @@ impl Manager {
     }
 
     pub fn run_regedit(&self, prefix_path: &PathBuf) -> Result<Child> {
-        let name = prefix_path
+        let dir_name = prefix_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        let config = self.load_or_create_config(prefix_path, name, &None)?;
+        let config = self.load_or_create_config(prefix_path, dir_name, &None)?;
 
         // Check wine is available before spawning
         self.check_wine_available("wine", &config)?;
 
-        info!("[launch] opening regedit for prefix '{}'", name);
+        info!("[launch] opening regedit for prefix '{}'", config.name);
         let child = self
             .build_wine_command_with_args(&["regedit"], &config, prefix_path)
             .current_dir(prefix_path)

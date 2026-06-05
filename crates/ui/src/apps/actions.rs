@@ -14,6 +14,7 @@ pub struct AppActionsModel {
     prefix_set: bool,
     uninstaller_running: bool,
     exe_running: bool,
+    has_desktop: bool,
 }
 
 #[derive(Debug)]
@@ -24,12 +25,14 @@ pub enum AppActionsMsg {
     SetPrefixSet(bool),
     SetUninstallerRunning(bool),
     SetExeRunning(bool),
+    SetDesktopExists(bool),
     Launch,
     Add,
     Remove,
     ShowInfo,
     RunUninstaller,
     RunExe,
+    CreateDesktop,
 }
 
 #[derive(Debug)]
@@ -41,6 +44,7 @@ pub enum AppActionsOutput {
     ShowInfo,
     RunUninstaller,
     RunExe,
+    CreateDesktop,
 }
 
 #[relm4::component(pub, async)]
@@ -162,6 +166,32 @@ impl AsyncComponent for AppActionsModel {
                 },
             },
 
+            // Desktop launcher toggle
+            gtk::Button {
+                #[track = "model.changed(AppActionsModel::has_selection()) || model.changed(AppActionsModel::is_scanning()) || model.changed(AppActionsModel::has_desktop())"]
+                set_sensitive: model.has_selection && !model.is_scanning,
+                #[track = "model.changed(AppActionsModel::has_desktop())"]
+                set_tooltip_text: Some(if model.has_desktop { "Remove Desktop Launcher" } else { "Create Desktop Launcher" }),
+                connect_clicked[sender] => move |_| {
+                    sender.input(AppActionsMsg::CreateDesktop);
+                },
+
+                #[wrap(Some)]
+                set_child = &gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_spacing: 4,
+                    set_halign: gtk::Align::Center,
+
+                    gtk::Image {
+                        set_icon_name: Some("computer-symbolic"),
+                    },
+                    gtk::Label {
+                        #[track = "model.changed(AppActionsModel::has_desktop())"]
+                        set_label: if model.has_desktop { "Delete" } else { "Desktop" },
+                    },
+                },
+            },
+
             #[name = "launch_btn"]
             gtk::Button {
                 #[track = "model.changed(AppActionsModel::has_selection()) || model.changed(AppActionsModel::is_scanning()) || model.changed(AppActionsModel::selected_running())"]
@@ -197,6 +227,7 @@ impl AsyncComponent for AppActionsModel {
             prefix_set,
             uninstaller_running: false,
             exe_running: false,
+            has_desktop: false,
             tracker: 0,
         };
 
@@ -252,6 +283,12 @@ impl AsyncComponent for AppActionsModel {
             }
             AppActionsMsg::RunExe => {
                 let _ = sender.output(AppActionsOutput::RunExe);
+            }
+            AppActionsMsg::SetDesktopExists(exists) => {
+                self.set_has_desktop(exists);
+            }
+            AppActionsMsg::CreateDesktop => {
+                let _ = sender.output(AppActionsOutput::CreateDesktop);
             }
         }
     }

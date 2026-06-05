@@ -300,6 +300,8 @@ impl AsyncComponent for AppManagerModel {
                 if index < self.config.registered_executables.len() {
                     self.set_selected_executable(None);
                     self.app_actions.emit(AppActionsMsg::SetSelection(false));
+                    self.app_actions
+                        .emit(AppActionsMsg::SetDesktopExists(false));
 
                     if service::config_ops::remove_executable(
                         &AppService::global(),
@@ -418,6 +420,8 @@ impl AsyncComponent for AppManagerModel {
                     .emit(AddAppPopoverMsg::PrefixPathUpdated(path));
                 self.set_selected_executable(None);
                 self.app_actions.emit(AppActionsMsg::SetSelection(false));
+                self.app_actions
+                    .emit(AppActionsMsg::SetDesktopExists(false));
             }
             AppManagerMsg::ShowInfoDialog(index) => {
                 if let Some(executable) = self.config.registered_executables.get(index) {
@@ -431,12 +435,30 @@ impl AsyncComponent for AppManagerModel {
             // Handle messages from child components
             AppManagerMsg::ExecutableInfoDialog(output) => match output {
                 ExecutableInfoDialogOutput::ExecutableUpdated(updated_exec) => {
+                    let exe_path = updated_exec.executable_path.clone();
                     if service::config_ops::update_executable(
                         &AppService::global(),
                         &self.prefix_path,
                         &mut self.config,
-                        updated_exec,
+                        updated_exec.clone(),
                     ) {
+                        // Remove stale desktop launcher if one exists (name/icon may have changed)
+                        if prefix::desktop::desktop_launcher_exists(&self.prefix_path, &exe_path) {
+                            if let Err(e) = prefix::desktop::remove_desktop_launcher(
+                                &self.prefix_path,
+                                &exe_path,
+                            ) {
+                                error!("[apps] failed to remove stale desktop launcher: {}", e);
+                            } else {
+                                info!(
+                                    "[apps] removed stale desktop launcher for '{}'",
+                                    updated_exec.name
+                                );
+                                self.app_actions
+                                    .emit(AppActionsMsg::SetDesktopExists(false));
+                            }
+                        }
+
                         self.registered_apps_list
                             .emit(RegisteredAppsListMsg::UpdateExecutables(
                                 self.config.registered_executables.clone(),
@@ -460,6 +482,13 @@ impl AsyncComponent for AppManagerModel {
                             );
                             self.app_actions
                                 .emit(AppActionsMsg::SetSelectedRunning(running));
+                            // Check desktop launcher state
+                            let has_desktop = prefix::desktop::desktop_launcher_exists(
+                                &self.prefix_path,
+                                &exe.executable_path,
+                            );
+                            self.app_actions
+                                .emit(AppActionsMsg::SetDesktopExists(has_desktop));
                         }
                     }
                     RegisteredAppsListOutput::Launch(index) => {
@@ -570,6 +599,89 @@ impl AsyncComponent for AppManagerModel {
                                     }
                                 },
                             );
+                        }
+                    }
+                    AppActionsOutput::CreateDesktop => {
+                        if let Some(index) = self.selected_executable {
+                            if let Some(exe) = self.config.registered_executables.get(index) {
+                                let prefix_path = self.prefix_path.clone();
+                                let prefix_name = self.config.name.clone();
+                                let exe_name = exe.name.clone();
+                                let exe_path = exe.executable_path.clone();
+                                let parent_window = _root
+                                    .ancestor(gtk::Window::static_type())
+                                    .and_then(|w| w.downcast::<gtk::Window>().ok());
+
+                                // Toggle: if launcher exists, remove it; otherwise create it
+                                if prefix::desktop::desktop_launcher_exists(&prefix_path, &exe_path)
+                                {
+                                    match prefix::desktop::remove_desktop_launcher(
+                                        &prefix_path,
+                                        &exe_path,
+                                    ) {
+                                        Ok(()) => {
+                                            info!(
+                                                "[apps] removed desktop launcher for '{}'",
+                                                exe_name
+                                            );
+                                            self.app_actions
+                                                .emit(AppActionsMsg::SetDesktopExists(false));
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "[apps] failed to remove desktop launcher: {}",
+                                                e
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    let icon_cache = AppService::global()
+                                        .prefix_manager()
+                                        .scanner()
+                                        .icon_cache()
+                                        .clone();
+                                    let resolved_icon = prefix::resolve_or_extract_icon(
+                                        exe,
+                                        &prefix_path,
+                                        &icon_cache,
+                                    );
+
+                                    match prefix::desktop::create_desktop_launcher(
+                                        &prefix_path,
+                                        &prefix_name,
+                                        &exe_name,
+                                        &exe_path,
+                                        resolved_icon.as_deref(),
+                                    ) {
+                                        Ok(path) => {
+                                            info!(
+                                                "[apps] created desktop launcher: {}",
+                                                path.display()
+                                            );
+                                            self.app_actions
+                                                .emit(AppActionsMsg::SetDesktopExists(true));
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "[apps] failed to create desktop launcher: {}",
+                                                e
+                                            );
+                                            let alert = adw::AlertDialog::new(
+                                                Some("Failed to Create Desktop Launcher"),
+                                                Some(&format!("{}", e)),
+                                            );
+                                            alert.add_response("ok", "OK");
+                                            alert.set_default_response(Some("ok"));
+                                            alert.set_close_response("ok");
+                                            alert.choose(
+                                                parent_window.as_ref(),
+                                                None::<&gtk::gio::Cancellable>,
+                                                |_| {},
+                                            );
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
