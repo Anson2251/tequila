@@ -434,7 +434,7 @@ impl AsyncComponent for AppManagerModel {
                         updated_exec.clone(),
                     ) {
                         // Update desktop launcher if one exists (name/icon may have changed)
-                        if prefix::desktop::desktop_launcher_exists(self.prefix.path(), &exe_path) {
+                        if prefix::desktop::launcher_exists(self.prefix.path(), &exe_path) {
                             let icon_cache = AppService::global()
                                 .prefix_manager()
                                 .scanner()
@@ -446,7 +446,7 @@ impl AsyncComponent for AppManagerModel {
                                 &icon_cache,
                             );
                             let prefix_name = self.prefix.name().to_string();
-                            if let Err(e) = prefix::desktop::create_desktop_launcher(
+                            if let Err(e) = prefix::desktop::create_launcher(
                                 self.prefix.path(),
                                 &prefix_name,
                                 &updated_exec.name,
@@ -488,7 +488,7 @@ impl AsyncComponent for AppManagerModel {
                             self.app_actions
                                 .emit(AppActionsMsg::SetSelectedRunning(running));
                             // Check desktop launcher state
-                            let has_desktop = prefix::desktop::desktop_launcher_exists(
+                            let has_desktop = prefix::desktop::launcher_exists(
                                 self.prefix.path(),
                                 &exe.executable_path,
                             );
@@ -618,9 +618,9 @@ impl AsyncComponent for AppManagerModel {
                                     .and_then(|w| w.downcast::<gtk::Window>().ok());
 
                                 // Toggle: if launcher exists, remove it; otherwise create it
-                                if prefix::desktop::desktop_launcher_exists(&prefix_path, &exe_path)
+                                if prefix::desktop::launcher_exists(&prefix_path, &exe_path)
                                 {
-                                    match prefix::desktop::remove_desktop_launcher(
+                                    match prefix::desktop::remove_launcher(
                                         &prefix_path,
                                         &exe_path,
                                     ) {
@@ -651,7 +651,7 @@ impl AsyncComponent for AppManagerModel {
                                         &icon_cache,
                                     );
 
-                                    match prefix::desktop::create_desktop_launcher(
+                                    match prefix::desktop::create_launcher(
                                         &prefix_path,
                                         &prefix_name,
                                         &exe_name,
