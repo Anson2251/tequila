@@ -6,6 +6,9 @@ use std::path::PathBuf;
 
 impl Manager {
     pub fn save_runtime_state(&self) {
+        // NOTE: `From<RuntimeManager> for Settings` already preserves any
+        // existing `github_api_key` from on-disk settings, so a plain
+        // conversion + save is safe.
         let settings: store::Settings = self.runtime_manager.clone().into();
         if let Err(e) = settings.save() {
             log::error!("[runtime] failed to save runtime settings: {}", e);

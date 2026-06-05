@@ -6,6 +6,18 @@ use std::path::PathBuf;
 pub struct Settings {
     pub runtimes: Vec<Runtime>,
     pub default_id: String,
+    /// Optional GitHub Personal Access Token used to authenticate API
+    /// requests when fetching runtime/graphics release information.
+    ///
+    /// Without this token, GitHub's unauthenticated rate limit (~60 req/h)
+    /// applies.  With a token the limit is raised to 5000 req/h, making
+    /// the app significantly more reliable when fetching release lists or
+    /// checking for updates.
+    ///
+    /// Stored in plaintext in the settings JSON file.  Users can generate
+    /// a token at https://github.com/settings/tokens (no scopes needed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_api_key: Option<String>,
 }
 
 impl Settings {
@@ -35,9 +47,13 @@ impl Settings {
 
 impl From<RuntimeManager> for Settings {
     fn from(rm: RuntimeManager) -> Self {
+        // Preserve any existing `github_api_key` from the on-disk settings,
+        // so saving a `RuntimeManager` back to disk doesn't lose the key.
+        let existing_key = Self::load().and_then(|s| s.github_api_key);
         Settings {
             runtimes: rm.runtimes,
             default_id: rm.default_id,
+            github_api_key: existing_key,
         }
     }
 }

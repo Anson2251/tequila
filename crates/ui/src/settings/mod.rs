@@ -51,6 +51,9 @@ pub enum SettingsMsg {
     // Forwarded from GStreamer child component
     GStreamerStatusChanged,
 
+    // GitHub API key entry
+    GithubKeyChanged(Option<String>),
+
     // Window
     Close,
 }
@@ -147,6 +150,9 @@ impl AsyncComponent for SettingsWindow {
         #[local_ref]
         prefs_page -> adw::PreferencesPage {
             adw::PreferencesGroup {
+                set_title: "Environment",
+                set_description: Some("Manage Wine runtimes and graphics translation backends"),
+
                 adw::ActionRow {
                     set_title: "Wine Runtime",
                     set_activatable: true,
@@ -172,6 +178,57 @@ impl AsyncComponent for SettingsWindow {
             },
 
             adw::PreferencesGroup {
+                set_title: "GitHub",
+                set_description: Some("Use a Personal Access Token to avoid API rate-limiting when fetching release info"),
+
+                adw::ActionRow {
+                    set_title: "API Key",
+                    set_subtitle: "Generate at github.com/settings/tokens · no scopes needed",
+                    set_activatable_widget: Some(&github_key_entry),
+                    add_suffix: &github_key_box,
+                },
+
+                #[name = "github_key_box"]
+                gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_spacing: 3,
+
+                    #[name = "github_key_entry"]
+                    gtk::PasswordEntry {
+                        set_show_peek_icon: true,
+                        set_placeholder_text: Some("ghp_xxxxxxxxxxxxxxxxxxxx"),
+                        set_width_request: 180,
+                        set_valign: gtk::Align::Center,
+                        connect_changed[sender] => move |entry| {
+                            let text = entry.text().to_string();
+                            let value = if text.is_empty() { None } else { Some(text) };
+                            sender.input(SettingsMsg::GithubKeyChanged(value));
+                        },
+                    },
+
+                    #[name = "github_key_clear_btn"]
+                    gtk::Button {
+                        set_icon_name: "edit-clear-symbolic",
+                        set_tooltip_text: Some("Clear API key"),
+                        set_valign: gtk::Align::Center,
+                        connect_clicked[github_key_entry] => move |_| {
+                            github_key_entry.set_text("");
+                            let mut settings =
+                                prefix::Settings::load()
+                                    .unwrap_or_else(|| RuntimeManager::new().into());
+                            settings.github_api_key = None;
+                            if let Err(e) = settings.save() {
+                                log::error!("[settings] failed to save github_api_key: {}", e);
+                            }
+                        },
+                    },
+                },
+            },
+
+            adw::PreferencesGroup {
+                set_title: "Directories",
+                set_description: Some("Quick access to Tequila data locations"),
+
                 adw::ActionRow {
                     set_title: "Open Prefixes Directory",
                     set_subtitle: "Browse Wine prefixes on disk",
@@ -332,6 +389,11 @@ impl AsyncComponent for SettingsWindow {
         // Add GStreamer ManagedDownloadRow to its group (group declared in view!)
         widgets.gst_group.add(model.gst_ctrl.widget());
 
+        // Load initial GitHub API key from settings
+        if let Some(key) = prefix::Settings::load().and_then(|s| s.github_api_key) {
+            widgets.github_key_entry.set_text(&key);
+        }
+
         AsyncComponentParts { model, widgets }
     }
 
@@ -377,6 +439,15 @@ impl AsyncComponent for SettingsWindow {
                 // (e.g., to update a section-level summary).
             }
 
+            // ── GitHub API key ──
+            SettingsMsg::GithubKeyChanged(value) => {
+                let mut settings =
+                    prefix::Settings::load().unwrap_or_else(|| RuntimeManager::new().into());
+                settings.github_api_key = value;
+                if let Err(e) = settings.save() {
+                    log::error!("[settings] failed to save github_api_key: {}", e);
+                }
+            }
             // ── Window ──
             SettingsMsg::Close => {
                 root.set_visible(false);

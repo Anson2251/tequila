@@ -225,9 +225,11 @@ fn build_available_graphics_rows(
                 check_update: None,
                 start_download: Box::new(|_data_dir, progress, cancel| {
                     Box::pin(async move {
-                        let (version, url) = runtime::graphics::fetch_dxmt_release()
-                            .await
-                            .map_err(|e| e.to_string())?;
+                        let api_key = prefix::Settings::load().and_then(|s| s.github_api_key);
+                        let (version, url) =
+                            runtime::graphics::fetch_dxmt_release(api_key.as_deref())
+                                .await
+                                .map_err(|e| e.to_string())?;
                         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                             return Err("Cancelled".into());
                         }
@@ -361,9 +363,12 @@ fn build_available_graphics_rows(
                             progress(d, t, runtime::download::InstallPhase::Download);
                         });
 
-                        let (v_version, v_url) = runtime::graphics::fetch_dxvk_release()
-                            .await
-                            .map_err(|e| e.to_string())?;
+                        let api_key = prefix::Settings::load().and_then(|s| s.github_api_key);
+
+                        let (v_version, v_url) =
+                            runtime::graphics::fetch_dxvk_release(api_key.as_deref())
+                                .await
+                                .map_err(|e| e.to_string())?;
                         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                             return Err("Cancelled".into());
                         }
@@ -380,9 +385,10 @@ fn build_available_graphics_rows(
                             return Err("Cancelled".into());
                         }
 
-                        let (v3_version, v3_url) = runtime::graphics::fetch_vkd3d_release()
-                            .await
-                            .map_err(|e| e.to_string())?;
+                        let (v3_version, v3_url) =
+                            runtime::graphics::fetch_vkd3d_release(api_key.as_deref())
+                                .await
+                                .map_err(|e| e.to_string())?;
                         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                             return Err("Cancelled".into());
                         }

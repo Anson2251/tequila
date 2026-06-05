@@ -53,7 +53,9 @@ pub fn system_arch_suffix() -> Option<&'static str> {
 /// Calls the GitHub Releases API (`per_page=100`) and parses every release
 /// that carries usable assets. Both vanilla and Staging builds are returned,
 /// sorted with vanilla first and newest versions on top.
-pub async fn fetch_all_builds() -> Result<Vec<WineBuild>> {
+///
+/// * `api_key` — optional GitHub Personal Access Token to avoid rate-limiting.
+pub async fn fetch_all_builds(api_key: Option<&str>) -> Result<Vec<WineBuild>> {
     let arch_suffix = system_arch_suffix().ok_or_else(|| {
         PrefixError::Process(format!(
             "Unsupported CPU architecture '{}'. Kron4ek/Wine-Builds only provides \
@@ -64,21 +66,7 @@ pub async fn fetch_all_builds() -> Result<Vec<WineBuild>> {
 
     let url = "https://api.github.com/repos/Kron4ek/Wine-Builds/releases?per_page=100";
 
-    let client = reqwest::Client::builder()
-        .user_agent(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-             (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        )
-        .build()
-        .map_err(|e| PrefixError::Process(format!("Failed to build HTTP client: {}", e)))?;
-
-    let response = client.get(url).send().await.map_err(|e| {
-        PrefixError::Process(format!(
-            "Network error fetching Kron4ek/Wine-Builds releases: {}. \
-             Please check your internet connection or VPN/proxy settings.",
-            e
-        ))
-    })?;
+    let response = crate::graphics::github_api_get(url, api_key).await?;
 
     let status = response.status();
     if !status.is_success() {

@@ -56,23 +56,47 @@ struct GitHubAsset {
     browser_download_url: String,
 }
 
-async fn fetch_latest_release(owner: &str, repo: &str) -> Result<GitHubRelease> {
+/// Shared helper: send an authenticated GET to a GitHub API URL.
+///
+/// When `api_key` is `Some(...)`, the `Authorization: Bearer <key>`
+/// header is added, raising the rate limit from ~60 to 5000 req/h.
+/// On HTTP errors, a descriptive error is returned.
+pub(crate) async fn github_api_get(url: &str, api_key: Option<&str>) -> Result<reqwest::Response> {
+    let client = reqwest::Client::builder()
+        .user_agent(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        )
+        .build()
+        .map_err(|e| PrefixError::Process(format!("Failed to build HTTP client: {}", e)))?;
+
+    let mut req = client.get(url);
+    if let Some(key) = api_key {
+        req = req.header("Authorization", format!("Bearer {}", key));
+    }
+
+    let response = req.send().await.map_err(|e| {
+        PrefixError::Process(format!(
+            "Network error: {}. \
+             Please check your internet connection or VPN/proxy settings.",
+            e
+        ))
+    })?;
+
+    Ok(response)
+}
+
+async fn fetch_latest_release(
+    owner: &str,
+    repo: &str,
+    api_key: Option<&str>,
+) -> Result<GitHubRelease> {
     let url = format!(
         "https://api.github.com/repos/{}/{}/releases/latest",
         owner, repo
     );
-    let client = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .build()
-        .map_err(|e| PrefixError::Process(format!("Failed to build HTTP client: {}", e)))?;
-    let response = client.get(&url).send().await.map_err(|e| {
-        PrefixError::Process(format!(
-            "Network error fetching {} release info: {}. \
-             Please check your internet connection or VPN/proxy settings.",
-            repo, e
-        ))
-    })?;
 
+    let response = github_api_get(&url, api_key).await?;
     let status = response.status();
     if !status.is_success() {
         // Try to extract a human-readable error message from the response body
@@ -105,8 +129,8 @@ async fn fetch_latest_release(owner: &str, repo: &str) -> Result<GitHubRelease> 
 // files go into the prefix with native,builtin overrides.
 const DXMT_DLLS: &[&str] = &["winemetal.dll", "d3d11.dll", "dxgi.dll", "d3d10core.dll"];
 
-pub async fn fetch_dxmt_release() -> Result<(String, String)> {
-    let release = fetch_latest_release("3Shain", "dxmt").await?;
+pub async fn fetch_dxmt_release(api_key: Option<&str>) -> Result<(String, String)> {
+    let release = fetch_latest_release("3Shain", "dxmt", api_key).await?;
     let asset = release
         .assets
         .iter()
@@ -306,8 +330,8 @@ const DXVK_DLLS: &[&str] = &[
 ];
 const VKD3D_DLLS: &[&str] = &["d3d12.dll", "d3d12core.dll"];
 
-pub async fn fetch_dxvk_release() -> Result<(String, String)> {
-    let release = fetch_latest_release("doitsujin", "dxvk").await?;
+pub async fn fetch_dxvk_release(api_key: Option<&str>) -> Result<(String, String)> {
+    let release = fetch_latest_release("doitsujin", "dxvk", api_key).await?;
     let asset = release
         .assets
         .iter()
@@ -316,8 +340,8 @@ pub async fn fetch_dxvk_release() -> Result<(String, String)> {
     Ok((release.tag_name.clone(), asset.browser_download_url.clone()))
 }
 
-pub async fn fetch_vkd3d_release() -> Result<(String, String)> {
-    let release = fetch_latest_release("HansKristian-Work", "vkd3d-proton").await?;
+pub async fn fetch_vkd3d_release(api_key: Option<&str>) -> Result<(String, String)> {
+    let release = fetch_latest_release("HansKristian-Work", "vkd3d-proton", api_key).await?;
     let asset = release
         .assets
         .iter()
@@ -577,6 +601,7 @@ pub fn setup_state_cache(prefix_path: &Path) -> Result<()> {
 pub async fn download_dxvk_vkd3d(
     progress: download::PhaseProgressFn,
     cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    api_key: Option<&str>,
 ) -> Result<(PathBuf, PathBuf, String, String)> {
     use std::sync::{Arc, Mutex};
 
@@ -589,7 +614,7 @@ pub async fn download_dxvk_vkd3d(
         let p = progress.lock().unwrap();
         p(0, 2, download::InstallPhase::Download);
     }
-    let (dxvk_version, dxvk_url) = fetch_dxvk_release().await?;
+    let (dxvk_version, dxvk_url) = fetch_dxvk_release(api_key).await?;
 
     if let Some(ref cancel) = cancel {
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
@@ -617,7 +642,7 @@ pub async fn download_dxvk_vkd3d(
         let p = progress.lock().unwrap();
         p(1, 2, download::InstallPhase::Download);
     }
-    let (vkd3d_version, vkd3d_url) = fetch_vkd3d_release().await?;
+    let (vkd3d_version, vkd3d_url) = fetch_vkd3d_release(api_key).await?;
 
     if let Some(ref cancel) = cancel {
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {

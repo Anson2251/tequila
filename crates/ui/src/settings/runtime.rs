@@ -1,9 +1,10 @@
 use adw::prelude::*;
+#[cfg(target_os = "macos")]
+use prefix::runtime::Channel;
 use prefix::{
     GraphicsBackend, Manager as PrefixManager,
     runtime::{RuntimeManager, RuntimeSource},
 };
-use prefix::runtime::Channel;
 use relm4::prelude::*;
 use service::AppService;
 use std::path::PathBuf;
@@ -409,18 +410,20 @@ async fn build_available_channels(
     let mut ctrls: Vec<AsyncController<managed_download_row::ManagedDownloadRow>> = Vec::new();
 
     // ── Fetch available builds from GitHub API ──────────────────────
-    let builds: Vec<WineBuild> = match prefix::runtime::kron4ek::fetch_all_builds().await {
-        Ok(b) => b,
-        Err(e) => {
-            log::error!("[runtime] failed to fetch Kron4ek builds: {}", e);
-            let row = adw::ActionRow::builder()
-                .title("Failed to fetch available Wine versions")
-                .subtitle(&format!("{}", e))
-                .build();
-            group.add(&row);
-            return ctrls;
-        }
-    };
+    let api_key = prefix::Settings::load().and_then(|s| s.github_api_key);
+    let builds: Vec<WineBuild> =
+        match prefix::runtime::kron4ek::fetch_all_builds(api_key.as_deref()).await {
+            Ok(b) => b,
+            Err(e) => {
+                log::error!("[runtime] failed to fetch Kron4ek builds: {}", e);
+                let row = adw::ActionRow::builder()
+                    .title("Failed to fetch available Wine versions")
+                    .subtitle(&format!("{}", e))
+                    .build();
+                group.add(&row);
+                return ctrls;
+            }
+        };
 
     for build in builds {
         let runtime_id = format!("wine-{}", build.version);
