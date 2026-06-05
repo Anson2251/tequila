@@ -261,10 +261,18 @@ impl SimpleComponent for AppModel {
                 }
             });
 
+        let svc = AppService::global();
+        let mgr = svc.prefix_manager();
+        let empty_prefix = prefix::Prefix::from_parts(
+            PathBuf::new(),
+            prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()),
+            &mgr,
+        );
+        drop(mgr);
+
         let app_manager = AppManagerModel::builder()
             .launch((
-                PathBuf::new(),
-                prefix::config::PrefixConfig::new("".to_string(), "win64".to_string()),
+                empty_prefix,
                 root.clone().upcast::<gtk::Window>(),
             ))
             .forward(sender.input_sender(), |msg| match msg {
@@ -835,9 +843,8 @@ impl SimpleComponent for AppModel {
             AppMsg::RuntimesUpdated(rm) => {
                 // Sync the updated RuntimeManager into our PrefixManager
                 let svc = AppService::global();
-                let mut pm = svc.prefix_manager_mut();
-                let pm_rm = pm.runtime_manager_mut();
-                let _old = std::mem::replace(pm_rm, rm);
+                let pm = svc.prefix_manager_mut();
+                *pm.write_runtime() = rm;
                 pm.save_runtime_state();
             }
         }

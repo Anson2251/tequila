@@ -1,8 +1,8 @@
 use crate::Manager;
 use crate::wine_processes::apply_runtime_env;
-use base::config::{PrefixConfig, RegisteredExecutable};
+use base::config::PrefixConfig;
 use base::error::{PrefixError, Result};
-use log::{error, info};
+use log::info;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 
@@ -74,79 +74,6 @@ impl Manager {
         )))
     }
 
-    pub fn launch_executable(
-        &self,
-        prefix_path: &PathBuf,
-        executable: &RegisteredExecutable,
-    ) -> Result<Child> {
-        if !executable.executable_path.exists() {
-            error!(
-                "[launch] Executable not found: {}",
-                executable.executable_path.display()
-            );
-            return Err(PrefixError::NotFound(
-                "Executable file does not exist".to_string(),
-            ));
-        }
-        let dir_name = prefix_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
-        let config = self.load_or_create_config(prefix_path, dir_name, &None)?;
-
-        // Check wine is available before building the command
-        self.check_wine_available("wine", &config)?;
-
-        let mut cmd = self.build_wine_command_with_args(
-            &[&executable.executable_path.to_string_lossy()],
-            &config,
-            prefix_path,
-        );
-
-        info!(
-            "[launch] launching '{}' in prefix '{}'",
-            executable.name, config.name
-        );
-
-        // Log the full command line
-        let cmd_line: Vec<String> =
-            std::iter::once(cmd.get_program().to_string_lossy().to_string())
-                .chain(cmd.get_args().map(|a| a.to_string_lossy().to_string()))
-                .collect();
-        info!("[launch]   {}", cmd_line.join(" "));
-
-        // Apply per-executable environment variables
-        for (key, value) in &executable.env_vars {
-            cmd.env(key, value);
-            info!("[launch]   {}={}", key, value);
-        }
-
-        // Apply per-executable working directory (fall back to prefix_path)
-        if let Some(cwd) = &executable.cwd {
-            cmd.current_dir(cwd);
-        } else {
-            cmd.current_dir(prefix_path);
-        }
-
-        match cmd.spawn() {
-            Ok(child) => {
-                info!(
-                    "[launch] '{}' started (PID: {})",
-                    executable.name,
-                    child.id()
-                );
-                Ok(child)
-            }
-            Err(e) => {
-                error!("[launch] failed to launch '{}': {}", executable.name, e);
-                Err(PrefixError::Process(format!(
-                    "Failed to launch executable: {}",
-                    e
-                )))
-            }
-        }
-    }
-
     pub fn run_winecfg(&self, prefix_path: &PathBuf) -> Result<Child> {
         let dir_name = prefix_path
             .file_name()
@@ -189,7 +116,7 @@ impl Manager {
     fn build_wine_command(&self, config: &PrefixConfig, prefix_path: &Path) -> Command {
         let mut cmd = Command::new("wine");
         if let Some(runtime) = self.runtime_for_prefix(config) {
-            apply_runtime_env(&mut cmd, runtime, prefix_path);
+            apply_runtime_env(&mut cmd, &runtime, prefix_path);
         } else {
             cmd.env("WINEPREFIX", prefix_path);
         }
@@ -205,7 +132,7 @@ impl Manager {
     ) -> Command {
         let mut cmd = Command::new(exe);
         if let Some(runtime) = self.runtime_for_prefix(config) {
-            apply_runtime_env(&mut cmd, runtime, prefix_path);
+            apply_runtime_env(&mut cmd, &runtime, prefix_path);
         } else {
             cmd.env("WINEPREFIX", prefix_path);
         }

@@ -44,18 +44,26 @@ pub fn sync_all_prefixes(service: &AppService) -> SyncResult {
     info!("[sync] starting full sync of {} prefixes", total);
 
     for (i, p) in fresh.iter_mut().enumerate() {
+        // Build a self-contained Prefix with shared Arc references.
+        let mut prefix = prefix::Prefix::from_wine_prefix(p, &mgr);
+
         // Scan for applications (uses cloned scanner, no lock held)
-        if let Ok(exes) = mgr.scan_for_applications(&p.path) {
+        if let Ok(exes) = prefix.scan_applications() {
             let _ = service
                 .prefix_store()
                 .save_scanned_executables(&p.path.to_string_lossy(), &exes);
         }
+
         // Enrich executables with icon/metadata (no lock held)
-        let changed = mgr.enrich_executables(&p.path, &mut p.config);
-        if changed {
-            // Re-acquire lock briefly only for the file write
-            let _ = service.update_config(&p.path, &p.config);
+        if prefix.enrich_executables() {
+            // Persist config changes directly (no Manager lock needed)
+            if let Err(e) = prefix.save_config() {
+                error!("[sync] failed to save config for '{}': {}", p.path.display(), e);
+            }
         }
+
+        // Sync config back so the returned WinePrefix is up-to-date.
+        p.config = prefix.config().clone();
 
         info!("[sync] {}/{} scanned: {}", i + 1, total, p.path.display());
     }

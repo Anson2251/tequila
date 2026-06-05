@@ -1,13 +1,17 @@
-use base::{PrefixConfig, RegisteredExecutable};
+use base::config::PrefixConfig;
+use base::RegisteredExecutable;
 use log::{error, info};
-use std::path::PathBuf;
+use std::path::Path;
 
 use crate::AppService;
 
-/// Add a registered executable to a prefix's config and persist it.
+/// Add a registered executable to a prefix and persist.
+///
+/// The prefix config is loaded from disk, the executable is added,
+/// and the result is saved back.  Returns `true` on success.
 pub fn add_executable(
     service: &AppService,
-    prefix_path: &PathBuf,
+    prefix_path: &Path,
     config: &mut PrefixConfig,
     executable: RegisteredExecutable,
 ) -> bool {
@@ -27,10 +31,10 @@ pub fn add_executable(
     }
 }
 
-/// Add multiple registered executables to a prefix's config and persist it.
+/// Add multiple registered executables to a prefix and persist.
 pub fn add_executables(
     service: &AppService,
-    prefix_path: &PathBuf,
+    prefix_path: &Path,
     config: &mut PrefixConfig,
     executables: &[RegisteredExecutable],
 ) -> bool {
@@ -53,10 +57,10 @@ pub fn add_executables(
     }
 }
 
-/// Remove a registered executable from a prefix's config and persist it.
+/// Remove a registered executable from a prefix and persist.
 pub fn remove_executable(
     service: &AppService,
-    prefix_path: &PathBuf,
+    prefix_path: &Path,
     config: &mut PrefixConfig,
     index: usize,
 ) -> bool {
@@ -80,10 +84,10 @@ pub fn remove_executable(
     }
 }
 
-/// Update a single executable's settings and persist the config.
+/// Update a single executable's settings and persist.
 pub fn update_executable(
     service: &AppService,
-    prefix_path: &PathBuf,
+    prefix_path: &Path,
     config: &mut PrefixConfig,
     updated_exec: RegisteredExecutable,
 ) -> bool {

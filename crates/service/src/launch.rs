@@ -1,5 +1,7 @@
-use base::{PrefixConfig, RegisteredExecutable};
+use base::config::PrefixConfig;
+use base::RegisteredExecutable;
 use log::{error, info};
+use std::path::Path;
 use std::path::PathBuf;
 
 use crate::AppService;
@@ -7,13 +9,15 @@ use crate::AppService;
 /// Launch a registered executable and register it with the process tracker.
 pub fn launch_executable(
     service: &AppService,
-    prefix_path: &PathBuf,
+    prefix_path: &Path,
     executable: &RegisteredExecutable,
 ) -> std::result::Result<u32, String> {
-    match service
-        .prefix_manager()
-        .launch_executable(prefix_path, executable)
-    {
+    let prefix = match service.prefix_manager().open_prefix(prefix_path) {
+        Ok(p) => p,
+        Err(e) => return Err(e.to_string()),
+    };
+
+    match prefix.launch_executable(executable) {
         Ok(child) => {
             let pid = child.id();
             let mut tracker = service.process_tracker().lock().unwrap();
@@ -31,14 +35,15 @@ pub fn launch_executable(
 /// Launch winecfg for a prefix.
 pub fn launch_winecfg(
     service: &AppService,
-    prefix_path: &PathBuf,
+    prefix_path: &Path,
 ) -> std::result::Result<(), String> {
-    let name = prefix_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown");
+    let prefix = match service.prefix_manager().open_prefix(prefix_path) {
+        Ok(p) => p,
+        Err(e) => return Err(e.to_string()),
+    };
 
-    match service.prefix_manager().run_winecfg(prefix_path) {
+    let name = prefix.name().to_string();
+    match prefix.run_winecfg() {
         Ok(_) => {
             info!("[service] launched winecfg for prefix '{}'", name);
             Ok(())
@@ -53,16 +58,17 @@ pub fn launch_winecfg(
 /// Launch the Wine uninstaller for a prefix.
 pub fn launch_uninstaller(
     service: &AppService,
-    prefix_path: &PathBuf,
-    config: &PrefixConfig,
+    prefix_path: &Path,
+    _config: &PrefixConfig,
 ) -> std::result::Result<PathBuf, String> {
     let track_path = prefix_path.join("__wine_uninstaller__");
 
-    let mut cmd = service.prefix_manager().build_wine_command_with_args(
-        &["uninstaller"],
-        config,
-        prefix_path,
-    );
+    let prefix = match service.prefix_manager().open_prefix(prefix_path) {
+        Ok(p) => p,
+        Err(e) => return Err(e.to_string()),
+    };
+
+    let mut cmd = prefix.build_wine_command_with_args(&["uninstaller"]);
     cmd.current_dir(prefix_path);
 
     match cmd.spawn() {
@@ -83,14 +89,15 @@ pub fn launch_uninstaller(
 pub fn launch_direct_exe(
     service: &AppService,
     exe_path: &PathBuf,
-    prefix_path: &PathBuf,
-    config: &PrefixConfig,
+    prefix_path: &Path,
+    _config: &PrefixConfig,
 ) -> std::result::Result<(), String> {
-    let mut cmd = service.prefix_manager().build_wine_command_with_args(
-        &[&exe_path.to_string_lossy()],
-        config,
-        prefix_path,
-    );
+    let prefix = match service.prefix_manager().open_prefix(prefix_path) {
+        Ok(p) => p,
+        Err(e) => return Err(e.to_string()),
+    };
+
+    let mut cmd = prefix.build_wine_command_with_args(&[&exe_path.to_string_lossy()]);
     cmd.current_dir(exe_path.parent().unwrap_or(prefix_path));
 
     match cmd.spawn() {
@@ -110,7 +117,7 @@ pub fn launch_direct_exe(
 /// Reinitialize a prefix with a different runtime (blocking).
 pub fn reinitialize_prefix(
     service: &AppService,
-    prefix_path: &PathBuf,
+    prefix_path: &Path,
     config: &PrefixConfig,
 ) -> std::result::Result<(), String> {
     service

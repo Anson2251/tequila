@@ -1,11 +1,12 @@
 use crate::config::{PrefixConfig, RegisteredExecutable};
 use crate::error::Result;
 use chrono::{DateTime, Utc};
-use std::path::PathBuf;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 
 pub trait ConfigOperations {
-    fn save_to_file(&self, prefix_path: &PathBuf) -> Result<()>;
-    fn load_from_file(prefix_path: &PathBuf) -> Result<Option<Self>>
+    fn save_to_file(&self, prefix_path: &Path) -> Result<()>;
+    fn load_from_file(prefix_path: &Path) -> Result<Option<Self>>
     where
         Self: Sized;
     fn validate(&self) -> Result<()>;
@@ -20,22 +21,22 @@ pub trait Scanner {
 pub trait PrefixManager {
     fn scan_prefixes(&self) -> Result<Vec<WinePrefix>>;
     fn create_prefix(&self, name: &str, architecture: &str) -> Result<PathBuf>;
-    fn delete_prefix(&self, prefix_path: &PathBuf) -> Result<()>;
-    fn scan_for_applications(&self, prefix_path: &PathBuf) -> Result<Vec<RegisteredExecutable>>;
-    fn update_config(&self, prefix_path: &PathBuf, config: &PrefixConfig) -> Result<()>;
+    fn delete_prefix(&self, prefix_path: &Path) -> Result<()>;
+    fn scan_for_applications(&self, prefix_path: &Path) -> Result<Vec<RegisteredExecutable>>;
+    fn update_config(&self, prefix_path: &Path, config: &PrefixConfig) -> Result<()>;
     fn add_executable_to_prefix(
         &self,
-        prefix_path: &PathBuf,
+        prefix_path: &Path,
         executable: RegisteredExecutable,
     ) -> Result<()>;
-    fn remove_executable_from_prefix(&self, prefix_path: &PathBuf, index: usize) -> Result<()>;
+    fn remove_executable_from_prefix(&self, prefix_path: &Path, index: usize) -> Result<()>;
     fn launch_executable(
         &self,
-        prefix_path: &PathBuf,
+        prefix_path: &Path,
         executable: &RegisteredExecutable,
     ) -> Result<()>;
-    fn run_winecfg(&self, prefix_path: &PathBuf) -> Result<()>;
-    fn get_prefix_info(&self, prefix_path: &PathBuf) -> Result<PrefixInfo>;
+    fn run_winecfg(&self, prefix_path: &Path) -> Result<()>;
+    fn get_prefix_info(&self, prefix_path: &Path) -> Result<PrefixInfo>;
 }
 
 pub trait ExecutableManager {
@@ -51,6 +52,33 @@ pub struct WinePrefix {
     pub name: String,
     pub path: PathBuf,
     pub config: PrefixConfig,
+}
+
+impl WinePrefix {
+    /// The on-disk prefix directory path.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The prefix configuration.
+    pub fn config(&self) -> &PrefixConfig {
+        &self.config
+    }
+
+    /// Mutable reference to the prefix configuration.
+    pub fn config_mut(&mut self) -> &mut PrefixConfig {
+        &mut self.config
+    }
+
+    /// The display name of the prefix.
+    pub fn display_name(&self) -> &str {
+        &self.name
+    }
+
+    /// The UUID derived from the directory name.
+    pub fn uuid(&self) -> Option<&str> {
+        self.path.file_name().and_then(OsStr::to_str)
+    }
 }
 
 #[derive(Debug)]

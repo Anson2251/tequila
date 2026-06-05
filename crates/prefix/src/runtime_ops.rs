@@ -6,29 +6,21 @@ use std::path::PathBuf;
 
 impl Manager {
     pub fn save_runtime_state(&self) {
-        // NOTE: `From<RuntimeManager> for Settings` already preserves any
-        // existing `github_api_key` from on-disk settings, so a plain
-        // conversion + save is safe.
-        let settings: store::Settings = self.runtime_manager.clone().into();
+        let settings: store::Settings = self.clone_runtime().into();
         if let Err(e) = settings.save() {
             log::error!("[runtime] failed to save runtime settings: {}", e);
         }
     }
 
     /// Register a channel runtime after a successful download.
-    ///
-    /// This is the **sync** counterpart of the former async
-    /// `download_channel_runtime`.  The async I/O (download + brew
-    /// cask metadata) must be done **before** calling this method
-    /// so that no lock is held across await points.
     pub fn register_channel_runtime(
-        &mut self,
+        &self,
         channel: Channel,
         version: String,
         bundle_dir: PathBuf,
     ) -> Runtime {
         let runtime = self
-            .runtime_manager
+            .write_runtime()
             .register_channel(channel, version, bundle_dir)
             .clone();
         self.save_runtime_state();
@@ -36,12 +28,8 @@ impl Manager {
     }
 
     /// Download a channel-based runtime and install it.
-    ///
-    /// DEPRECATED: Prefer the split workflow — call the async
-    /// download helpers directly, then register via
-    /// [`Manager::register_channel_runtime`].
     pub async fn download_channel_runtime(
-        &mut self,
+        &self,
         channel: Channel,
         progress: runtime::download::ProgressFn,
     ) -> Result<Runtime> {
@@ -52,7 +40,7 @@ impl Manager {
             .await
             .map_err(|e| PrefixError::Process(e))?;
         let runtime = self
-            .runtime_manager
+            .write_runtime()
             .register_channel(channel, cask.version, bundle_dir)
             .clone();
         self.save_runtime_state();
@@ -60,29 +48,31 @@ impl Manager {
     }
 
     pub fn import_runtime(
-        &mut self,
+        &self,
         source_path: &PathBuf,
         label: &str,
     ) -> std::result::Result<Runtime, String> {
         let runtimes = runtime::download::runtimes_dir();
         let runtime = self
-            .runtime_manager
+            .write_runtime()
             .import_runtime(source_path, label, &runtimes)?;
         self.save_runtime_state();
         Ok(runtime)
     }
 
-    pub fn remove_runtime(&mut self, id: &str) {
-        self.runtime_manager.remove(id);
+    pub fn remove_runtime(&self, id: &str) {
+        self.write_runtime().remove(id);
         self.save_runtime_state();
     }
 
-    pub fn set_default_runtime(&mut self, id: &str) {
-        self.runtime_manager.set_default(id);
+    pub fn set_default_runtime(&self, id: &str) {
+        self.write_runtime().set_default(id);
         self.save_runtime_state();
     }
 
-    pub(crate) fn runtime_for_prefix(&self, config: &PrefixConfig) -> Option<&Runtime> {
-        self.runtime_manager.resolve(config.wine_version.as_deref())
+    pub(crate) fn runtime_for_prefix(&self, config: &PrefixConfig) -> Option<Runtime> {
+        self.read_runtime()
+            .resolve(config.wine_version.as_deref())
+            .cloned()
     }
 }

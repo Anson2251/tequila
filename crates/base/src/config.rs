@@ -65,14 +65,14 @@ impl PrefixConfig {
         }
     }
 
-    pub fn save_to_file(&self, prefix_path: &PathBuf) -> Result<()> {
+    pub fn save_to_file(&self, prefix_path: &Path) -> Result<()> {
         let config_path = prefix_path.join("tequila-config.json");
         let json = serde_json::to_string_pretty(self)?;
         std::fs::write(config_path, json)?;
         Ok(())
     }
 
-    pub fn load_from_file(prefix_path: &PathBuf) -> Result<Option<Self>> {
+    pub fn load_from_file(prefix_path: &Path) -> Result<Option<Self>> {
         let config_path = prefix_path.join("tequila-config.json");
         if !config_path.exists() {
             return Ok(None);
@@ -148,14 +148,14 @@ impl PrefixConfig {
 }
 
 impl ConfigOperations for PrefixConfig {
-    fn save_to_file(&self, prefix_path: &PathBuf) -> Result<()> {
+    fn save_to_file(&self, prefix_path: &Path) -> Result<()> {
         let config_path = prefix_path.join("tequila-config.json");
         let json = serde_json::to_string_pretty(self)?;
         std::fs::write(config_path, json)?;
         Ok(())
     }
 
-    fn load_from_file(prefix_path: &PathBuf) -> Result<Option<Self>> {
+    fn load_from_file(prefix_path: &Path) -> Result<Option<Self>> {
         let config_path = prefix_path.join("tequila-config.json");
         if !config_path.exists() {
             return Ok(None);

@@ -181,8 +181,7 @@ impl AsyncComponent for RuntimeManagerModel {
 
         let rm = AppService::global()
             .prefix_manager()
-            .runtime_manager()
-            .clone();
+            .clone_runtime();
         populate_runtime_list(&model.list_box, &rm, sender.clone());
         update_count_label(&model.count_label, &rm);
 
@@ -200,17 +199,16 @@ impl AsyncComponent for RuntimeManagerModel {
             RuntimeManagerMsg::Refresh => {
                 let rm = AppService::global()
                     .prefix_manager()
-                    .runtime_manager()
-                    .clone();
+                    .clone_runtime();
                 populate_runtime_list(&self.list_box, &rm, sender.clone());
                 update_count_label(&self.count_label, &rm);
             }
             RuntimeManagerMsg::SetDefault(id) => {
                 let svc = AppService::global();
-                let mut pm = svc.prefix_manager_mut();
+                let pm = svc.prefix_manager_mut();
                 pm.set_default_runtime(&id);
                 pm.save_runtime_state();
-                let rm = pm.runtime_manager().clone();
+                let rm = pm.clone_runtime();
                 drop(pm);
                 populate_runtime_list(&self.list_box, &rm, sender.clone());
                 emit_updated(&rm, &sender);
@@ -218,9 +216,9 @@ impl AsyncComponent for RuntimeManagerModel {
             RuntimeManagerMsg::RemoveRuntime(id) => {
                 if id != "wine-system" {
                     let svc = AppService::global();
-                    let mut pm = svc.prefix_manager_mut();
+                    let pm = svc.prefix_manager_mut();
                     pm.remove_runtime(&id);
-                    let rm = pm.runtime_manager().clone();
+                    let rm = pm.clone_runtime();
                     drop(pm);
                     populate_runtime_list(&self.list_box, &rm, sender.clone());
                     update_count_label(&self.count_label, &rm);
@@ -238,7 +236,7 @@ impl AsyncComponent for RuntimeManagerModel {
                 self.progress_label.set_label("Starting download...");
                 self.progress_bar.set_fraction(0.0);
 
-                let mut pm = AppService::global().prefix_manager().clone();
+                let pm = AppService::global().prefix_manager().clone();
                 let s = sender.clone();
 
                 gtk::glib::spawn_future_local(async move {
@@ -251,7 +249,7 @@ impl AsyncComponent for RuntimeManagerModel {
 
                     match pm.download_channel_runtime(channel, progress).await {
                         Ok(_runtime) => {
-                            let rm = pm.runtime_manager().clone();
+                            let rm = pm.clone_runtime();
                             let _ = s.input(RuntimeManagerMsg::DownloadComplete(rm));
                         }
                         Err(e) => {
@@ -275,9 +273,8 @@ impl AsyncComponent for RuntimeManagerModel {
             }
             RuntimeManagerMsg::DownloadComplete(updated_rm) => {
                 let svc = AppService::global();
-                let mut pm = svc.prefix_manager_mut();
-                let rm_ref = pm.runtime_manager_mut();
-                let _old = std::mem::replace(rm_ref, updated_rm);
+                let pm = svc.prefix_manager_mut();
+                *pm.write_runtime() = updated_rm;
                 pm.save_runtime_state();
 
                 self.set_downloading(false);
@@ -290,8 +287,7 @@ impl AsyncComponent for RuntimeManagerModel {
 
                 let rm = AppService::global()
                     .prefix_manager()
-                    .runtime_manager()
-                    .clone();
+                    .clone_runtime();
                 populate_runtime_list(&self.list_box, &rm, sender.clone());
                 update_count_label(&self.count_label, &rm);
                 emit_updated(&rm, &sender);
@@ -338,11 +334,11 @@ impl AsyncComponent for RuntimeManagerModel {
                     .to_string();
 
                 let svc = AppService::global();
-                let mut pm_import = svc.prefix_manager_mut();
+                let pm_import = svc.prefix_manager_mut();
                 match pm_import.import_runtime(&path, &dir_name) {
                     Ok(_runtime) => {
                         pm_import.save_runtime_state();
-                        let rm = pm_import.runtime_manager().clone();
+                        let rm = pm_import.clone_runtime();
                         drop(pm_import);
                         populate_runtime_list(&self.list_box, &rm, sender.clone());
                         update_count_label(&self.count_label, &rm);

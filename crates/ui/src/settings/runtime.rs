@@ -49,7 +49,7 @@ impl RuntimeSettings {
     fn refresh_list(&mut self, sender: &AsyncComponentSender<Self>) {
         let svc = AppService::global();
         let pm = svc.prefix_manager();
-        let rm = pm.runtime_manager();
+        let rm = &*pm.read_runtime();
         refresh_runtime_list(&self.list_group, rm, sender, &mut self.rows);
     }
 }
@@ -147,7 +147,7 @@ impl AsyncComponent for RuntimeSettings {
         let pm = svc.prefix_manager();
         refresh_runtime_list(
             &model.list_group,
-            pm.runtime_manager(),
+            &*pm.read_runtime(),
             &sender,
             &mut model.rows,
         );
@@ -199,13 +199,13 @@ impl AsyncComponent for RuntimeSettings {
             RuntimeSettingsMsg::DownloadComplete(updated_rm) => {
                 // Replace the runtime manager in the global service
                 let svc = AppService::global();
-                let mut pm = svc.prefix_manager_mut();
-                let _old = std::mem::replace(pm.runtime_manager_mut(), updated_rm);
+                let pm = svc.prefix_manager_mut();
+                *pm.write_runtime() = updated_rm;
                 pm.save_runtime_state();
                 drop(pm);
 
                 let _ = sender.output(RuntimeSettingsOutput::RuntimesUpdated(
-                    svc.prefix_manager().runtime_manager().clone(),
+                    svc.prefix_manager().clone_runtime(),
                 ));
                 self.refresh_list(&sender);
                 // Refresh Available rows so their check_status picks up the new state

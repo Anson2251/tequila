@@ -27,7 +27,7 @@ pub fn init(
     prefix_store: Arc<PrefixStore>,
     process_tracker: Arc<Mutex<ProcessTracker>>,
 ) {
-    let manager = Manager::new(wine_dir.clone(), icon_cache.clone());
+    let manager = Manager::new(wine_dir.clone(), icon_cache.clone(), prefix_store.clone());
     GLOBAL
         .set(GlobalState {
             prefix_manager: RwLock::new(manager),

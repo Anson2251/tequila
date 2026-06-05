@@ -26,7 +26,7 @@ pub enum CreatePrefixMsg {
 
 impl CreatePrefixDialog {
     fn build_runtime_combo(prefix_manager: &prefix::Manager) -> gtk::DropDown {
-        let rm = prefix_manager.runtime_manager();
+        let rm = &*prefix_manager.read_runtime();
         let default_id = &rm.default_id;
         let items: Vec<String> = rm
             .runtimes
@@ -234,7 +234,7 @@ impl SimpleComponent for CreatePrefixDialog {
                     let i = self.runtime_combo.selected() as usize;
                     let svc = AppService::global();
                     let pm = svc.prefix_manager();
-                    let rm = pm.runtime_manager();
+                    let rm = &*pm.read_runtime();
                     rm.runtimes
                         .get(i)
                         .map(|r| r.id.clone())

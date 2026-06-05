@@ -9,6 +9,7 @@ use runtime::graphics;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -51,10 +52,35 @@ fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> std::io:
 }
 
 impl Manager {
+    /// Open an existing prefix, loading its configuration.
+    ///
+    /// Returns a [`Prefix`](crate::Prefix) with shared access to the
+    /// manager's scanner, runtime manager, and store.
+    pub fn open_prefix(&self, prefix_path: &Path) -> Result<crate::Prefix> {
+        let name = prefix_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let system_wine_version = self
+            .read_runtime()
+            .get("wine-system")
+            .map(|r| r.wine_version.clone());
+        let config = self.load_or_create_config(prefix_path, name, &system_wine_version)?;
+        Ok(crate::Prefix {
+            path: prefix_path.to_path_buf(),
+            config,
+            scanner: Arc::clone(&self.scanner),
+            runtime_manager: Arc::clone(&self.runtime_manager),
+            store: Arc::clone(&self.store),
+        })
+    }
+
     pub fn scan_prefixes(&self) -> Result<Vec<WinePrefix>> {
         let mut prefixes: Vec<WinePrefix> = Vec::new();
-        let system_runtime = self.runtime_manager.get("wine-system");
-        let system_wine_version = system_runtime.map(|r| r.wine_version.clone());
+        let system_wine_version = self
+            .read_runtime()
+            .get("wine-system")
+            .map(|r| r.wine_version.clone());
         for entry in fs::read_dir(&self.wine_dir)? {
             let entry = entry?;
             let path = entry.path();
@@ -76,7 +102,7 @@ impl Manager {
         Ok(prefixes)
     }
 
-    fn is_valid_wine_prefix(&self, path: &PathBuf) -> bool {
+    fn is_valid_wine_prefix(&self, path: &Path) -> bool {
         path.join("drive_c").exists()
             && path.join("system.reg").exists()
             && path.join("user.reg").exists()
@@ -84,7 +110,7 @@ impl Manager {
 
     pub fn load_or_create_config(
         &self,
-        prefix_path: &PathBuf,
+        prefix_path: &Path,
         name: &str,
         system_wine_version: &Option<String>,
     ) -> Result<PrefixConfig> {
@@ -106,7 +132,7 @@ impl Manager {
         Ok(config)
     }
 
-    fn detect_architecture(&self, prefix_path: &PathBuf) -> Result<String> {
+    fn detect_architecture(&self, prefix_path: &Path) -> Result<String> {
         if prefix_path.join("drive_c/Program Files (x86)").exists() {
             Ok("win64".to_string())
         } else if prefix_path.join("drive_c/Program Files").exists() {
@@ -117,7 +143,7 @@ impl Manager {
     }
 
     pub fn create_prefix(&self, name: &str, architecture: &str) -> Result<PathBuf> {
-        let runtime_id = self.runtime_manager.default_id.clone();
+        let runtime_id = self.read_runtime().default_id.clone();
         self.create_prefix_with_runtime(name, architecture, &runtime_id)
     }
 
@@ -155,7 +181,7 @@ impl Manager {
     /// trigger Wine's prefix creation/update machinery.
     ///
     /// The prefix directory must already exist on disk.
-    pub fn reinitialize_prefix(&self, prefix_path: &PathBuf, config: &PrefixConfig) -> Result<()> {
+    pub fn reinitialize_prefix(&self, prefix_path: &Path, config: &PrefixConfig) -> Result<()> {
         let wine_arch = if config.architecture == "win32" {
             "win32"
         } else {
@@ -186,7 +212,7 @@ impl Manager {
         Ok(())
     }
 
-    pub fn delete_prefix(&self, prefix_path: &PathBuf) -> Result<()> {
+    pub fn delete_prefix(&self, prefix_path: &Path) -> Result<()> {
         if !prefix_path.exists() {
             return Err(PrefixError::NotFound("Prefix does not exist".to_string()));
         }
@@ -1343,7 +1369,7 @@ impl Manager {
         // without any duplication.
         let mut cmd = std::process::Command::new("true");
         if let Some(runtime) = self.runtime_for_prefix(&config) {
-            apply_runtime_env(&mut cmd, runtime, prefix_path);
+            apply_runtime_env(&mut cmd, &runtime, prefix_path);
         } else {
             cmd.env("WINEPREFIX", prefix_path);
         }

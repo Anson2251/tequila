@@ -29,8 +29,7 @@ use tracker;
 
 #[tracker::track]
 pub struct AppManagerModel {
-    prefix_path: PathBuf,
-    config: PrefixConfig,
+    prefix: prefix::Prefix,
     scanning: bool,
     selected_executable: Option<usize>,
     #[tracker::do_not_track]
@@ -73,7 +72,7 @@ pub enum AppManagerMsg {
 
 #[relm4::component(pub, async)]
 impl AsyncComponent for AppManagerModel {
-    type Init = (PathBuf, PrefixConfig, gtk::Window);
+    type Init = (prefix::Prefix, gtk::Window);
     type Input = AppManagerMsg;
     type Output = AppManagerMsg;
     type CommandOutput = ();
@@ -125,7 +124,7 @@ impl AsyncComponent for AppManagerModel {
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
-        let (prefix_path, config, main_window) = init;
+        let (prefix, main_window) = init;
 
         let icon_cache = AppService::global()
             .prefix_manager()
@@ -136,8 +135,8 @@ impl AsyncComponent for AppManagerModel {
         // Initialize registered apps list component with the current registered executables
         let registered_apps_list = RegisteredAppsListModel::builder()
             .launch((
-                config.registered_executables.clone(),
-                prefix_path.clone(),
+                prefix.config().registered_executables.clone(),
+                prefix.path().to_path_buf(),
                 icon_cache.clone(),
             ))
             .forward(sender.input_sender(), |output| {
@@ -145,7 +144,7 @@ impl AsyncComponent for AppManagerModel {
             });
 
         // Initialize app actions component
-        let has_prefix = !prefix_path.as_os_str().is_empty();
+        let has_prefix = !prefix.path().as_os_str().is_empty();
         let app_actions = AppActionsModel::builder()
             .launch((false, false, has_prefix)) // (has_selection, is_scanning, prefix_set)
             .forward(sender.input_sender(), |output| {
@@ -154,14 +153,14 @@ impl AsyncComponent for AppManagerModel {
 
         // Initialize add app popover (hidden by default) - will be connected to the actual add button later
         let add_app_popover = AddAppPopoverModel::builder()
-            .launch((gtk::Button::new(), prefix_path.clone(), icon_cache.clone()))
+            .launch((gtk::Button::new(), prefix.path().to_path_buf(), icon_cache.clone()))
             .forward(sender.input_sender(), |output| {
                 AppManagerMsg::AddAppPopover(output)
             });
 
         // Initialize executable info dialog (hidden by default)
         let executable_info_dialog = ExecutableInfoDialogModel::builder()
-            .launch((prefix_path.clone(), main_window.clone(), icon_cache.clone()))
+            .launch((prefix.path().to_path_buf(), main_window.clone(), icon_cache.clone()))
             .forward(sender.input_sender(), |output| {
                 AppManagerMsg::ExecutableInfoDialog(output)
             });
@@ -174,8 +173,7 @@ impl AsyncComponent for AppManagerModel {
         });
 
         let model = AppManagerModel {
-            prefix_path,
-            config: config.clone(),
+            prefix,
             scanning: false,
             selected_executable: None,
             available_executables: Vec::new(),
@@ -211,7 +209,7 @@ impl AsyncComponent for AppManagerModel {
         self.reset();
         match msg {
             AppManagerMsg::ScanForApplications => {
-                if self.prefix_path.as_os_str().is_empty() {
+                if self.prefix.path().as_os_str().is_empty() {
                     info!("[apps] skipping scan: no prefix path set");
                     return;
                 }
@@ -224,34 +222,21 @@ impl AsyncComponent for AppManagerModel {
 
                 info!(
                     "[apps] scanning for applications... {}",
-                    &self.prefix_path.display()
+                    self.prefix.path().display()
                 );
 
-                let prefix_path = self.prefix_path.clone();
-
-                let scanner = AppService::global().prefix_manager().scanner().clone();
-                match scanner.scan_prefix_async(&prefix_path).await {
-                    Ok(executables) => {
-                        let mut all = executables;
-                        if let Ok(desktop) =
-                            scanner.scan_for_desktop_files_async(&prefix_path).await
-                        {
-                            all.extend(desktop);
-                        }
-                        all.sort_by(|a, b| a.name.cmp(&b.name));
-                        all.dedup_by(|a, b| {
-                            a.name == b.name && a.executable_path == b.executable_path
-                        });
+                match self.prefix.scan_applications_async().await {
+                    Ok(all) => {
                         info!("[apps] scanning complete, found {} executables", all.len());
                         let _ = AppService::global()
                             .prefix_store()
-                            .save_scanned_executables(&self.prefix_path.to_string_lossy(), &all);
+                            .save_scanned_executables(&self.prefix.path().to_string_lossy(), &all);
                         self.available_executables = all.clone();
                         // Refresh popover list with scanned results
                         self.add_app_popover
                             .emit(AddAppPopoverMsg::UpdateAvailableApps(
                                 all.clone(),
-                                self.config.architecture.clone(),
+                                self.prefix.config().architecture.clone(),
                             ));
                     }
                     Err(e) => {
@@ -265,13 +250,14 @@ impl AsyncComponent for AppManagerModel {
             AppManagerMsg::AddExecutable(index) => {
                 if let Some(executable) = self.available_executables.get(index) {
                     info!("[apps] adding executable: {}", executable.name);
+                    let path = self.prefix.path().to_path_buf();
                     if service::config_ops::add_executable(
                         &AppService::global(),
-                        &self.prefix_path,
-                        &mut self.config,
+                        &path,
+                        self.prefix.config_mut(),
                         executable.clone(),
                     ) {
-                        let _ = sender.output(AppManagerMsg::ConfigUpdated(self.config.clone()));
+                        let _ = sender.output(AppManagerMsg::ConfigUpdated(self.prefix.config().clone()));
                     }
                 }
             }
@@ -283,41 +269,43 @@ impl AsyncComponent for AppManagerModel {
                     .filter_map(|&i| self.available_executables.get(i).cloned())
                     .collect();
 
+                let path = self.prefix.path().to_path_buf();
                 if service::config_ops::add_executables(
                     &AppService::global(),
-                    &self.prefix_path,
-                    &mut self.config,
+                    &path,
+                    self.prefix.config_mut(),
                     &exes,
                 ) {
                     self.registered_apps_list
                         .emit(RegisteredAppsListMsg::UpdateExecutables(
-                            self.config.registered_executables.clone(),
+                            self.prefix.config().registered_executables.clone(),
                         ));
-                    let _ = sender.output(AppManagerMsg::ConfigUpdated(self.config.clone()));
+                    let _ = sender.output(AppManagerMsg::ConfigUpdated(self.prefix.config().clone()));
                 }
             }
             AppManagerMsg::RemoveExecutable(index) => {
-                if index < self.config.registered_executables.len() {
+                if index < self.prefix.config().registered_executables.len() {
                     self.set_selected_executable(None);
                     self.app_actions.emit(AppActionsMsg::SetSelection(false));
                     self.app_actions
                         .emit(AppActionsMsg::SetDesktopExists(false));
 
+                    let path = self.prefix.path().to_path_buf();
                     if service::config_ops::remove_executable(
                         &AppService::global(),
-                        &self.prefix_path,
-                        &mut self.config,
+                        &path,
+                        self.prefix.config_mut(),
                         index,
                     ) {
-                        let _ = sender.output(AppManagerMsg::ConfigUpdated(self.config.clone()));
+                        let _ = sender.output(AppManagerMsg::ConfigUpdated(self.prefix.config().clone()));
                     }
                 }
             }
             AppManagerMsg::LaunchExecutable(index) => {
-                if let Some(executable) = self.config.registered_executables.get(index) {
+                if let Some(executable) = self.prefix.config().registered_executables.get(index) {
                     match service::launch::launch_executable(
                         &AppService::global(),
-                        &self.prefix_path,
+                        self.prefix.path(),
                         executable,
                     ) {
                         Ok(_pid) => {
@@ -350,7 +338,7 @@ impl AsyncComponent for AppManagerModel {
                 // Update the registered apps list with the current config's registered executables
                 self.registered_apps_list
                     .emit(RegisteredAppsListMsg::UpdateExecutables(
-                        self.config.registered_executables.clone(),
+                        self.prefix.config().registered_executables.clone(),
                     ));
             }
             AppManagerMsg::SelectExecutable(index) => {
@@ -358,13 +346,14 @@ impl AsyncComponent for AppManagerModel {
                 self.set_selected_executable(Some(index));
             }
             AppManagerMsg::ConfigUpdated(config) => {
-                self.set_config(config);
+                self.prefix.set_config(config);
+                self.set_prefix(self.prefix.clone());
 
                 // Load available executables from DB (populated during refresh/sync)
-                if !self.prefix_path.as_os_str().is_empty() {
+                if !self.prefix.path().as_os_str().is_empty() {
                     match AppService::global()
                         .prefix_store()
-                        .list_scanned_executables(&self.prefix_path.to_string_lossy())
+                        .list_scanned_executables(&self.prefix.path().to_string_lossy())
                     {
                         Ok(exes) => {
                             self.available_executables = exes;
@@ -378,7 +367,7 @@ impl AsyncComponent for AppManagerModel {
                 // Update the registered apps list from cached config
                 self.registered_apps_list
                     .emit(RegisteredAppsListMsg::UpdateExecutables(
-                        self.config.registered_executables.clone(),
+                        self.prefix.config().registered_executables.clone(),
                     ));
 
                 // Restore running highlight immediately
@@ -389,7 +378,7 @@ impl AsyncComponent for AppManagerModel {
 
                 // Update selected running state
                 if let Some(i) = self.selected_executable {
-                    if let Some(exe) = self.config.registered_executables.get(i) {
+                    if let Some(exe) = self.prefix.config().registered_executables.get(i) {
                         let running = service::launch::is_process_running(
                             &AppService::global(),
                             &exe.executable_path,
@@ -400,10 +389,10 @@ impl AsyncComponent for AppManagerModel {
                 }
 
                 // Reset selection if the config has no executables or index is out of bounds
-                if self.config.registered_executables.is_empty()
+                if self.prefix.config().registered_executables.is_empty()
                     || self
                         .selected_executable
-                        .map_or(false, |i| i >= self.config.registered_executables.len())
+                        .map_or(false, |i| i >= self.prefix.config().registered_executables.len())
                 {
                     self.set_selected_executable(None);
                     self.app_actions.emit(AppActionsMsg::SetSelection(false));
@@ -413,7 +402,8 @@ impl AsyncComponent for AppManagerModel {
                 let has_prefix = !path.as_os_str().is_empty();
                 self.app_actions
                     .emit(AppActionsMsg::SetPrefixSet(has_prefix));
-                self.set_prefix_path(path.clone());
+                self.prefix.set_path(path.clone());
+                self.set_prefix(self.prefix.clone());
                 self.registered_apps_list
                     .emit(RegisteredAppsListMsg::PrefixPathUpdated(path.clone()));
                 self.add_app_popover
@@ -424,11 +414,11 @@ impl AsyncComponent for AppManagerModel {
                     .emit(AppActionsMsg::SetDesktopExists(false));
             }
             AppManagerMsg::ShowInfoDialog(index) => {
-                if let Some(executable) = self.config.registered_executables.get(index) {
+                if let Some(executable) = self.prefix.config().registered_executables.get(index) {
                     self.executable_info_dialog
                         .emit(ExecutableInfoDialogMsg::ShowInfo(
                             executable.clone(),
-                            self.prefix_path.clone(),
+                            self.prefix.path().to_path_buf(),
                         ));
                 }
             }
@@ -436,34 +426,49 @@ impl AsyncComponent for AppManagerModel {
             AppManagerMsg::ExecutableInfoDialog(output) => match output {
                 ExecutableInfoDialogOutput::ExecutableUpdated(updated_exec) => {
                     let exe_path = updated_exec.executable_path.clone();
+                    let path = self.prefix.path().to_path_buf();
                     if service::config_ops::update_executable(
                         &AppService::global(),
-                        &self.prefix_path,
-                        &mut self.config,
+                        &path,
+                        self.prefix.config_mut(),
                         updated_exec.clone(),
                     ) {
-                        // Remove stale desktop launcher if one exists (name/icon may have changed)
-                        if prefix::desktop::desktop_launcher_exists(&self.prefix_path, &exe_path) {
-                            if let Err(e) = prefix::desktop::remove_desktop_launcher(
-                                &self.prefix_path,
+                        // Update desktop launcher if one exists (name/icon may have changed)
+                        if prefix::desktop::desktop_launcher_exists(self.prefix.path(), &exe_path) {
+                            let icon_cache = AppService::global()
+                                .prefix_manager()
+                                .scanner()
+                                .icon_cache()
+                                .clone();
+                            let resolved_icon = prefix::resolve_or_extract_icon(
+                                &updated_exec,
+                                self.prefix.path(),
+                                &icon_cache,
+                            );
+                            let prefix_name = self.prefix.name().to_string();
+                            if let Err(e) = prefix::desktop::create_desktop_launcher(
+                                self.prefix.path(),
+                                &prefix_name,
+                                &updated_exec.name,
                                 &exe_path,
+                                resolved_icon.as_deref(),
                             ) {
-                                error!("[apps] failed to remove stale desktop launcher: {}", e);
+                                error!("[apps] failed to update desktop launcher: {}", e);
                             } else {
                                 info!(
-                                    "[apps] removed stale desktop launcher for '{}'",
+                                    "[apps] updated desktop launcher for '{}'",
                                     updated_exec.name
                                 );
                                 self.app_actions
-                                    .emit(AppActionsMsg::SetDesktopExists(false));
+                                    .emit(AppActionsMsg::SetDesktopExists(true));
                             }
                         }
 
                         self.registered_apps_list
                             .emit(RegisteredAppsListMsg::UpdateExecutables(
-                                self.config.registered_executables.clone(),
+                                self.prefix.config().registered_executables.clone(),
                             ));
-                        let _ = sender.output(AppManagerMsg::ConfigUpdated(self.config.clone()));
+                        let _ = sender.output(AppManagerMsg::ConfigUpdated(self.prefix.config().clone()));
                     }
                 }
             },
@@ -475,7 +480,7 @@ impl AsyncComponent for AppManagerModel {
                         self.set_selected_executable(Some(index));
                         self.app_actions.emit(AppActionsMsg::SetSelection(true));
                         // Check if the selected app is running
-                        if let Some(exe) = self.config.registered_executables.get(index) {
+                        if let Some(exe) = self.prefix.config().registered_executables.get(index) {
                             let running = service::launch::is_process_running(
                                 &AppService::global(),
                                 &exe.executable_path,
@@ -484,7 +489,7 @@ impl AsyncComponent for AppManagerModel {
                                 .emit(AppActionsMsg::SetSelectedRunning(running));
                             // Check desktop launcher state
                             let has_desktop = prefix::desktop::desktop_launcher_exists(
-                                &self.prefix_path,
+                                self.prefix.path(),
                                 &exe.executable_path,
                             );
                             self.app_actions
@@ -512,7 +517,7 @@ impl AsyncComponent for AppManagerModel {
                     }
                     AppActionsOutput::Kill => {
                         if let Some(index) = self.selected_executable {
-                            if let Some(exe) = self.config.registered_executables.get(index) {
+                            if let Some(exe) = self.prefix.config().registered_executables.get(index) {
                                 let killed = service::launch::kill_process(
                                     &AppService::global(),
                                     &exe.executable_path,
@@ -535,7 +540,7 @@ impl AsyncComponent for AppManagerModel {
                         self.add_app_popover
                             .emit(AddAppPopoverMsg::UpdateAvailableApps(
                                 self.available_executables.clone(),
-                                self.config.architecture.clone(),
+                                self.prefix.config().architecture.clone(),
                             ));
 
                         // Auto-scan if no cached executables
@@ -569,8 +574,8 @@ impl AsyncComponent for AppManagerModel {
                     AppActionsOutput::RunUninstaller => {
                         match service::launch::launch_uninstaller(
                             &AppService::global(),
-                            &self.prefix_path,
-                            &self.config,
+                            self.prefix.path(),
+                            self.prefix.config(),
                         ) {
                             Ok(track_path) => {
                                 self.uninstaller_track_path = Some(track_path);
@@ -603,9 +608,9 @@ impl AsyncComponent for AppManagerModel {
                     }
                     AppActionsOutput::CreateDesktop => {
                         if let Some(index) = self.selected_executable {
-                            if let Some(exe) = self.config.registered_executables.get(index) {
-                                let prefix_path = self.prefix_path.clone();
-                                let prefix_name = self.config.name.clone();
+                            if let Some(exe) = self.prefix.config().registered_executables.get(index) {
+                                let prefix_path = self.prefix.path().to_path_buf();
+                                let prefix_name = self.prefix.name().to_string();
                                 let exe_name = exe.name.clone();
                                 let exe_path = exe.executable_path.clone();
                                 let parent_window = _root
@@ -706,8 +711,8 @@ impl AsyncComponent for AppManagerModel {
                 match service::launch::launch_direct_exe(
                     &AppService::global(),
                     &exe_path,
-                    &self.prefix_path,
-                    &self.config,
+                    self.prefix.path(),
+                    self.prefix.config(),
                 ) {
                     Ok(()) => {
                         self.external_running.insert(exe_path);
@@ -724,7 +729,7 @@ impl AsyncComponent for AppManagerModel {
                     .emit(RegisteredAppsListMsg::SetRunningPaths(paths));
                 // Update selected running state
                 if let Some(i) = self.selected_executable {
-                    if let Some(exe) = self.config.registered_executables.get(i) {
+                    if let Some(exe) = self.prefix.config().registered_executables.get(i) {
                         let running = service::launch::is_process_running(
                             &AppService::global(),
                             &exe.executable_path,

@@ -2,13 +2,16 @@ mod app_ops;
 pub mod desktop;
 mod launch_ops;
 mod manager;
+pub mod prefix;
 mod prefix_ops;
 mod process_tracker;
 mod runtime_ops;
 mod wine_processes;
 
-pub use app_ops::resolve_or_extract_icon;
 pub use manager::Manager;
+pub use prefix::Prefix;
+pub use prefix::prefix_label;
+pub use prefix::resolve_or_extract_icon;
 pub use prefix_ops::TQL_EXTENSION;
 pub use process_tracker::ProcessTracker;
 pub use wine_processes::apply_runtime_env;

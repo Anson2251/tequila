@@ -283,7 +283,7 @@ impl AsyncComponent for SettingsWindow {
         let runtime_subtitle = {
             let svc = AppService::global();
             let pm = svc.prefix_manager();
-            runtime_subtitle(pm.runtime_manager())
+            runtime_subtitle(&*pm.read_runtime())
         };
         let graphics_subtitle_str = graphics_subtitle();
 
@@ -424,11 +424,11 @@ impl AsyncComponent for SettingsWindow {
             // ── Forwarded from RuntimeSettings ──
             SettingsMsg::RuntimesUpdated(rm) => {
                 let svc = AppService::global();
-                *svc.prefix_manager_mut().runtime_manager_mut() = rm;
+                *svc.prefix_manager_mut().write_runtime() = rm;
                 let pm = svc.prefix_manager();
-                self.runtime_subtitle = runtime_subtitle(pm.runtime_manager());
+                self.runtime_subtitle = runtime_subtitle(&*pm.read_runtime());
                 let _ = sender.output(SettingsOutput::RuntimesUpdated(
-                    pm.runtime_manager().clone(),
+                    pm.clone_runtime(),
                 ));
             }
 

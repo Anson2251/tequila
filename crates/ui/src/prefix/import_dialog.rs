@@ -87,7 +87,7 @@ impl SimpleComponent for ImportDialogModel {
         // Build runtime dropdown
         let svc = AppService::global();
         let pm = svc.prefix_manager();
-        let rm = pm.runtime_manager();
+        let rm = &*pm.read_runtime();
         let items: Vec<String> = rm
             .runtimes
             .iter()

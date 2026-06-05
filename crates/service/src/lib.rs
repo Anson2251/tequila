@@ -6,6 +6,7 @@ pub mod sync;
 pub mod terminal;
 
 use base::{PrefixConfig, WinePrefix, error::Result};
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -73,7 +74,7 @@ impl AppService {
     }
 
     /// Delete a prefix from disk and remove it from the list.
-    pub fn delete_prefix(&self, prefix_path: &PathBuf, prefixes: &mut Vec<WinePrefix>) -> bool {
+    pub fn delete_prefix(&self, prefix_path: &Path, prefixes: &mut Vec<WinePrefix>) -> bool {
         if let Err(e) = self.prefix_manager().delete_prefix(prefix_path) {
             log::error!("[service] failed to delete prefix: {}", e);
             return false;
@@ -93,7 +94,7 @@ impl AppService {
     }
 
     /// Save a config update for a prefix.
-    pub fn update_config(&self, prefix_path: &PathBuf, config: &PrefixConfig) -> Result<()> {
+    pub fn update_config(&self, prefix_path: &Path, config: &PrefixConfig) -> Result<()> {
         self.prefix_manager().update_config(prefix_path, config)
     }
 
@@ -106,7 +107,7 @@ impl AppService {
     pub fn resolve_runtime_display_name(&self, config: &PrefixConfig) -> String {
         let rt = config.wine_version.as_ref().and_then(|id| {
             let mgr = self.prefix_manager();
-            mgr.runtime_manager().get(id).cloned()
+            mgr.read_runtime().get(id).cloned()
         });
         match rt {
             Some(r) => format!("{} ({})", r.name, r.wine_version),

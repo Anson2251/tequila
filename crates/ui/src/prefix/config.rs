@@ -337,8 +337,7 @@ impl SimpleComponent for PrefixConfigModel {
         // ── Build wine runtime dropdown ──
         let runtime_manager = AppService::global()
             .prefix_manager()
-            .runtime_manager()
-            .clone();
+            .clone_runtime();
         let mut runtime_items: Vec<String> = Vec::new();
         let mut runtime_ids: Vec<String> = Vec::new();
         let mut selected_wine_runtime: u32 = 0;
@@ -738,7 +737,7 @@ impl PrefixConfigModel {
     fn refresh_runtime_cache(&mut self) {
         let svc = AppService::global();
         let pm = svc.prefix_manager();
-        let rm = pm.runtime_manager();
+        let rm = &*pm.read_runtime();
         self.wine_runtime_ids = rm.runtimes.iter().map(|rt| rt.id.clone()).collect();
         let fresh_items: Vec<String> = rm
             .runtimes
