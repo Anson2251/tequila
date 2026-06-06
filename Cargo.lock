@@ -3563,6 +3563,8 @@ dependencies = [
  "objc2-foundation",
  "prefix",
  "relm4",
+ "serde",
+ "serde_json",
  "service",
  "tokio",
  "tracker",

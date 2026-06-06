@@ -45,7 +45,7 @@ impl AsyncComponent for GraphicsSettings {
     view! {
         #[root]
         adw::NavigationPage {
-            set_title: "Graphics Backends",
+            set_title: &crate::t!("settings.graphics.title"),
             set_child: Some(&prefs_page),
         },
 
@@ -53,13 +53,13 @@ impl AsyncComponent for GraphicsSettings {
         adw::PreferencesPage {
             #[name = "installed_group"]
             adw::PreferencesGroup {
-                set_title: "Installed",
+                set_title: &crate::t!("settings.graphics.installed"),
             },
 
             #[name = "avail_group"]
             adw::PreferencesGroup {
-                set_title: "Available",
-                set_description: Some("Translation layers that can improve DirectX performance"),
+                set_title: &crate::t!("settings.graphics.available"),
+                set_description: Some(&crate::t!("settings.graphics.available_desc")),
             },
         }
     }
@@ -133,8 +133,8 @@ fn refresh_graphics_list(group: &adw::PreferencesGroup, rows: &mut Vec<adw::Acti
 
     if backends.is_empty() {
         let row = adw::ActionRow::builder()
-            .title("No backends installed")
-            .subtitle("Download graphics backends to improve DirectX performance")
+            .title(&crate::t!("settings.graphics.no_backends"))
+            .subtitle(&crate::t!("settings.graphics.no_backends_sub"))
             .activatable(false)
             .build();
         group.add(&row);
@@ -144,7 +144,7 @@ fn refresh_graphics_list(group: &adw::PreferencesGroup, rows: &mut Vec<adw::Acti
 
     for backend in &backends {
         let name = backend.display_name();
-        let subtitle = format!("Version: {}", backend.version_string());
+        let subtitle = crate::tf!("settings.graphics.version_format", "version" => &backend.version_string());
 
         let row = adw::ActionRow::builder()
             .title(name)
@@ -179,8 +179,8 @@ fn has_backend_dir(prefix: &str) -> bool {
 /// Build a `check_status` closure for a backend type.
 fn make_check_status(
     prefix: &'static str,
-    status_installed: &'static str,
-    status_missing: &'static str,
+    status_installed: String,
+    status_missing: String,
 ) -> Box<dyn Fn() -> managed_download_row::DownloadRowStatus + Send + 'static> {
     Box::new(move || {
         let installed = has_backend_dir(prefix);
@@ -188,9 +188,9 @@ fn make_check_status(
             installed,
             managed: installed,
             status_text: if installed {
-                status_installed.into()
+                status_installed.clone()
             } else {
-                status_missing.into()
+                status_missing.clone()
             },
         }
     })
@@ -216,11 +216,11 @@ fn build_available_graphics_rows(
         // ── DXMT ──
         let dxmt_ctrl = managed_download_row::ManagedDownloadRow::builder()
             .launch(managed_download_row::ManagedDownloadRowInit {
-                title: "DXMT".into(),
+                title: crate::t!("settings.graphics.dxmt"),
                 check_status: make_check_status(
                     "dxmt-",
-                    "✓ Installed",
-                    "DirectX → Metal translation layer (recommended)",
+                    crate::t!("settings.graphics.installed_status"),
+                    crate::t!("settings.graphics.dxmt_desc"),
                 ),
                 check_update: None,
                 start_download: Box::new(|_data_dir, progress, cancel| {
@@ -231,7 +231,7 @@ fn build_available_graphics_rows(
                                 .await
                                 .map_err(|e| e.to_string())?;
                         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                            return Err("Cancelled".into());
+                            return Err(crate::t!("settings.graphics.cancelled").into());
                         }
                         let simple_prog: runtime::download::ProgressFn = Box::new(move |d, t| {
                             progress(d, t, runtime::download::InstallPhase::Download);
@@ -255,11 +255,11 @@ fn build_available_graphics_rows(
         let d3d_gs_sender = sender.input_sender();
         let d3d_ctrl = managed_download_row::ManagedDownloadRow::builder()
             .launch(managed_download_row::ManagedDownloadRowInit {
-                title: "D3DMetal (via GPTK)".into(),
+                title: crate::t!("settings.graphics.d3dmetal"),
                 check_status: make_check_status(
                     "d3dmetal-",
-                    "✓ Installed",
-                    "Apple's Game Porting Toolkit",
+                    crate::t!("settings.graphics.installed_status"),
+                    crate::t!("settings.graphics.d3dmetal_desc"),
                 ),
                 check_update: None,
                 start_download: Box::new({
@@ -278,22 +278,22 @@ fn build_available_graphics_rows(
                                 .send(GraphicsSettingsMsg::ShowD3DMetalImportDialog(tx))
                                 .is_err()
                             {
-                                return Err("Failed to open import dialog".into());
+                                return Err(crate::t!("settings.graphics.open_import_failed").into());
                             }
 
                             // Poll for user action (folder path or cancel)
                             let selected = loop {
                                 match rx.try_recv() {
                                     Ok(Some(path)) => break path,
-                                    Ok(None) => return Err("Import cancelled".into()),
+                                    Ok(None) => return Err(crate::t!("settings.graphics.import_cancelled").into()),
                                     Err(TryRecvError::Empty) => {
                                         if cancel.load(Ordering::Relaxed) {
-                                            return Err("Cancelled".into());
+                                            return Err(crate::t!("settings.graphics.cancelled").into());
                                         }
                                         gtk::glib::timeout_future(Duration::from_millis(100)).await;
                                     }
                                     Err(TryRecvError::Disconnected) => {
-                                        return Err("Import cancelled".into());
+                                        return Err(crate::t!("settings.graphics.import_cancelled").into());
                                     }
                                 }
                             };
@@ -321,12 +321,12 @@ fn build_available_graphics_rows(
                                     Ok(r) => break r,
                                     Err(TryRecvError::Empty) => {
                                         if cancel.load(Ordering::Relaxed) {
-                                            return Err("Cancelled".into());
+                                            return Err(crate::t!("settings.graphics.cancelled").into());
                                         }
                                         gtk::glib::timeout_future(Duration::from_millis(200)).await;
                                     }
                                     Err(_) => {
-                                        break Err("Import thread crashed unexpectedly.".into());
+                                        break Err(crate::t!("settings.graphics.import_crashed").into());
                                     }
                                 }
                             };
@@ -350,11 +350,11 @@ fn build_available_graphics_rows(
         // ── DXVK + VKD3D ──
         let dxvk_ctrl = managed_download_row::ManagedDownloadRow::builder()
             .launch(managed_download_row::ManagedDownloadRowInit {
-                title: "DXVK + VKD3D".into(),
+                title: crate::t!("settings.graphics.dxvk_vkd3d"),
                 check_status: make_check_status(
                     "dxvk-",
-                    "✓ Installed",
-                    "DirectX → Vulkan translation layers",
+                    crate::t!("settings.graphics.installed_status"),
+                    crate::t!("settings.graphics.dxvk_vkd3d_desc"),
                 ),
                 check_update: None,
                 start_download: Box::new(|_data_dir, progress, cancel| {
@@ -370,7 +370,7 @@ fn build_available_graphics_rows(
                                 .await
                                 .map_err(|e| e.to_string())?;
                         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                            return Err("Cancelled".into());
+                            return Err(crate::t!("settings.graphics.cancelled").into());
                         }
                         runtime::graphics::download_linux_backend(
                             "dxvk",
@@ -382,15 +382,14 @@ fn build_available_graphics_rows(
                         .await
                         .map_err(|e| e.to_string())?;
                         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                            return Err("Cancelled".into());
+                            return Err(crate::t!("settings.graphics.cancelled").into());
                         }
-
                         let (v3_version, v3_url) =
                             runtime::graphics::fetch_vkd3d_release(api_key.as_deref())
                                 .await
                                 .map_err(|e| e.to_string())?;
                         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                            return Err("Cancelled".into());
+                            return Err(crate::t!("settings.graphics.cancelled").into());
                         }
                         runtime::graphics::download_linux_backend(
                             "vkd3d",
@@ -444,7 +443,7 @@ impl SimpleComponent for D3DMetalImportDialog {
     view! {
         #[name = "dialog"]
         gtk::Window {
-            set_title: Some("Import D3DMetal (via GPTK)"),
+            set_title: Some(&crate::t!("settings.graphics.d3dmetal_import")),
             set_modal: true,
             set_default_width: 440,
             set_transient_for: Some(&parent),
@@ -457,16 +456,7 @@ impl SimpleComponent for D3DMetalImportDialog {
                 #[name = "info_label"]
                 gtk::Label {
                     set_use_markup: true,
-                    set_label: "D3DMetal (via GPTK) — compatible with GPTK 3.0.\
-                         \n\n\
-                         Download requires an Apple Developer account:\n  \
-                         <a href=\"https://developer.apple.com/games/game-porting-toolkit/\">\
-                         developer.apple.com/games/game-porting-toolkit/</a>\
-                         \n\n\
-                         Then, click \"Select DMG\" to choose the DMG downloaded.\
-                         \n\n\
-                         By proceeding, you agree to Apple's Software License \
-                         Agreement for Game Porting Toolkit.",
+                    set_label: &crate::t!("settings.graphics.d3dmetal_import_info"),
                     set_wrap: true,
                     set_halign: gtk::Align::Start,
                     set_selectable: false,
@@ -475,7 +465,7 @@ impl SimpleComponent for D3DMetalImportDialog {
 
                 #[name = "checkbox"]
                 gtk::CheckButton {
-                    set_label: Some("Don't show this message again"),
+                    set_label: Some(&crate::t!("settings.graphics.dont_show_again")),
                     set_margin_bottom: 8,
                 },
 
@@ -486,11 +476,11 @@ impl SimpleComponent for D3DMetalImportDialog {
                     set_margin_top: 8,
 
                     gtk::Button {
-                        set_label: "Cancel",
+                        set_label: &crate::t!("settings.graphics.cancel"),
                         connect_clicked => D3DMetalImportMsg::Cancel,
                     },
                     gtk::Button {
-                        set_label: "Select DMG",
+                        set_label: &crate::t!("settings.graphics.select_dmg"),
                         add_css_class: "suggested-action",
                         connect_clicked => D3DMetalImportMsg::SelectDmg,
                     },
@@ -558,7 +548,7 @@ impl D3DMetalImportDialog {
             let skip = self.skip_path.clone();
             let dont_ask = self.checkbox.is_active();
             let dlg = self.dialog.clone();
-            crate::dialogs::pick_file(&self.dialog, "Select GPTK DMG", &["dmg"], move |path| {
+            crate::dialogs::pick_file(&self.dialog, &crate::t!("settings.graphics.select_gptk_dmg"), &["dmg"], move |path| {
                 if let Some(p) = path {
                     if dont_ask {
                         let _ = std::fs::write(&skip, "1");

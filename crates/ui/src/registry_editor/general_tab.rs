@@ -57,13 +57,13 @@ impl SimpleComponent for GeneralTabModel {
                 set_hexpand: true,
 
                 adw::PreferencesGroup {
-                set_title: "General Settings",
-                set_description: Some("Configure basic Wine registry settings such as Windows version, audio, display, and virtual desktop"),
+                set_title: &crate::t!("registry.general.title"),
+                set_description: Some(&crate::t!("registry.general.desc")),
 
                 // ── Windows Version ──
                 adw::ActionRow {
-                    set_title: "Windows Version",
-                    set_subtitle: "Set the Windows version reported to applications",
+                    set_title: &crate::t!("registry.general.windows_version"),
+                    set_subtitle: &crate::t!("registry.general.windows_version_sub"),
 
                     add_suffix = &gtk::DropDown {
                         set_hexpand: true,
@@ -88,8 +88,8 @@ impl SimpleComponent for GeneralTabModel {
 
                 // ── Audio Driver ──
                 adw::ActionRow {
-                    set_title: "Audio Driver",
-                    set_subtitle: "Select the audio backend",
+                    set_title: &crate::t!("registry.general.audio_driver"),
+                    set_subtitle: &crate::t!("registry.general.audio_driver_sub"),
 
                     add_suffix = &gtk::DropDown {
                         set_hexpand: true,
@@ -112,8 +112,8 @@ impl SimpleComponent for GeneralTabModel {
 
                 // ── DPI Scaling ──
                 adw::ActionRow {
-                    set_title: "DPI Scaling",
-                    set_subtitle: "LogPixels value (96 = 100%, 120 = 125%, 144 = 150%, 192 = 200%)",
+                    set_title: &crate::t!("registry.general.dpi_scaling"),
+                    set_subtitle: &crate::t!("registry.general.dpi_scaling_sub"),
 
                     add_suffix = &gtk::SpinButton {
                         set_valign: gtk::Align::Center,
@@ -137,8 +137,8 @@ impl SimpleComponent for GeneralTabModel {
 
                 // ── Virtual Desktop ──
                 adw::ActionRow {
-                    set_title: "Virtual Desktop",
-                    set_subtitle: "Emulate a virtual desktop resolution",
+                    set_title: &crate::t!("registry.general.virtual_desktop"),
+                    set_subtitle: &crate::t!("registry.general.virtual_desktop_sub"),
                     set_visible: cfg!(not(target_os = "macos")),
 
                     add_suffix = &gtk::Switch {
@@ -158,7 +158,7 @@ impl SimpleComponent for GeneralTabModel {
                 adw::ActionRow {
                     #[watch]
                     set_visible: model.virtual_desktop_enabled,
-                    set_title: "Desktop Width",
+                    set_title: &crate::t!("registry.general.desktop_width"),
 
                     add_suffix = &gtk::Entry {
                         set_width_chars: 6,
@@ -179,7 +179,7 @@ impl SimpleComponent for GeneralTabModel {
                 adw::ActionRow {
                     #[watch]
                     set_visible: model.virtual_desktop_enabled,
-                    set_title: "Desktop Height",
+                    set_title: &crate::t!("registry.general.desktop_height"),
 
                     add_suffix = &gtk::Entry {
                         set_width_chars: 6,

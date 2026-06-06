@@ -21,6 +21,7 @@ pub struct AddAppPopoverModel {
     selected_indices: std::collections::HashSet<usize>,
     is_visible: bool,
     is_scanning: bool,
+    scan_button_label: String,
     #[tracker::do_not_track]
     is_processing_selection: bool,
     #[tracker::do_not_track]
@@ -211,7 +212,7 @@ impl AsyncComponent for AddAppPopoverModel {
                 set_height_request: 300,
 
                 gtk::Label {
-                    set_label: "Available Applications",
+                    set_label: &crate::t!("apps.add.title"),
                     add_css_class: "heading",
                     set_halign: gtk::Align::Center,
                     set_margin_bottom: 10,
@@ -234,7 +235,7 @@ impl AsyncComponent for AddAppPopoverModel {
                                 set_halign: gtk::Align::Center,
                             },
                             gtk::Label {
-                                set_label: "Scanning for applications...",
+                                set_label: &crate::t!("apps.add.scanning"),
                                 set_halign: gtk::Align::Center,
                                 add_css_class: "dim-label",
                             },
@@ -261,7 +262,7 @@ impl AsyncComponent for AddAppPopoverModel {
                             },
 
                             gtk::Label {
-                                set_label: "No available applications found\nScan for applications first",
+                                set_label: &crate::t!("apps.add.no_apps"),
                                 set_halign: gtk::Align::Center,
                                 set_valign: gtk::Align::Center,
                                 set_wrap: true,
@@ -272,7 +273,7 @@ impl AsyncComponent for AddAppPopoverModel {
 
                             gtk::Label {
                                 #[watch]
-                                set_label: &format!("{} applications found", model.available_apps.len()),
+                                set_label: &crate::tf!("apps.add.count", "count" => &model.available_apps.len().to_string()),
                                 add_css_class: "caption",
                                 set_halign: gtk::Align::Center,
                                 #[watch]
@@ -289,10 +290,10 @@ impl AsyncComponent for AddAppPopoverModel {
 
                     gtk::Button {
                         #[watch]
-                        set_label: if model.is_scanning { "Scanning..." } else { "Scan" },
+                        set_label: &model.scan_button_label,
                         #[watch]
                         set_sensitive: !model.is_scanning,
-                        set_tooltip_text: Some("Scan prefix for executables"),
+                        set_tooltip_text: Some(&crate::t!("apps.add.scan_tooltip")),
                         connect_clicked[sender] => move |_| {
                             sender.input(AddAppPopoverMsg::Scan);
                         },
@@ -303,14 +304,14 @@ impl AsyncComponent for AddAppPopoverModel {
                     },
 
                     gtk::Button {
-                        set_label: "Cancel",
+                        set_label: &crate::t!("apps.add.cancel_btn"),
                         connect_clicked[sender] => move |_| {
                             sender.input(AddAppPopoverMsg::Hide);
                         },
                     },
 
                     gtk::Button {
-                        set_label: "Add",
+                        set_label: &crate::t!("apps.add.add_btn"),
                         #[watch]
                         set_sensitive: !model.selected_indices.is_empty(),
                         add_css_class: "suggested-action",
@@ -343,6 +344,7 @@ impl AsyncComponent for AddAppPopoverModel {
             selected_indices: std::collections::HashSet::new(),
             is_visible: false,
             is_scanning: false,
+            scan_button_label: crate::t!("apps.add.scan_btn"),
             is_processing_selection: false,
             prefix_path,
             icon_cache,
@@ -473,6 +475,7 @@ impl AsyncComponent for AddAppPopoverModel {
             }
             AddAppPopoverMsg::SetScanning(scanning) => {
                 self.set_is_scanning(scanning);
+                self.set_scan_button_label(if scanning { crate::t!("apps.add.scanning_btn") } else { crate::t!("apps.add.scan_btn") });
             }
             AddAppPopoverMsg::ResetProcessingFlag => {
                 self.is_processing_selection = false;

@@ -15,6 +15,9 @@ pub struct AppActionsModel {
     uninstaller_running: bool,
     exe_running: bool,
     has_desktop: bool,
+    desktop_tooltip: String,
+    launch_tooltip: String,
+    desktop_label: String,
 }
 
 #[derive(Debug)]
@@ -65,7 +68,7 @@ impl AsyncComponent for AppActionsModel {
             #[name = "add_button"]
             gtk::Button {
                 set_icon_name: "list-add-symbolic",
-                set_tooltip_text: Some("Add Application"),
+                set_tooltip_text: Some(&crate::t!("apps.actions.add")),
                 #[track = "model.changed(AppActionsModel::is_scanning())"]
                 set_sensitive: !model.is_scanning,
                 connect_clicked[sender] => move |_| {
@@ -76,7 +79,7 @@ impl AsyncComponent for AppActionsModel {
 
             gtk::Button {
                 set_icon_name: "user-trash-symbolic",
-                set_tooltip_text: Some("Remove Application"),
+                set_tooltip_text: Some(&crate::t!("apps.actions.remove")),
                 #[track = "model.changed(AppActionsModel::has_selection()) || model.changed(AppActionsModel::is_scanning())"]
                 set_sensitive: model.has_selection && !model.is_scanning,
                 connect_clicked[sender] => move |_| {
@@ -87,7 +90,7 @@ impl AsyncComponent for AppActionsModel {
 
             gtk::Button {
                 set_icon_name: "dialog-information-symbolic",
-                set_tooltip_text: Some("Application Info"),
+                set_tooltip_text: Some(&crate::t!("apps.actions.info")),
                 #[track = "model.changed(AppActionsModel::has_selection()) || model.changed(AppActionsModel::is_scanning())"]
                 set_sensitive: model.has_selection && !model.is_scanning,
                 connect_clicked[sender] => move |_| {
@@ -103,7 +106,7 @@ impl AsyncComponent for AppActionsModel {
             },
 
             gtk::Button {
-                set_tooltip_text: Some("Wine Uninstaller"),
+                set_tooltip_text: Some(&crate::t!("apps.actions.uninstaller")),
                 #[track = "model.changed(AppActionsModel::prefix_set()) || model.changed(AppActionsModel::is_scanning()) || model.changed(AppActionsModel::uninstaller_running())"]
                 set_sensitive: model.prefix_set && !model.is_scanning && !model.uninstaller_running,
                 connect_clicked[sender] => move |_| {
@@ -135,7 +138,7 @@ impl AsyncComponent for AppActionsModel {
             },
 
             gtk::Button {
-                set_tooltip_text: Some("Run Executable…"),
+                set_tooltip_text: Some(&crate::t!("apps.actions.run_exe")),
                 #[track = "model.changed(AppActionsModel::prefix_set()) || model.changed(AppActionsModel::is_scanning()) || model.changed(AppActionsModel::exe_running())"]
                 set_sensitive: model.prefix_set && !model.is_scanning && !model.exe_running,
                 connect_clicked[sender] => move |_| {
@@ -170,8 +173,8 @@ impl AsyncComponent for AppActionsModel {
             gtk::Button {
                 #[track = "model.changed(AppActionsModel::has_selection()) || model.changed(AppActionsModel::is_scanning()) || model.changed(AppActionsModel::has_desktop())"]
                 set_sensitive: model.has_selection && !model.is_scanning,
-                #[track = "model.changed(AppActionsModel::has_desktop())"]
-                set_tooltip_text: Some(if model.has_desktop { "Remove Desktop Launcher" } else { "Create Desktop Launcher" }),
+                #[track = "model.changed(AppActionsModel::desktop_tooltip())"]
+                set_tooltip_text: Some(model.desktop_tooltip.as_str()),
                 connect_clicked[sender] => move |_| {
                     sender.input(AppActionsMsg::CreateDesktop);
                 },
@@ -186,8 +189,8 @@ impl AsyncComponent for AppActionsModel {
                         set_icon_name: Some("computer-symbolic"),
                     },
                     gtk::Label {
-                        #[track = "model.changed(AppActionsModel::has_desktop())"]
-                        set_label: if model.has_desktop { "Delete" } else { "Desktop" },
+                        #[track = "model.changed(AppActionsModel::desktop_label())"]
+                        set_label: &model.desktop_label,
                     },
                 },
             },
@@ -196,8 +199,8 @@ impl AsyncComponent for AppActionsModel {
             gtk::Button {
                 #[track = "model.changed(AppActionsModel::has_selection()) || model.changed(AppActionsModel::is_scanning()) || model.changed(AppActionsModel::selected_running())"]
                 set_sensitive: model.has_selection && !model.is_scanning,
-                #[track = "model.changed(AppActionsModel::selected_running())"]
-                set_tooltip_text: Some(if model.selected_running { "Kill" } else { "Launch" }),
+                #[track = "model.changed(AppActionsModel::launch_tooltip())"]
+                set_tooltip_text: Some(model.launch_tooltip.as_str()),
                 #[track = "model.changed(AppActionsModel::selected_running())"]
                 set_icon_name: if model.selected_running { "media-playback-stop-symbolic" } else { "media-playback-start-symbolic" },
                 #[track = "model.changed(AppActionsModel::selected_running())"]
@@ -228,6 +231,9 @@ impl AsyncComponent for AppActionsModel {
             uninstaller_running: false,
             exe_running: false,
             has_desktop: false,
+            desktop_tooltip: crate::t!("apps.actions.create_desktop"),
+            launch_tooltip: crate::t!("apps.actions.launch"),
+            desktop_label: crate::t!("apps.actions.desktop"),
             tracker: 0,
         };
 
@@ -252,6 +258,11 @@ impl AsyncComponent for AppActionsModel {
             }
             AppActionsMsg::SetSelectedRunning(running) => {
                 self.set_selected_running(running);
+                if running {
+                    self.launch_tooltip = crate::t!("apps.actions.kill");
+                } else {
+                    self.launch_tooltip = crate::t!("apps.actions.launch");
+                }
             }
             AppActionsMsg::SetPrefixSet(prefix_set) => {
                 self.set_prefix_set(prefix_set);
@@ -286,6 +297,13 @@ impl AsyncComponent for AppActionsModel {
             }
             AppActionsMsg::SetDesktopExists(exists) => {
                 self.set_has_desktop(exists);
+                if exists {
+                    self.desktop_tooltip = crate::t!("apps.actions.remove_desktop");
+                    self.desktop_label = crate::t!("apps.actions.delete");
+                } else {
+                    self.desktop_tooltip = crate::t!("apps.actions.create_desktop");
+                    self.desktop_label = crate::t!("apps.actions.desktop");
+                }
             }
             AppActionsMsg::CreateDesktop => {
                 let _ = sender.output(AppActionsOutput::CreateDesktop);

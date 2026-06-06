@@ -56,6 +56,9 @@ pub struct RegistryEditorModel {
     process_tracker: Arc<std::sync::Mutex<ProcessTracker>>,
     #[tracker::do_not_track]
     watch_kill: Option<mpsc::Sender<()>>,
+    edit_save_tooltip: String,
+    #[tracker::do_not_track]
+    cancel_tooltip: String,
     #[tracker::do_not_track]
     winecfg_btn: gtk::Button,
     #[tracker::do_not_track]
@@ -131,17 +134,17 @@ impl SimpleComponent for RegistryEditorModel {
 
                         append_page: (
                             &model.general_ctrl.widget().clone(),
-                            Some(&gtk::Label::builder().label("General").build())
+                            Some(&gtk::Label::builder().label(&crate::t!("registry.tab.general")).build())
                         ),
 
                         append_page: (
                             &model.graphics_ctrl.widget().clone(),
-                            Some(&gtk::Label::builder().label("Graphics").build())
+                            Some(&gtk::Label::builder().label(&crate::t!("registry.tab.graphics")).build())
                         ),
 
                         append_page: (
                             &model.platform_ctrl.widget().clone(),
-                            Some(&gtk::Label::builder().label("Platform").build())
+                            Some(&gtk::Label::builder().label(&crate::t!("registry.tab.platform")).build())
                         ),
                     },
 
@@ -153,7 +156,7 @@ impl SimpleComponent for RegistryEditorModel {
 
                         #[name = "winecfg_btn"]
                         gtk::Button {
-                            set_tooltip_text: Some("Launch Wine Configuration"),
+                            set_tooltip_text: Some(&crate::t!("registry.tooltip.winecfg")),
                             #[watch]
                             set_sensitive: !model.winecfg_running,
                             connect_clicked => RegistryEditorMsg::RunWinecfg,
@@ -161,7 +164,7 @@ impl SimpleComponent for RegistryEditorModel {
 
                         #[name = "regedit_btn"]
                         gtk::Button {
-                            set_tooltip_text: Some("Launch Wine Registry Editor"),
+                            set_tooltip_text: Some(&crate::t!("registry.tooltip.regedit")),
                             #[watch]
                             set_sensitive: !model.regedit_running,
                             connect_clicked => RegistryEditorMsg::RunRegedit,
@@ -173,7 +176,7 @@ impl SimpleComponent for RegistryEditorModel {
 
                         gtk::Button {
                             set_icon_name: "view-refresh-symbolic",
-                            set_tooltip_text: Some("Reload registry from disk"),
+                            set_tooltip_text: Some(&crate::t!("registry.tooltip.reload")),
                             connect_clicked => RegistryEditorMsg::RefreshReg,
                         },
 
@@ -185,7 +188,7 @@ impl SimpleComponent for RegistryEditorModel {
                             #[watch]
                             set_icon_name: if model.editing { "object-select-symbolic" } else { "document-edit-symbolic" },
                             #[watch]
-                            set_tooltip_text: if model.editing { Some("Save") } else { Some("Edit") },
+                            set_tooltip_text: Some(&model.edit_save_tooltip),
                             #[watch]
                             set_css_classes: if model.editing { &["suggested-action"] } else { &[] },
                             connect_clicked => RegistryEditorMsg::ToggleEdit,
@@ -193,7 +196,7 @@ impl SimpleComponent for RegistryEditorModel {
 
                         gtk::Button {
                             set_icon_name: "edit-undo-symbolic",
-                            set_tooltip_text: Some("Cancel"),
+                            set_tooltip_text: Some(&model.cancel_tooltip),
                             #[watch]
                             set_visible: model.editing,
                             connect_clicked[sender] => move |_| {
@@ -215,7 +218,7 @@ impl SimpleComponent for RegistryEditorModel {
                     },
 
                     gtk::Label {
-                        set_label: "Loading registry editor...",
+                        set_label: &crate::t!("registry.loading"),
                         set_halign: gtk::Align::Center,
                     },
                 }
@@ -287,6 +290,8 @@ impl SimpleComponent for RegistryEditorModel {
             loading: false,
             winecfg_running: false,
             regedit_running: false,
+            edit_save_tooltip: crate::t!("registry.edit"),
+            cancel_tooltip: crate::t!("registry.cancel"),
             pending_edit: false,
             parent_window,
             general_ctrl,
@@ -337,6 +342,7 @@ impl SimpleComponent for RegistryEditorModel {
                     sender.input(RegistryEditorMsg::LoadForEdit);
                 } else {
                     self.set_editing(true);
+                    self.set_edit_save_tooltip(crate::t!("registry.save"));
                     self.general_ctrl
                         .emit(general_tab::GeneralTabInput::SetEditing(true));
                     self.graphics_ctrl
@@ -412,6 +418,7 @@ impl SimpleComponent for RegistryEditorModel {
                 if self.pending_edit {
                     self.pending_edit = false;
                     self.set_editing(true);
+                    self.set_edit_save_tooltip(crate::t!("registry.save"));
                     self.general_ctrl
                         .emit(general_tab::GeneralTabInput::SetEditing(true));
                     self.graphics_ctrl
@@ -443,6 +450,7 @@ impl SimpleComponent for RegistryEditorModel {
                     self.registry_editor = Some(editor_arc);
                 }
                 self.set_editing(false);
+                self.set_edit_save_tooltip(crate::t!("registry.edit"));
                 set_editing_all_tabs(
                     &self.general_ctrl,
                     &self.graphics_ctrl,
@@ -453,6 +461,7 @@ impl SimpleComponent for RegistryEditorModel {
 
             RegistryEditorMsg::CancelEdit => {
                 self.set_editing(false);
+                self.set_edit_save_tooltip(crate::t!("registry.edit"));
                 set_editing_all_tabs(
                     &self.general_ctrl,
                     &self.graphics_ctrl,
@@ -545,6 +554,7 @@ impl SimpleComponent for RegistryEditorModel {
                 let _ = self.prefix_store.invalidate_registry_cache(&pp);
                 self.registry_editor = None;
                 self.set_editing(false);
+                self.set_edit_save_tooltip(crate::t!("registry.edit"));
                 set_editing_all_tabs(
                     &self.general_ctrl,
                     &self.graphics_ctrl,
@@ -557,6 +567,7 @@ impl SimpleComponent for RegistryEditorModel {
             RegistryEditorMsg::ConfigUpdated(config) => {
                 self.set_config(config);
                 self.set_editing(false);
+                self.set_edit_save_tooltip(crate::t!("registry.edit"));
                 sender.input(RegistryEditorMsg::LoadRegistry);
             }
 
@@ -607,6 +618,7 @@ impl SimpleComponent for RegistryEditorModel {
 
             RegistryEditorMsg::RegistrySaveComplete => {
                 self.set_editing(false);
+                self.set_edit_save_tooltip(crate::t!("registry.edit"));
                 set_editing_all_tabs(
                     &self.general_ctrl,
                     &self.graphics_ctrl,
@@ -618,6 +630,7 @@ impl SimpleComponent for RegistryEditorModel {
             RegistryEditorMsg::RegistrySaveError(error) => {
                 log::error!("[regedit] registry save error: {}", error);
                 self.set_editing(false);
+                self.set_edit_save_tooltip(crate::t!("registry.edit"));
                 set_editing_all_tabs(
                     &self.general_ctrl,
                     &self.graphics_ctrl,

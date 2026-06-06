@@ -125,7 +125,7 @@ fn populate(
     log::debug!("[list] populate: {} prefixes", prefixes.len());
     if prefixes.is_empty() {
         let label = gtk::Label::builder()
-            .label("No Wine prefixes found")
+            .label(&crate::t!("sidebar.no_prefixes"))
             .halign(gtk::Align::Center)
             .valign(gtk::Align::Center)
             .margin_top(40)
@@ -201,10 +201,10 @@ fn populate(
             row_ref.insert_action_group("pref", Some(&actions));
 
             let menu = gio::Menu::new();
-            menu.append(Some("Open in File Manager"), Some("pref.open-fm"));
-            menu.append(Some("Open in Terminal"), Some("pref.open-term"));
-            menu.append(Some("Export Prefix"), Some("pref.export"));
-            menu.append(Some("Delete Prefix"), Some("pref.delete"));
+            menu.append(Some(&crate::t!("prefix.context.open_fm")), Some("pref.open-fm"));
+            menu.append(Some(&crate::t!("prefix.context.open_term")), Some("pref.open-term"));
+            menu.append(Some(&crate::t!("prefix.context.export")), Some("pref.export"));
+            menu.append(Some(&crate::t!("prefix.context.delete")), Some("pref.delete"));
 
             let popover = gtk::PopoverMenu::from_model(Some(&menu));
             popover.set_has_arrow(false);
@@ -237,14 +237,11 @@ fn populate(
                 popover_clone2.popdown();
 
                 let alert = adw::AlertDialog::new(
-                    Some("Delete Prefix"),
-                    Some(&format!(
-                        "Are you sure you want to delete the prefix \"{}\"?\n\nThis will permanently remove all files in the prefix directory.",
-                        name
-                    )),
+                    Some(&crate::t!("prefix.delete.title")),
+                    Some(&crate::tf!("prefix.delete.confirm", "name" => &name)),
                 );
-                alert.add_response("cancel", "Cancel");
-                alert.add_response("delete", "Delete");
+                alert.add_response("cancel", &crate::t!("prefix.delete.cancel"));
+                alert.add_response("delete", &crate::t!("prefix.delete.confirm_btn"));
                 alert.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
                 alert.set_default_response(Some("cancel"));
                 alert.set_close_response("cancel");

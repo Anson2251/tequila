@@ -66,7 +66,7 @@ impl AsyncComponent for RuntimeManagerModel {
     view! {
         #[root]
         gtk::Window {
-            set_title: Some("Wine Runtimes"),
+            set_title: Some(&crate::t!("settings.runtime.title")),
             set_default_width: 520,
             set_default_height: 420,
             set_modal: true,
@@ -99,7 +99,7 @@ impl AsyncComponent for RuntimeManagerModel {
                     #[name = "menu_btn"]
                     gtk::MenuButton {
                         set_icon_name: "list-add-symbolic",
-                        set_tooltip_text: Some("Add Runtime"),
+                        set_tooltip_text: Some(&crate::t!("settings.runtime.add")),
                     },
 
                     gtk::Box {
@@ -127,7 +127,7 @@ impl AsyncComponent for RuntimeManagerModel {
         // Title widget
         widgets
             .header_bar
-            .set_title_widget(Some(&adw::WindowTitle::new("Runtimes", "")));
+            .set_title_widget(Some(&adw::WindowTitle::new(&crate::t!("settings.runtime.installed"), "")));
 
         // Close button
         {
@@ -233,7 +233,7 @@ impl AsyncComponent for RuntimeManagerModel {
                 self.menu_btn.set_sensitive(false);
                 self.progress_bar.set_visible(true);
                 self.progress_label.set_visible(true);
-                self.progress_label.set_label("Starting download...");
+                self.progress_label.set_label(&crate::t!("settings.runtime.starting_download"));
                 self.progress_bar.set_fraction(0.0);
 
                 let pm = AppService::global().prefix_manager().clone();
@@ -264,10 +264,10 @@ impl AsyncComponent for RuntimeManagerModel {
                     self.set_download_progress(frac);
                     self.progress_bar.set_fraction(frac);
                     let mb = |b: u64| b as f64 / 1_048_576.0;
-                    self.progress_label.set_label(&format!(
-                        "{:.1} / {:.1} MB",
-                        mb(downloaded),
-                        mb(total)
+                    self.progress_label.set_label(&crate::tf!(
+                        "settings.runtime.download_progress",
+                        "downloaded" => &format!("{:.1}", mb(downloaded)),
+                        "total" => &format!("{:.1}", mb(total)),
                     ));
                 }
             }
@@ -298,11 +298,11 @@ impl AsyncComponent for RuntimeManagerModel {
                 self.menu_btn.set_sensitive(true);
                 self.progress_bar.set_visible(false);
                 self.progress_label.set_visible(false);
-                self.progress_label.set_label(&format!("Error: {}", err));
+                self.progress_label.set_label(&format!("{}", err));
                 self.download_stack.set_visible_child_name("menu");
 
-                let alert = adw::AlertDialog::new(Some("Download Failed"), Some(&err));
-                alert.add_response("ok", "OK");
+                let alert = adw::AlertDialog::new(Some(&crate::t!("settings.runtime.download_failed")), Some(&err));
+                alert.add_response("ok", &crate::t!("dialogs.ok"));
                 alert.set_default_response(Some("ok"));
                 alert.set_close_response("ok");
                 alert.choose(Some(root), None::<&gtk::gio::Cancellable>, |_| {});
@@ -311,7 +311,7 @@ impl AsyncComponent for RuntimeManagerModel {
                 self.add_popover.popdown();
 
                 let file_dialog = gtk::FileDialog::builder()
-                    .title("Select Wine Installation")
+                    .title(&crate::t!("settings.runtime.select_wine"))
                     .build();
                 let s = sender.clone();
                 file_dialog.select_folder(
@@ -346,11 +346,12 @@ impl AsyncComponent for RuntimeManagerModel {
                     }
                     Err(e) => {
                         log::error!("[runtime] import failed: {}", e);
+                        let msg = crate::tf!("settings.runtime.import_failed_desc", "error" => &e.to_string());
                         let alert = adw::AlertDialog::new(
-                            Some("Import Failed"),
-                            Some(&format!("Failed to import Wine runtime:\n{}", e)),
+                            Some(&crate::t!("settings.runtime.import_failed")),
+                            Some(&msg),
                         );
-                        alert.add_response("ok", "OK");
+                        alert.add_response("ok", &crate::t!("dialogs.ok"));
                         alert.set_default_response(Some("ok"));
                         alert.set_close_response("ok");
                         alert.choose(Some(root), None::<&gtk::gio::Cancellable>, |_| {});

@@ -92,12 +92,8 @@ fn env_vars_subtitle(executable: Option<&RegisteredExecutable>) -> String {
             Some(e.env_vars.len())
         }
     }) {
-        Some(count) => format!(
-            "{} variable{} set",
-            count,
-            if count == 1 { "" } else { "s" }
-        ),
-        None => "No environment variables set".to_string(),
+        Some(count) => crate::tf!("apps.info.env_vars_set", "count" => &count.to_string()),
+        None => crate::t!("apps.info.env_vars_none"),
     }
 }
 
@@ -124,7 +120,7 @@ impl SimpleComponent for EnvVarsEditor {
     view! {
         #[name = "dialog"]
         gtk::Window {
-            set_title: Some("Edit Environment Variables"),
+            set_title: Some(&crate::t!("apps.info.env_editor_title")),
             set_modal: true,
             set_default_width: 420,
             set_default_height: 350,
@@ -135,7 +131,7 @@ impl SimpleComponent for EnvVarsEditor {
                 set_spacing: 0,
 
                 gtk::Label {
-                    set_label: "One variable per line in KEY=VALUE format",
+                    set_label: &crate::t!("apps.info.env_editor_desc"),
                     set_halign: gtk::Align::Start,
                     set_margin_start: 12,
                     set_margin_top: 12,
@@ -144,7 +140,7 @@ impl SimpleComponent for EnvVarsEditor {
                 },
 
                 gtk::Label {
-                    set_label: "Example:\n  WINEDLLOVERRIDES=winemenubuilder.exe=d\n  DXVK_HUD=1",
+                    set_label: &crate::t!("apps.info.env_editor_example"),
                     set_halign: gtk::Align::Start,
                     set_margin_start: 12,
                     set_margin_end: 12,
@@ -177,7 +173,7 @@ impl SimpleComponent for EnvVarsEditor {
         header_bar.set_property("use-native-controls", true);
 
         let apply_btn = gtk::Button::builder()
-            .label("Apply")
+            .label(&crate::t!("apps.info.env_editor_apply"))
             .icon_name("object-select-symbolic")
             .css_classes(["suggested-action"])
             .build();
@@ -238,7 +234,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
     view! {
         #[name = "dialog"]
         gtk::Window {
-            set_title: Some("Executable Information"),
+            set_title: Some(&crate::t!("apps.info.title")),
             set_default_width: 520,
             set_default_height: 720,
             set_modal: true,
@@ -306,7 +302,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                                 #[watch]
                                 set_label: model.executable.as_ref()
                                     .and_then(|e| e.description.as_deref())
-                                    .unwrap_or("No description available"),
+                                    .unwrap_or(&crate::t!("apps.info.no_desc")),
                                 add_css_class: "body",
                                 set_halign: gtk::Align::Start,
                                 set_wrap: true,
@@ -320,14 +316,14 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                                 set_spacing: 8,
 
                                 gtk::Label {
-                                    set_label: "File Version:",
+                                    set_label: &crate::t!("apps.info.file_version"),
                                     set_halign: gtk::Align::Start,
                                 },
                                 gtk::Label {
                                     #[watch]
                                     set_label: model.executable.as_ref()
                                         .and_then(|e| e.file_version.as_deref())
-                                        .unwrap_or("N/A"),
+                                        .unwrap_or(&crate::t!("apps.info.n_a")),
                                     set_halign: gtk::Align::End,
                                     set_selectable: true,
                                     set_hexpand: true,
@@ -340,14 +336,14 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                                 set_spacing: 15,
 
                                 gtk::Label {
-                                    set_label: "Product Version:",
+                                    set_label: &crate::t!("apps.info.product_version"),
                                     set_halign: gtk::Align::Start,
                                 },
                                 gtk::Label {
                                     #[watch]
                                     set_label: model.executable.as_ref()
                                         .and_then(|e| e.product_version.as_deref())
-                                        .unwrap_or("N/A"),
+                                        .unwrap_or(&crate::t!("apps.info.n_a")),
                                     set_halign: gtk::Align::End,
                                     set_selectable: true,
                                     set_hexpand: true,
@@ -360,14 +356,14 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                                 set_spacing: 15,
 
                                 gtk::Label {
-                                    set_label: "Company:",
+                                    set_label: &crate::t!("apps.info.company"),
                                     set_halign: gtk::Align::Start,
                                 },
                                 gtk::Label {
                                     #[watch]
                                     set_label: model.executable.as_ref()
                                         .and_then(|e| e.company_name.as_deref())
-                                        .unwrap_or("N/A"),
+                                        .unwrap_or(&crate::t!("apps.info.n_a")),
                                     set_halign: gtk::Align::End,
                                     set_selectable: true,
                                     set_hexpand: true,
@@ -382,14 +378,14 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                         set_spacing: 15,
 
                         gtk::Label {
-                            set_label: "Path:",
+                            set_label: &crate::t!("apps.info.path"),
                             set_halign: gtk::Align::Start,
                         },
                         gtk::Label {
                             #[watch]
                             set_label: &model.executable.as_ref()
                                 .map(|e| e.executable_path.display().to_string())
-                                .unwrap_or_else(|| "N/A".to_string()),
+                                .unwrap_or_else(|| crate::t!("apps.info.n_a")),
                             set_halign: gtk::Align::End,
                             set_selectable: true,
                             set_ellipsize: gtk::pango::EllipsizeMode::Middle,
@@ -407,16 +403,16 @@ impl AsyncComponent for ExecutableInfoDialogModel {
 
                     // File Description
                     adw::PreferencesGroup {
-                        set_title: "File Description",
+                        set_title: &crate::t!("apps.info.file_desc"),
                         #[watch]
                         set_description: Some(model.executable.as_ref()
                             .and_then(|e| e.file_description.as_deref())
-                            .unwrap_or("N/A")),
+                            .unwrap_or(&crate::t!("apps.info.n_a"))),
                     },
 
                     // Imported Modules
                     adw::PreferencesGroup {
-                        set_title: "Imported Modules",
+                        set_title: &crate::t!("apps.info.imported_modules"),
                         #[watch]
                         set_visible: model.executable.as_ref()
                             .map(|e| !e.imported_modules.is_empty())
@@ -438,27 +434,25 @@ impl AsyncComponent for ExecutableInfoDialogModel {
 
                     // Execution Settings
                     adw::PreferencesGroup {
-                        set_title: "Execution Settings",
+                        set_title: &crate::t!("apps.info.exec_settings"),
 
                         // Display Name
                         #[name = "name_entry_row"]
                         adw::EntryRow {
-                            set_title: "Display Name",
-                            set_tooltip_text: Some("Custom name for this executable (used in the desktop launcher and UI)"),
+                            set_title: &crate::t!("apps.info.display_name"),
+                            set_tooltip_text: Some(&crate::t!("apps.info.display_name_tooltip")),
                         },
 
                         // Working Directory
                         #[name = "cwd_entry_row"]
                         adw::EntryRow {
-                            set_title: "Working Directory",
-                            set_tooltip_text: Some(
-                                "Custom working directory for the executable (e.g., /path/to/game)",
-                            ),
+                            set_title: &crate::t!("apps.info.working_dir"),
+                            set_tooltip_text: Some(&crate::t!("apps.info.working_dir_tooltip")),
 
                             add_suffix = &gtk::Button {
                                 set_icon_name: "folder-open-symbolic",
                                 set_valign: gtk::Align::Center,
-                                set_tooltip_text: Some("Choose a working directory"),
+                                set_tooltip_text: Some(&crate::t!("apps.info.choose_cwd")),
                                 connect_clicked[sender] => move |_| {
                                     sender.input(ExecutableInfoDialogMsg::BrowseCwd);
                                 },
@@ -468,15 +462,13 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                         // Icon Path
                         #[name = "icon_path_entry_row"]
                         adw::EntryRow {
-                            set_title: "Icon Path",
-                            set_tooltip_text: Some(
-                                "Absolute path or path relative to the prefix root. Leave empty to use the .exe's icon.",
-                            ),
+                            set_title: &crate::t!("apps.info.icon_path"),
+                            set_tooltip_text: Some(&crate::t!("apps.info.icon_path_tooltip")),
 
                             add_suffix = &gtk::Button {
                                 set_icon_name: "image-x-generic-symbolic",
                                 set_valign: gtk::Align::Center,
-                                set_tooltip_text: Some("Choose an icon file"),
+                                set_tooltip_text: Some(&crate::t!("apps.info.choose_icon")),
                                 connect_clicked[sender] => move |_| {
                                     sender.input(ExecutableInfoDialogMsg::BrowseIcon);
                                 },
@@ -484,7 +476,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                             add_suffix = &gtk::Button {
                                 set_icon_name: "edit-clear-symbolic",
                                 set_valign: gtk::Align::Center,
-                                set_tooltip_text: Some("Clear icon (fall back to extracting from the .exe)"),
+                                set_tooltip_text: Some(&crate::t!("apps.info.clear_icon")),
                                 connect_clicked[sender] => move |_| {
                                     sender.input(ExecutableInfoDialogMsg::ClearIcon);
                                 },
@@ -493,7 +485,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
 
                         // Environment Variables
                         adw::ActionRow {
-                            set_title: "Environment Variables",
+                            set_title: &crate::t!("apps.info.env_vars"),
                             set_activatable: true,
                             #[watch]
                             set_subtitle: &env_vars_subtitle(model.executable.as_ref()),
@@ -531,7 +523,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
         // Save button in header bar
         let save_btn = gtk::Button::builder()
             .icon_name("object-select-symbolic")
-            .tooltip_text("Save execution settings (env vars and working directory)")
+            .tooltip_text(&crate::t!("apps.info.save_tooltip"))
             .css_classes(["suggested-action"])
             .build();
         let s = sender.clone();

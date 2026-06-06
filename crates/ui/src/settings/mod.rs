@@ -54,6 +54,9 @@ pub enum SettingsMsg {
     // GitHub API key entry
     GithubKeyChanged(Option<String>),
 
+    // Language
+    LanguageChanged(u32),
+
     // Window
     Close,
 }
@@ -91,14 +94,14 @@ fn runtime_subtitle(rm: &RuntimeManager) -> String {
                 if count == 1 { "" } else { "s" }
             )
         }
-        None => "No runtimes installed".to_string(),
+        None => crate::t!("settings.runtime.no_runtimes"),
     }
 }
 
 fn graphics_subtitle() -> String {
     let backends = prefix_graphics::installed_backends();
     if backends.is_empty() {
-        "No backends installed".to_string()
+        crate::t!("settings.graphics.no_backends_subtitle")
     } else {
         backends
             .iter()
@@ -124,7 +127,7 @@ impl AsyncComponent for SettingsWindow {
     view! {
         #[root]
         gtk::Window {
-            set_title: Some("Tequila Settings"),
+            set_title: Some(&crate::t!("app.settings")),
             set_default_width: 480,
             set_default_height: 520,
             set_modal: true,
@@ -140,7 +143,7 @@ impl AsyncComponent for SettingsWindow {
             #[name = "nav"]
             adw::NavigationView {
                 push: root_page = &adw::NavigationPage {
-                    set_title: "Tequila Settings",
+                    set_title: &crate::t!("app.settings"),
                     set_can_pop: false,
                     set_child: Some(&prefs_page),
                 },
@@ -150,18 +153,18 @@ impl AsyncComponent for SettingsWindow {
         #[local_ref]
         prefs_page -> adw::PreferencesPage {
             adw::PreferencesGroup {
-                set_title: "Environment",
-                set_description: Some("Manage Wine runtimes and graphics translation backends"),
+                set_title: &crate::t!("settings.environment"),
+                set_description: Some(&crate::t!("settings.environment_desc")),
 
                 adw::ActionRow {
-                    set_title: "Wine Runtime",
+                    set_title: &crate::t!("settings.wine_runtime"),
                     set_activatable: true,
                     #[watch]
                     set_subtitle: &model.runtime_subtitle,
                     connect_activated => SettingsMsg::ShowRuntime,
                 },
                 adw::ActionRow {
-                    set_title: "Graphics Backends",
+                    set_title: &crate::t!("settings.graphics_backends"),
                     set_activatable: true,
                     #[watch]
                     set_subtitle: &model.graphics_subtitle,
@@ -171,19 +174,19 @@ impl AsyncComponent for SettingsWindow {
 
             #[name = "gst_group"]
             adw::PreferencesGroup {
-                set_title: "GStreamer",
-                set_description: Some("Audio and video framework required by Wine on macOS"),
+                set_title: &crate::t!("settings.gstreamer"),
+                set_description: Some(&crate::t!("settings.gstreamer_desc")),
                 #[watch]
                 set_visible: cfg!(target_os = "macos"),
             },
 
             adw::PreferencesGroup {
-                set_title: "GitHub",
-                set_description: Some("Use a Personal Access Token to avoid API rate-limiting when fetching release info"),
+                set_title: &crate::t!("settings.github"),
+                set_description: Some(&crate::t!("settings.github_desc")),
 
                 adw::ActionRow {
-                    set_title: "API Key",
-                    set_subtitle: "Generate at github.com/settings/tokens · no scopes needed",
+                    set_title: &crate::t!("settings.api_key"),
+                    set_subtitle: &crate::t!("settings.api_key_sub"),
                     set_activatable_widget: Some(&github_key_entry),
                     add_suffix: &github_key_box,
                 },
@@ -196,7 +199,7 @@ impl AsyncComponent for SettingsWindow {
                     #[name = "github_key_entry"]
                     gtk::PasswordEntry {
                         set_show_peek_icon: true,
-                        set_placeholder_text: Some("ghp_xxxxxxxxxxxxxxxxxxxx"),
+                        set_placeholder_text: Some(&crate::t!("settings.api_key_placeholder")),
                         set_width_request: 180,
                         set_valign: gtk::Align::Center,
                         connect_changed[sender] => move |entry| {
@@ -209,7 +212,7 @@ impl AsyncComponent for SettingsWindow {
                     #[name = "github_key_clear_btn"]
                     gtk::Button {
                         set_icon_name: "edit-clear-symbolic",
-                        set_tooltip_text: Some("Clear API key"),
+                        set_tooltip_text: Some(&crate::t!("settings.api_key_clear")),
                         set_valign: gtk::Align::Center,
                         connect_clicked[github_key_entry] => move |_| {
                             github_key_entry.set_text("");
@@ -226,12 +229,36 @@ impl AsyncComponent for SettingsWindow {
             },
 
             adw::PreferencesGroup {
-                set_title: "Directories",
-                set_description: Some("Quick access to Tequila data locations"),
+                    set_title: &crate::t!("settings.language"),
+                    set_description: Some(&crate::t!("settings.language_desc")),
+
+                    adw::ActionRow {
+                        set_title: &crate::t!("settings.language"),
+                        set_subtitle: &crate::t!("settings.language_switch"),
+                        set_activatable_widget: Some(&language_box),
+
+                        add_suffix: &language_box,
+                    },
+
+                    #[name = "language_box"]
+                    gtk::Box {
+                        set_orientation: gtk::Orientation::Horizontal,
+                        set_spacing: 3,
+
+                        #[name = "language_combo"]
+                        gtk::DropDown {
+                            set_valign: gtk::Align::Center,
+                        },
+                    },
+                },
+
+                adw::PreferencesGroup {
+                    set_title: &crate::t!("settings.directories"),
+                        set_description: Some(&crate::t!("settings.directories_desc")),
 
                 adw::ActionRow {
-                    set_title: "Open Prefixes Directory",
-                    set_subtitle: "Browse Wine prefixes on disk",
+                    set_title: &crate::t!("settings.open_prefixes"),
+                    set_subtitle: &crate::t!("settings.open_prefixes_sub"),
                     set_activatable: true,
                     connect_activated[prefixes_dir] => move |_| {
                         let path = prefixes_dir.to_string_lossy().to_string();
@@ -244,8 +271,8 @@ impl AsyncComponent for SettingsWindow {
                     },
                 },
                 adw::ActionRow {
-                    set_title: "Open Data Directory",
-                    set_subtitle: "Browse runtimes and configuration files on disk",
+                    set_title: &crate::t!("settings.open_data"),
+                    set_subtitle: &crate::t!("settings.open_data_sub"),
                     set_activatable: true,
                     connect_activated[data_dir] => move |_| {
                         let path = data_dir.to_string_lossy().to_string();
@@ -394,6 +421,28 @@ impl AsyncComponent for SettingsWindow {
             widgets.github_key_entry.set_text(&key);
         }
 
+        // ── Language combo setup ──
+        let language_items = gtk::StringList::new(&["Follow System", "中文（简体）", "English"]);
+        widgets.language_combo.set_model(Some(&language_items));
+
+        // Load current language preference
+        let current_lang = prefix::Settings::load()
+            .map(|s| s.language)
+            .unwrap_or_else(|| "system".to_string());
+        let lang_idx: u32 = match current_lang.as_str() {
+            "zh-CN" => 1,
+            "en" => 2,
+            _ => 0,
+        };
+        widgets.language_combo.set_selected(lang_idx);
+
+        // Connect the signal AFTER setting the initial value, so it doesn't
+        // trigger the "Language Changed" dialog on every startup.
+        let lang_sender = sender.clone();
+        widgets.language_combo.connect_selected_notify(move |combo| {
+            lang_sender.input(SettingsMsg::LanguageChanged(combo.selected()));
+        });
+
         AsyncComponentParts { model, widgets }
     }
 
@@ -448,6 +497,35 @@ impl AsyncComponent for SettingsWindow {
                     log::error!("[settings] failed to save github_api_key: {}", e);
                 }
             }
+            // ── Language ──
+            SettingsMsg::LanguageChanged(idx) => {
+                let lang_str = match idx {
+                    1 => "zh-CN",
+                    2 => "en",
+                    _ => "system",
+                };
+                let mut settings =
+                    prefix::Settings::load().unwrap_or_else(|| RuntimeManager::new().into());
+                settings.language = lang_str.to_string();
+                if let Err(e) = settings.save() {
+                    log::error!("[settings] failed to save language: {}", e);
+                } else {
+                    log::info!("[i18n] language preference saved: {}", lang_str);
+                    // Show a dialog to inform the user that a restart is required
+                    let alert = adw::AlertDialog::new(
+                        Some(&crate::t!("settings.language_changed")),
+                        Some(&crate::t!("settings.language_changed_desc")),
+                    );
+                    alert.add_response("ok", &crate::t!("dialogs.ok"));
+                    alert.set_default_response(Some("ok"));
+                    alert.set_close_response("ok");
+                    alert.choose(
+                        Some(&root.clone().upcast::<gtk::Window>()),
+                        None::<&gtk::gio::Cancellable>,
+                        |_| {},
+                    );
+                }
+            }
             // ── Window ──
             SettingsMsg::Close => {
                 root.set_visible(false);
@@ -472,7 +550,7 @@ fn gst_initial_status() -> managed_download_row::DownloadRowStatus {
         return managed_download_row::DownloadRowStatus {
             installed: true,
             managed: true,
-            status_text: format!("✓ Installed ({})", ver),
+            status_text: crate::tf!("settings.gstreamer.installed", "version" => &ver),
         };
     }
 
@@ -488,7 +566,7 @@ fn gst_initial_status() -> managed_download_row::DownloadRowStatus {
                     return managed_download_row::DownloadRowStatus {
                         installed: true,
                         managed: false,
-                        status_text: "✓ Installed (system)".into(),
+                        status_text: crate::t!("settings.gstreamer.installed_system"),
                     };
                 }
             }
@@ -504,7 +582,7 @@ fn gst_initial_status() -> managed_download_row::DownloadRowStatus {
             return managed_download_row::DownloadRowStatus {
                 installed: true,
                 managed: false,
-                status_text: "✓ Installed (system)".into(),
+                status_text: crate::t!("settings.gstreamer.installed_system"),
             };
         }
     }
@@ -512,6 +590,6 @@ fn gst_initial_status() -> managed_download_row::DownloadRowStatus {
     managed_download_row::DownloadRowStatus {
         installed: false,
         managed: false,
-        status_text: "Not installed".into(),
+        status_text: crate::t!("settings.gstreamer.not_installed"),
     }
 }

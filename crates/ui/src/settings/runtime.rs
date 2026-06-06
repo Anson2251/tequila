@@ -92,7 +92,7 @@ impl AsyncComponent for RuntimeSettings {
     view! {
         #[root]
         adw::NavigationPage {
-            set_title: "Wine Runtime",
+            set_title: &crate::t!("settings.runtime.title"),
             set_child: Some(&prefs_page),
         },
 
@@ -100,13 +100,13 @@ impl AsyncComponent for RuntimeSettings {
         adw::PreferencesPage {
             #[name = "list_group"]
             adw::PreferencesGroup {
-                set_title: "Installed Runtimes",
+                set_title: &crate::t!("settings.runtime.installed"),
             },
 
             adw::PreferencesGroup {
                 adw::ActionRow {
-                    set_title: "Import from Disk",
-                    set_subtitle: "Select an existing Wine installation folder",
+                    set_title: &crate::t!("settings.runtime.import_disk"),
+                    set_subtitle: &crate::t!("settings.runtime.import_disk_sub"),
                     set_activatable: true,
                     connect_activated[sender] => move |_| {
                         sender.input(RuntimeSettingsMsg::ImportRuntime);
@@ -116,8 +116,8 @@ impl AsyncComponent for RuntimeSettings {
 
             #[name = "avail_group"]
             adw::PreferencesGroup {
-                set_title: "Available",
-                set_description: Some("Download Wine runtimes"),
+                set_title: &crate::t!("settings.runtime.available"),
+                set_description: Some(&crate::t!("settings.runtime.available_desc")),
             },
         }
     }
@@ -157,10 +157,10 @@ impl AsyncComponent for RuntimeSettings {
         #[cfg(target_os = "macos")]
         widgets
             .avail_group
-            .set_description(Some("Download Wine runtimes from Homebrew"));
+            .set_description(Some(&crate::t!("settings.runtime.available_desc_macos")));
         #[cfg(not(target_os = "macos"))]
         widgets.avail_group.set_description(Some(
-            "Download Wine runtimes from Kron4ek/Wine-Builds (requires 32-bit libraries)",
+            &crate::t!("settings.runtime.available_desc_linux"),
         ));
 
         AsyncComponentParts { model, widgets }
@@ -219,7 +219,7 @@ impl AsyncComponent for RuntimeSettings {
                 #[cfg(not(target_os = "macos"))]
                 {
                     let file_dialog = gtk::FileDialog::builder()
-                        .title("Select Wine Installation")
+                        .title(&crate::t!("settings.runtime.select_wine"))
                         .build();
                     let s = sender.clone();
                     file_dialog.select_folder(
@@ -247,11 +247,12 @@ impl AsyncComponent for RuntimeSettings {
                         self.refresh_list(&sender);
                     }
                     Err(e) => {
+                        let msg = crate::tf!("settings.runtime.import_failed_desc", "error" => &e);
                         let alert = adw::AlertDialog::new(
-                            Some("Import Failed"),
-                            Some(&format!("Failed to import Wine runtime:\n{}", e)),
+                            Some(&crate::t!("settings.runtime.import_failed")),
+                            Some(&msg),
                         );
-                        alert.add_response("ok", "OK");
+                        alert.add_response("ok", &crate::t!("dialogs.ok"));
                         alert.set_default_response(Some("ok"));
                         alert.set_close_response("ok");
                         alert.choose(Some(&self.parent), None::<&gtk::gio::Cancellable>, |_| {});
@@ -277,15 +278,17 @@ async fn build_available_channels(
     let mut ctrls: Vec<AsyncController<managed_download_row::ManagedDownloadRow>> = Vec::new();
 
     for (channel, display_name, description) in [
-        (Channel::Stable, "Stable", "Latest stable Wine release"),
-        (Channel::Staging, "Staging", "Wine with performance patches"),
-        (Channel::Devel, "Devel", "Development version (unstable)"),
+        (Channel::Stable, crate::t!("settings.runtime.stable"), crate::t!("settings.runtime.stable_desc")),
+        (Channel::Staging, crate::t!("settings.runtime.staging"), crate::t!("settings.runtime.staging_desc")),
+        (Channel::Devel, crate::t!("settings.runtime.devel"), crate::t!("settings.runtime.devel_desc")),
     ] {
         let pm = prefix_manager.clone();
         let runtime_id = channel.runtime_id().to_string();
 
         // ── check_status (checks filesystem directly, not a stale in-memory snapshot) ──
         let check_id = runtime_id.clone();
+        // Clone outside closure since both closure and outer scope need it
+        let dn_for_title = display_name.clone();
         let check_status = Box::new(move || {
             let dir = prefix::runtime::download::runtimes_dir().join(&check_id);
             let installed = dir.is_dir();
@@ -293,9 +296,9 @@ async fn build_available_channels(
                 installed,
                 managed: installed,
                 status_text: if installed {
-                    format!("✓ Installed ({})", display_name)
+                    crate::tf!("settings.runtime.installed_channel", "name" => &display_name)
                 } else {
-                    description.to_string()
+                    description.clone()
                 },
             }
         });
@@ -350,7 +353,7 @@ async fn build_available_channels(
                     // Poll for completion
                     loop {
                         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                            return Err("Download cancelled".into());
+                            return Err(crate::t!("settings.runtime.download_cancelled").into());
                         }
                         match rx.try_recv() {
                             Ok(Ok(rm)) => {
@@ -363,7 +366,7 @@ async fn build_available_channels(
                                     .await;
                             }
                             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                                return Err("Download thread crashed".into());
+                                return Err(crate::t!("settings.runtime.download_crashed").into());
                             }
                         }
                     }
@@ -376,7 +379,7 @@ async fn build_available_channels(
 
         let ctrl = managed_download_row::ManagedDownloadRow::builder()
             .launch(managed_download_row::ManagedDownloadRowInit {
-                title: display_name.to_string(),
+                title: dn_for_title,
                 check_status,
                 check_update: None,
                 start_download,
@@ -417,7 +420,7 @@ async fn build_available_channels(
             Err(e) => {
                 log::error!("[runtime] failed to fetch Kron4ek builds: {}", e);
                 let row = adw::ActionRow::builder()
-                    .title("Failed to fetch available Wine versions")
+                    .title(&crate::t!("settings.runtime.fetch_failed"))
                     .subtitle(&format!("{}", e))
                     .build();
                 group.add(&row);
@@ -429,7 +432,7 @@ async fn build_available_channels(
         let runtime_id = format!("wine-{}", build.version);
         let base_version = build.version.trim_end_matches("-staging");
         let version_label = if build.is_staging {
-            format!("{} (Staging)", base_version)
+            crate::tf!("settings.runtime.staging_label", "version" => base_version)
         } else {
             build.version.clone()
         };
@@ -445,11 +448,11 @@ async fn build_available_channels(
                 installed,
                 managed: installed,
                 status_text: if installed {
-                    format!("✓ Installed (Wine {})", chk_version)
+                    crate::tf!("settings.runtime.installed_wine", "version" => &chk_version)
                 } else if is_staging {
-                    "Wine with Staging patchset".to_string()
+                    crate::t!("settings.runtime.staging_patchset")
                 } else {
-                    "Vanilla Wine build".to_string()
+                    crate::t!("settings.runtime.vanilla_build")
                 },
             }
         });
@@ -509,7 +512,7 @@ async fn build_available_channels(
                     // Poll for completion
                     loop {
                         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                            return Err("Download cancelled".into());
+                            return Err(crate::t!("settings.runtime.download_cancelled").into());
                         }
                         match rx.try_recv() {
                             Ok(Ok(rm)) => {
@@ -522,7 +525,7 @@ async fn build_available_channels(
                                     .await;
                             }
                             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                                return Err("Download thread crashed".into());
+                                return Err(crate::t!("settings.runtime.download_crashed").into());
                             }
                         }
                     }
@@ -535,7 +538,7 @@ async fn build_available_channels(
 
         let ctrl = managed_download_row::ManagedDownloadRow::builder()
             .launch(managed_download_row::ManagedDownloadRowInit {
-                title: format!("Wine {}", version_label),
+                title: crate::tf!("settings.runtime.wine_version_title", "version" => &version_label),
                 check_status,
                 check_update: None,
                 start_download,
@@ -570,36 +573,36 @@ fn refresh_runtime_list(
         let is_system = matches!(runtime.source, RuntimeSource::System);
 
         let _source = match &runtime.source {
-            RuntimeSource::System => "System (PATH)".to_string(),
+            RuntimeSource::System => crate::t!("settings.runtime.system"),
             RuntimeSource::ManagedChannel {
                 channel,
                 installed_cask_version,
             } => {
-                format!(
-                    "Homebrew {} — cask {}",
-                    channel.display_name(),
-                    installed_cask_version
+                crate::tf!(
+                    "settings.runtime.homebrew_source",
+                    "channel" => &channel.display_name(),
+                    "version" => &installed_cask_version,
                 )
             }
             RuntimeSource::ManagedVersion { source_url } => {
                 if source_url.contains("Kron4ek") {
                     "Kron4ek".to_string()
                 } else {
-                    "Managed (versioned)".to_string()
+                    crate::t!("settings.runtime.managed_versioned")
                 }
             }
             RuntimeSource::Imported {
                 label,
                 original_path,
             } => {
-                format!("Imported: {} ({})", label, original_path.display())
+                crate::tf!("settings.runtime.imported_label", "label" => &label, "path" => &original_path.display().to_string())
             }
         };
 
-        let mut subtitle = format!(
-            "{} · Installed {}",
-            runtime.wine_version,
-            &runtime.installed_at[..10]
+        let mut subtitle = crate::tf!(
+            "settings.runtime.installed_format",
+            "version" => &runtime.wine_version,
+            "date" => &runtime.installed_at[..10].to_string(),
         );
 
         let gfx_names: Vec<&str> = runtime
@@ -639,7 +642,7 @@ fn refresh_runtime_list(
 
         if is_default {
             let badge = gtk::Label::builder()
-                .label("Default")
+                .label(&crate::t!("settings.runtime.default"))
                 .css_classes(["badge", "accent"])
                 .valign(gtk::Align::Center)
                 .margin_end(4)
@@ -652,7 +655,7 @@ fn refresh_runtime_list(
             let s = sender.clone();
             let remove_btn = gtk::Button::builder()
                 .icon_name("user-trash-symbolic")
-                .tooltip_text("Remove Runtime")
+                .tooltip_text(&crate::t!("settings.runtime.remove"))
                 .css_classes(["flat", "circular", "destructive-action"])
                 .valign(gtk::Align::Center)
                 .build();
@@ -681,7 +684,7 @@ fn macos_import_dialog(sender: &AsyncComponentSender<RuntimeSettings>) {
     panel.setCanChooseFiles(true);
     panel.setCanChooseDirectories(true);
     panel.setAllowsMultipleSelection(false);
-    panel.setTitle(Some(&NSString::from_str("Select Wine Installation")));
+    panel.setTitle(Some(&NSString::from_str(&crate::t!("settings.runtime.select_wine"))));
 
     let panel_for_block = panel.clone();
     let s = sender.clone();

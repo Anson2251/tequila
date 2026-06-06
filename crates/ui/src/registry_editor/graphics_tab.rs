@@ -52,13 +52,13 @@ impl SimpleComponent for GraphicsTabModel {
                 set_vexpand: true,
                 set_hexpand: true,
                 adw::PreferencesGroup {
-                set_title: "Graphics Settings",
-                set_description: Some("Configure Direct3D rendering, multithreading, and video memory"),
+                set_title: &crate::t!("registry.graphics.title"),
+                set_description: Some(&crate::t!("registry.graphics.desc")),
 
                 // ── D3D Renderer ──
                 adw::ActionRow {
-                    set_title: "Renderer",
-                    set_subtitle: "Direct3D rendering backend",
+                    set_title: &crate::t!("registry.graphics.renderer"),
+                    set_subtitle: &crate::t!("registry.graphics.renderer_sub"),
 
                     add_suffix = &gtk::DropDown {
                         set_hexpand: true,
@@ -79,8 +79,8 @@ impl SimpleComponent for GraphicsTabModel {
 
                 // ── CSMT ──
                 adw::ActionRow {
-                    set_title: "CSMT",
-                    set_subtitle: "Command stream multithreading",
+                    set_title: &crate::t!("registry.graphics.csmt"),
+                    set_subtitle: &crate::t!("registry.graphics.csmt_sub"),
 
                     add_suffix = &gtk::Switch {
                         set_valign: gtk::Align::Center,
@@ -98,8 +98,8 @@ impl SimpleComponent for GraphicsTabModel {
 
                 // ── Offscreen Rendering Mode ──
                 adw::ActionRow {
-                    set_title: "Offscreen Rendering Mode",
-                    set_subtitle: "Method for rendering offscreen surfaces",
+                    set_title: &crate::t!("registry.graphics.offscreen_mode"),
+                    set_subtitle: &crate::t!("registry.graphics.offscreen_mode_sub"),
 
                     add_suffix = &gtk::DropDown {
                         set_hexpand: true,
@@ -120,8 +120,8 @@ impl SimpleComponent for GraphicsTabModel {
 
                 // ── Video Memory ──
                 adw::ActionRow {
-                    set_title: "Video Memory Size",
-                    set_subtitle: "Amount of video memory in MB reported to applications",
+                    set_title: &crate::t!("registry.graphics.video_memory"),
+                    set_subtitle: &crate::t!("registry.graphics.video_memory_sub"),
 
                     add_suffix = &gtk::Entry {
                         set_width_chars: 8,

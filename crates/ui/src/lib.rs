@@ -1,6 +1,7 @@
 pub mod app;
 pub mod apps;
 pub mod dialogs;
+pub mod i18n;
 pub mod prefix;
 pub mod registry_editor;
 pub mod runtime;

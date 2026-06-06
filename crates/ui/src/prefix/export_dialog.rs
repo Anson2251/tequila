@@ -42,7 +42,7 @@ impl SimpleComponent for ExportDialogModel {
     view! {
         #[name = "dialog"]
         gtk::Window {
-            set_title: Some("Export Prefix"),
+            set_title: Some(&crate::t!("prefix.export.title")),
             set_modal: true,
             set_transient_for: Some(&parent),
             set_default_width: 480,
@@ -61,7 +61,7 @@ impl SimpleComponent for ExportDialogModel {
                     set_spacing: 4,
 
                     gtk::Label {
-                        set_label: "Save to:",
+                        set_label: &crate::t!("prefix.export.save_to"),
                         set_halign: gtk::Align::Start,
                     },
                     gtk::Box {
@@ -71,11 +71,11 @@ impl SimpleComponent for ExportDialogModel {
                         #[name = "dest_entry"]
                         gtk::Entry {
                             set_hexpand: true,
-                            set_placeholder_text: Some("Select destination…"),
+                            set_placeholder_text: Some(&crate::t!("prefix.export.placeholder")),
                         },
                         #[name = "browse_btn"]
                         gtk::Button {
-                            set_label: "Browse…",
+                            set_label: &crate::t!("prefix.export.browse"),
                             connect_clicked[sender] => move |_| {
                                 sender.input(ExportDialogMsg::Browse);
                             },
@@ -86,7 +86,7 @@ impl SimpleComponent for ExportDialogModel {
                 // User data
                 #[name = "user_data_check"]
                 gtk::CheckButton {
-                    set_label: Some("Include user data (AppData, Documents, etc.)"),
+                    set_label: Some(&crate::t!("prefix.export.include_user")),
                     set_active: true,
                     set_margin_top: 4,
                 },
@@ -102,7 +102,7 @@ impl SimpleComponent for ExportDialogModel {
                         set_spacing: 6,
 
                         gtk::Label {
-                            set_label: "Compression level:",
+                            set_label: &crate::t!("prefix.export.compression"),
                         },
                         #[name = "level_label"]
                         gtk::Label {
@@ -121,7 +121,7 @@ impl SimpleComponent for ExportDialogModel {
                         set_size_request: (-1, 28),
                     },
                     gtk::Label {
-                        set_label: "1 (fastest)  ───────────  22 (best compression)",
+                        set_label: &crate::t!("prefix.export.range_label"),
                         set_halign: gtk::Align::Center,
                         set_css_classes: &["dim-label", "caption"],
                     },
@@ -130,7 +130,7 @@ impl SimpleComponent for ExportDialogModel {
                 // Progress
                 #[name = "progress_label"]
                 gtk::Label {
-                    set_label: "Exporting prefix...",
+                    set_label: &crate::t!("prefix.export.progress"),
                     set_visible: false,
                 },
                 #[name = "progress_bar"]
@@ -163,7 +163,7 @@ impl SimpleComponent for ExportDialogModel {
         header_bar.set_property("use-native-controls", true);
 
         let export_btn = gtk::Button::builder()
-            .label("Export")
+            .label(&crate::t!("prefix.export.export_btn"))
             .icon_name("document-save-symbolic")
             .css_classes(["suggested-action"])
             .build();
@@ -208,7 +208,7 @@ impl SimpleComponent for ExportDialogModel {
                 let exts = [&format!("zst.{}", prefix::TQL_EXTENSION)[..]];
                 crate::dialogs::save_file(
                     &parent.upcast::<gtk::Window>(),
-                    "Choose Destination",
+                    &crate::t!("prefix.export.choose_dest"),
                     &suggested,
                     &exts,
                     move |path| {
@@ -307,8 +307,8 @@ impl SimpleComponent for ExportDialogModel {
                         self.progress_label.set_visible(false);
                         self.progress_bar.set_visible(false);
 
-                        let alert = adw::AlertDialog::new(Some("Export Failed"), Some(&e));
-                        alert.add_response("ok", "OK");
+                        let alert = adw::AlertDialog::new(Some(&crate::t!("prefix.export.failed")), Some(&e));
+                        alert.add_response("ok", &crate::t!("dialogs.ok"));
                         alert.set_default_response(Some("ok"));
                         alert.set_close_response("ok");
                         alert.choose(

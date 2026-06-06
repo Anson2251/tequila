@@ -53,6 +53,7 @@ pub struct PrefixConfigModel {
     pulse_id: Option<gtk::glib::SourceId>,
     #[tracker::do_not_track]
     progress_dialog: Option<gtk::Window>,
+    edit_save_label: String,
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────
@@ -139,7 +140,7 @@ impl SimpleComponent for PrefixConfigModel {
                 set_vexpand: true,
 
                 push: root_page = &adw::NavigationPage {
-                    set_title: "Prefix Config",
+                    set_title: &crate::t!("prefix.config.title"),
                     set_can_pop: false,
                     set_child: Some(&page_wrapper),
                 },
@@ -154,11 +155,11 @@ impl SimpleComponent for PrefixConfigModel {
             prefs_page -> adw::PreferencesPage {
                 // ══ General ══
                 adw::PreferencesGroup {
-                    set_title: "General",
+                    set_title: &crate::t!("prefix.general"),
 
                     #[name = "name_row"]
                     adw::EntryRow {
-                        set_title: "Name",
+                        set_title: &crate::t!("prefix.name"),
                         #[track = "model.changed(PrefixConfigModel::editing())"]
                         set_editable: model.editing,
                         #[track = "model.changed(PrefixConfigModel::config())"]
@@ -166,8 +167,8 @@ impl SimpleComponent for PrefixConfigModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Architecture",
-                        set_subtitle: "Windows architecture (32 or 64-bit)",
+                        set_title: &crate::t!("prefix.architecture"),
+                        set_subtitle: &crate::t!("prefix.detail.arch"),
                         set_activatable: false,
 
                         add_suffix = &gtk::Label {
@@ -179,8 +180,8 @@ impl SimpleComponent for PrefixConfigModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Wine Version",
-                        set_subtitle: "Wine runtime used for this prefix",
+                        set_title: &crate::t!("prefix.wine_version"),
+                        set_subtitle: &crate::t!("prefix.detail.wine_version"),
 
                         add_suffix = &gtk::Box {
                             set_orientation: gtk::Orientation::Horizontal,
@@ -195,7 +196,7 @@ impl SimpleComponent for PrefixConfigModel {
                             },
 
                             gtk::Button {
-                                set_label: "Switch",
+                                set_label: &crate::t!("prefix.detail.switch"),
                                 set_css_classes: &["flat"],
                                 set_valign: gtk::Align::Center,
                                 connect_clicked[sender] => move |_| {
@@ -209,16 +210,16 @@ impl SimpleComponent for PrefixConfigModel {
                 // ══ Description (populated in init) ══
                 #[name = "description_group"]
                 adw::PreferencesGroup {
-                    set_title: "Description",
+                    set_title: &crate::t!("prefix.description"),
                 },
 
                 // ══ Info ══
                 adw::PreferencesGroup {
-                    set_title: "Info",
+                    set_title: &crate::t!("prefix.info"),
 
                     adw::ActionRow {
-                        set_title: "Created",
-                        set_subtitle: "Prefix creation date",
+                        set_title: &crate::t!("prefix.detail.created"),
+                        set_subtitle: &crate::t!("prefix.detail.created_sub"),
                         set_activatable: false,
 
                         add_suffix = &gtk::Label {
@@ -230,8 +231,8 @@ impl SimpleComponent for PrefixConfigModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Last Modified",
-                        set_subtitle: "Last configuration change",
+                        set_title: &crate::t!("prefix.detail.modified"),
+                        set_subtitle: &crate::t!("prefix.detail.modified_sub"),
                         set_activatable: false,
 
                         add_suffix = &gtk::Label {
@@ -243,8 +244,8 @@ impl SimpleComponent for PrefixConfigModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Path",
-                        set_subtitle: "Filesystem location of the prefix",
+                        set_title: &crate::t!("prefix.detail.path"),
+                        set_subtitle: &crate::t!("prefix.detail.path_sub"),
                         set_activatable: false,
 
                         add_suffix = &gtk::Label {
@@ -261,11 +262,11 @@ impl SimpleComponent for PrefixConfigModel {
 
                 // ══ Graphics ══
                 adw::PreferencesGroup {
-                    set_title: "Graphics",
+                    set_title: &crate::t!("prefix.graphics"),
 
                     adw::ActionRow {
-                        set_title: "Backend",
-                        set_subtitle: "Graphics translation layer for Direct3D",
+                        set_title: &crate::t!("prefix.detail.graphics_backend"),
+                        set_subtitle: &crate::t!("prefix.detail.graphics_sub"),
 
                         add_suffix = &gtk::DropDown {
                             set_hexpand: true,
@@ -286,11 +287,11 @@ impl SimpleComponent for PrefixConfigModel {
 
                 // ══ Tools ══
                 adw::PreferencesGroup {
-                    set_title: "Tools",
+                    set_title: &crate::t!("prefix.tools"),
 
                     adw::ActionRow {
-                        set_title: "Advanced Registry Settings",
-                        set_subtitle: "Edit Wine registry keys (version, audio, graphics, windowing)",
+                        set_title: &crate::t!("prefix.detail.registry"),
+                        set_subtitle: &crate::t!("prefix.detail.registry_sub"),
                         set_activatable: true,
                         connect_activated => PrefixConfigMsg::ShowAdvancedRegistry,
                     },
@@ -309,14 +310,14 @@ impl SimpleComponent for PrefixConfigModel {
 
                 gtk::Button {
                     #[track = "model.changed(PrefixConfigModel::editing())"]
-                    set_label: if model.editing { "Save" } else { "Edit" },
+                    set_label: &model.edit_save_label,
                     #[track = "model.changed(PrefixConfigModel::editing())"]
                     set_css_classes: if model.editing { &["suggested-action"] } else { &[] },
                     connect_clicked => PrefixConfigMsg::ToggleEdit,
                 },
 
                 gtk::Button {
-                    set_label: "Cancel",
+                    set_label: &crate::t!("prefix.detail.cancel"),
                     #[track = "model.changed(PrefixConfigModel::editing())"]
                     set_visible: model.editing,
                     connect_clicked[sender] => move |_| {
@@ -350,7 +351,7 @@ impl SimpleComponent for PrefixConfigModel {
         }
         // If no match, select "System Wine" (wine-system) if available, else first
         if runtime_ids.is_empty() {
-            runtime_items.push("No runtimes available".to_string());
+            runtime_items.push(crate::t!("prefix.detail.no_runtimes"));
             runtime_ids.push(String::new());
         }
         let runtime_items_str: Vec<&str> = runtime_items.iter().map(|s| s.as_str()).collect();
@@ -371,7 +372,7 @@ impl SimpleComponent for PrefixConfigModel {
                 PrefixConfigMsg::RegistryEditor(output)
             });
         let registry_page = adw::NavigationPage::builder()
-            .title("Advanced Registry Settings")
+            .title(&crate::t!("prefix.detail.registry"))
             .child(registry_ctrl.widget())
             .build();
 
@@ -420,6 +421,7 @@ impl SimpleComponent for PrefixConfigModel {
             progress_bar: gtk::ProgressBar::new(),
             pulse_id: None,
             progress_dialog: None,
+            edit_save_label: crate::t!("prefix.detail.edit"),
             tracker: 0,
         };
 
@@ -493,6 +495,7 @@ impl SimpleComponent for PrefixConfigModel {
                 } else {
                     self.saved_config = self.config.clone();
                     self.set_editing(true);
+                    self.set_edit_save_label(crate::t!("prefix.detail.save"));
                     self.description_text.set_editable(true);
                 }
             }
@@ -505,6 +508,7 @@ impl SimpleComponent for PrefixConfigModel {
                     .set_text(self.saved_config.description.as_deref().unwrap_or(""));
                 self.set_config(self.saved_config.clone());
                 self.set_editing(false);
+                self.set_edit_save_label(crate::t!("prefix.detail.edit"));
                 self.sync_selected_graphics();
             }
             PrefixConfigMsg::UpdateName(name) => self.config.name = name,
@@ -520,6 +524,7 @@ impl SimpleComponent for PrefixConfigModel {
                 self.set_config(config.clone());
                 self.saved_config = config;
                 self.set_editing(false);
+                self.set_edit_save_label(crate::t!("prefix.detail.edit"));
                 self.description_text.set_editable(false);
                 self.sync_selected_graphics();
                 // Refresh runtime IDs so the display name reflects newly
@@ -550,16 +555,12 @@ impl SimpleComponent for PrefixConfigModel {
                     .build();
 
                 let alert = adw::AlertDialog::new(
-                    Some("Change Wine Version"),
-                    Some(
-                        "Select a Wine runtime for this prefix.\n\n\
-                         The prefix will be re-initialized with the new version.\n\
-                         Some applications may not work correctly after the change.",
-                    ),
+                    Some(&crate::t!("prefix.detail.change_wine.title")),
+                    Some(&crate::t!("prefix.detail.change_wine.desc")),
                 );
                 alert.set_extra_child(Some(&dropdown));
-                alert.add_response("cancel", "Cancel");
-                alert.add_response("change", "Change");
+                alert.add_response("cancel", &crate::t!("prefix.detail.change_wine.cancel"));
+                alert.add_response("change", &crate::t!("prefix.detail.change_wine.change"));
                 alert.set_response_appearance("change", adw::ResponseAppearance::Destructive);
                 alert.set_default_response(Some("cancel"));
                 alert.set_close_response("cancel");
@@ -592,14 +593,12 @@ impl SimpleComponent for PrefixConfigModel {
                             content.set_margin_end(20);
                             content.set_margin_bottom(20);
                             content.set_margin_start(20);
-                            let label = gtk::Label::new(Some(
-                                "Reinitializing prefix with the new Wine version...",
-                            ));
+                            let label = gtk::Label::new(Some(&crate::t!("prefix.detail.change_wine.reinit")));
                             content.append(&label);
                             content.append(&pb);
 
                             let win = gtk::Window::builder()
-                                .title("Changing Wine Version")
+                                .title(&crate::t!("prefix.detail.change_wine.progress_title"))
                                 .modal(true)
                                 .transient_for(&pw)
                                 .resizable(false)
@@ -652,13 +651,10 @@ impl SimpleComponent for PrefixConfigModel {
 
                 if let Err(e) = result {
                     let alert = adw::AlertDialog::new(
-                        Some("Reinitialization Failed"),
-                        Some(&format!(
-                            "Failed to reinitialize prefix with the new Wine version:\n\n{}",
-                            e
-                        )),
+                        Some(&crate::t!("prefix.detail.reinit_failed")),
+                        Some(&crate::tf!("prefix.detail.reinit_failed_desc", "error" => &e)),
                     );
-                    alert.add_response("ok", "OK");
+                    alert.add_response("ok", &crate::t!("dialogs.ok"));
                     alert.set_default_response(Some("ok"));
                     alert.set_close_response("ok");
                     alert.choose(
@@ -686,6 +682,7 @@ impl SimpleComponent for PrefixConfigModel {
                     self.set_config(config.clone());
                     self.saved_config = config.clone();
                     self.set_editing(false);
+                    self.set_edit_save_label(crate::t!("prefix.detail.edit"));
                     if let Some(ref desc) = config.description {
                         self.description_buffer.set_text(desc);
                     } else {
@@ -711,6 +708,7 @@ impl PrefixConfigModel {
             Some(text.to_string())
         };
         self.set_editing(false);
+        self.set_edit_save_label(crate::t!("prefix.detail.edit"));
         self.description_text.set_editable(false);
         if let Err(e) = AppService::global()
             .prefix_manager()

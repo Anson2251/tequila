@@ -23,15 +23,15 @@ pub fn setup_menu_bar(app: gtk::Application, sender: ComponentSender<crate::app:
         let menubar = Menu::new();
 
         let file_menu = Menu::new();
-        file_menu.append(Some("_New Prefix"), Some("app.new-prefix"));
-        file_menu.append(Some("_Import Prefix…"), Some("app.import-prefix"));
-        file_menu.append(Some("_Preferences"), Some("app.preferences"));
-        file_menu.append(Some("_Quit"), Some("app.quit"));
-        menubar.append_submenu(Some("_File"), &file_menu);
+        file_menu.append(Some(&crate::t!("menu.new_prefix")), Some("app.new-prefix"));
+        file_menu.append(Some(&crate::t!("menu.import_prefix")), Some("app.import-prefix"));
+        file_menu.append(Some(&crate::t!("menu.preferences")), Some("app.preferences"));
+        file_menu.append(Some(&crate::t!("menu.quit")), Some("app.quit"));
+        menubar.append_submenu(Some(&crate::t!("menu.file")), &file_menu);
 
         let view_menu = Menu::new();
-        view_menu.append(Some("Toggle _Sidebar"), Some("app.toggle-sidebar"));
-        menubar.append_submenu(Some("_View"), &view_menu);
+        view_menu.append(Some(&crate::t!("menu.toggle_sidebar")), Some("app.toggle-sidebar"));
+        menubar.append_submenu(Some(&crate::t!("menu.view")), &view_menu);
 
         app.set_menubar(Some(&menubar));
     }
@@ -199,7 +199,7 @@ fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<crat
 
         // About
         let about_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
-        about_item.setTitle(&NSString::from_str("About Tequila"));
+        about_item.setTitle(&NSString::from_str(&crate::t!("menu.about")));
         about_item.setAction(Some(sel!(handleMenuAction:)));
         about_item.setTarget(Some(&*target as &NSObject));
         about_item.setTag(1);
@@ -211,7 +211,7 @@ fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<crat
 
         // Preferences
         let prefs_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
-        prefs_item.setTitle(&NSString::from_str("Preferences\u{2026}"));
+        prefs_item.setTitle(&NSString::from_str(&crate::t!("menu.prefs_macos")));
         prefs_item.setAction(Some(sel!(handleMenuAction:)));
         prefs_item.setTarget(Some(&*target as &NSObject));
         prefs_item.setTag(3);
@@ -225,7 +225,7 @@ fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<crat
 
         // Quit
         let quit_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
-        quit_item.setTitle(&NSString::from_str("Quit Tequila"));
+        quit_item.setTitle(&NSString::from_str(&crate::t!("menu.quit")));
         quit_item.setAction(Some(sel!(handleMenuAction:)));
         quit_item.setTarget(Some(&*target as &NSObject));
         quit_item.setTag(5);
@@ -236,12 +236,12 @@ fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<crat
         // ── File Menu ──
         let file_menu_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
         let file_menu = NSMenu::init(mtm.alloc::<NSMenu>());
-        file_menu.setTitle(&NSString::from_str("File"));
+        file_menu.setTitle(&NSString::from_str(&crate::t!("menu.file")));
         file_menu_item.setSubmenu(Some(&file_menu));
         main_menu.addItem(&file_menu_item);
 
         let new_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
-        new_item.setTitle(&NSString::from_str("New Prefix"));
+        new_item.setTitle(&NSString::from_str(&crate::t!("menu.new_prefix")));
         new_item.setAction(Some(sel!(handleMenuAction:)));
         new_item.setTarget(Some(&*target as &NSObject));
         new_item.setTag(2);
@@ -252,12 +252,12 @@ fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<crat
         // ── View Menu ──
         let view_menu_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
         let view_menu = NSMenu::init(mtm.alloc::<NSMenu>());
-        view_menu.setTitle(&NSString::from_str("View"));
+        view_menu.setTitle(&NSString::from_str(&crate::t!("menu.view")));
         view_menu_item.setSubmenu(Some(&view_menu));
         main_menu.addItem(&view_menu_item);
 
         let sidebar_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
-        sidebar_item.setTitle(&NSString::from_str("Toggle Sidebar"));
+        sidebar_item.setTitle(&NSString::from_str(&crate::t!("menu.toggle_sidebar")));
         sidebar_item.setAction(Some(sel!(handleMenuAction:)));
         sidebar_item.setTarget(Some(&*target as &NSObject));
         sidebar_item.setTag(4);
@@ -270,13 +270,13 @@ fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<crat
         // ── Edit Menu (responder-chain with nil target) ──
         let edit_menu_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
         let edit_menu = NSMenu::init(mtm.alloc::<NSMenu>());
-        edit_menu.setTitle(&NSString::from_str("Edit"));
+        edit_menu.setTitle(&NSString::from_str(&crate::t!("macos.edit")));
         edit_menu_item.setSubmenu(Some(&edit_menu));
         main_menu.addItem(&edit_menu_item);
 
         // Undo
         let undo_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
-        undo_item.setTitle(&NSString::from_str("Undo"));
+        undo_item.setTitle(&NSString::from_str(&crate::t!("macos.undo")));
         undo_item.setAction(Some(sel!(undo:)));
         undo_item.setTarget(None);
         undo_item.setKeyEquivalent(&NSString::from_str("z"));
@@ -285,7 +285,7 @@ fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<crat
 
         // Redo
         let redo_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
-        redo_item.setTitle(&NSString::from_str("Redo"));
+        redo_item.setTitle(&NSString::from_str(&crate::t!("macos.redo")));
         redo_item.setAction(Some(sel!(redo:)));
         redo_item.setTarget(None);
         redo_item.setKeyEquivalent(&NSString::from_str("z"));
@@ -300,7 +300,7 @@ fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<crat
 
         // Cut
         let cut_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
-        cut_item.setTitle(&NSString::from_str("Cut"));
+        cut_item.setTitle(&NSString::from_str(&crate::t!("macos.cut")));
         cut_item.setAction(Some(sel!(cut:)));
         cut_item.setTarget(None);
         cut_item.setKeyEquivalent(&NSString::from_str("x"));
@@ -309,7 +309,7 @@ fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<crat
 
         // Copy
         let copy_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
-        copy_item.setTitle(&NSString::from_str("Copy"));
+        copy_item.setTitle(&NSString::from_str(&crate::t!("macos.copy")));
         copy_item.setAction(Some(sel!(copy:)));
         copy_item.setTarget(None);
         copy_item.setKeyEquivalent(&NSString::from_str("c"));
@@ -318,7 +318,7 @@ fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<crat
 
         // Paste
         let paste_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
-        paste_item.setTitle(&NSString::from_str("Paste"));
+        paste_item.setTitle(&NSString::from_str(&crate::t!("macos.paste")));
         paste_item.setAction(Some(sel!(paste:)));
         paste_item.setTarget(None);
         paste_item.setKeyEquivalent(&NSString::from_str("v"));
@@ -331,7 +331,7 @@ fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<crat
 
         // Select All
         let select_all_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
-        select_all_item.setTitle(&NSString::from_str("Select All"));
+        select_all_item.setTitle(&NSString::from_str(&crate::t!("macos.select_all")));
         select_all_item.setAction(Some(sel!(selectAll:)));
         select_all_item.setTarget(None);
         select_all_item.setKeyEquivalent(&NSString::from_str("a"));
@@ -341,13 +341,13 @@ fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<crat
         // ── Window Menu ──
         let window_menu_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
         let window_menu = NSMenu::init(mtm.alloc::<NSMenu>());
-        window_menu.setTitle(&NSString::from_str("Window"));
+        window_menu.setTitle(&NSString::from_str(&crate::t!("macos.window")));
         window_menu_item.setSubmenu(Some(&window_menu));
         main_menu.addItem(&window_menu_item);
 
         // Minimize
         let minimize_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
-        minimize_item.setTitle(&NSString::from_str("Minimize"));
+        minimize_item.setTitle(&NSString::from_str(&crate::t!("macos.minimize")));
         minimize_item.setAction(Some(sel!(performMiniaturize:)));
         minimize_item.setTarget(None);
         minimize_item.setKeyEquivalent(&NSString::from_str("m"));
@@ -356,7 +356,7 @@ fn setup_macos_native_menu(_app: &gtk::Application, sender: ComponentSender<crat
 
         // Zoom
         let zoom_item = NSMenuItem::init(mtm.alloc::<NSMenuItem>());
-        zoom_item.setTitle(&NSString::from_str("Zoom"));
+        zoom_item.setTitle(&NSString::from_str(&crate::t!("macos.zoom")));
         zoom_item.setAction(Some(sel!(performZoom:)));
         zoom_item.setTarget(None);
         window_menu.addItem(&zoom_item);

@@ -137,7 +137,7 @@ impl SimpleComponent for AppModel {
 
         let sidebar_btn = gtk::Button::builder()
             .icon_name("sidebar-show-symbolic")
-            .tooltip_text("Show Sidebar")
+            .tooltip_text(&crate::t!("header.sidebar"))
             .build();
         let sb_sender = sender.clone();
         sidebar_btn.connect_clicked(move |_| {
@@ -147,14 +147,14 @@ impl SimpleComponent for AppModel {
 
         let back_btn = gtk::Button::builder()
             .icon_name("go-previous-symbolic")
-            .tooltip_text("Back")
+            .tooltip_text(&crate::t!("header.back"))
             .visible(false)
             .build();
         header_bar.pack_start(&back_btn);
 
         let import_btn = gtk::Button::builder()
             .icon_name("document-open-symbolic")
-            .tooltip_text("Import Prefix")
+            .tooltip_text(&crate::t!("header.import"))
             .build();
         let im_sender = sender.clone();
         import_btn.connect_clicked(move |_| {
@@ -164,7 +164,7 @@ impl SimpleComponent for AppModel {
 
         let new_prefix_btn = gtk::Button::builder()
             .icon_name("list-add-symbolic")
-            .tooltip_text("New Prefix")
+            .tooltip_text(&crate::t!("header.new_prefix"))
             .build();
         let np_sender = sender.clone();
         new_prefix_btn.connect_clicked(move |_| {
@@ -174,7 +174,7 @@ impl SimpleComponent for AppModel {
 
         let settings_btn = gtk::Button::builder()
             .icon_name("emblem-system-symbolic")
-            .tooltip_text("Settings")
+            .tooltip_text(&crate::t!("header.settings"))
             .build();
         let st_sender = sender.clone();
         settings_btn.connect_clicked(move |_| {
@@ -306,7 +306,7 @@ impl SimpleComponent for AppModel {
         );
         empty_page.append(
             &gtk::Label::builder()
-                .label("No prefix selected")
+                .label(&crate::t!("app_page.empty"))
                 .css_classes(["title-4", "dim-label"])
                 .margin_top(10)
                 .build(),
@@ -315,10 +315,10 @@ impl SimpleComponent for AppModel {
         // Tabbed content Stack
         let content_stack = adw::ViewStack::new();
         content_stack
-            .add_titled(app_manager.widget(), Some("apps"), "Apps")
+            .add_titled(app_manager.widget(), Some("apps"), &crate::t!("app_page.tabs.apps"))
             .set_icon_name(Some("application-x-executable-symbolic"));
         content_stack
-            .add_titled(config_tab.widget(), Some("config"), "Config")
+            .add_titled(config_tab.widget(), Some("config"), &crate::t!("app_page.tabs.config"))
             .set_icon_name(Some("document-properties-symbolic"));
         switcher.set_stack(Some(&content_stack));
 
@@ -377,7 +377,7 @@ impl SimpleComponent for AppModel {
         sync_overlay.add_overlay(&sync_overlay_box);
         if needs_sync {
             sync_overlay_box.set_visible(true);
-            sync_progress_label.set_label("Scanning...");
+            sync_progress_label.set_label(&crate::t!("app_page.scanning"));
         }
         // macOS: remove rounded window corners, macOS would do that
         #[cfg(target_os = "macos")]
@@ -509,11 +509,12 @@ impl SimpleComponent for AppModel {
                     let prefix_path = self.prefixes[index].path.clone();
 
                     if let Err(e) = service::launch::launch_winecfg(&self.service, &prefix_path) {
+                        let msg = crate::tf!("apps.launch_failed_winecfg", "error" => &e);
                         let alert = adw::AlertDialog::new(
-                            Some("Launch Failed"),
-                            Some(&format!("Failed to launch winecfg:\n\n{}", e)),
+                            Some(&crate::t!("apps.launch_failed")),
+                            Some(&msg),
                         );
-                        alert.add_response("ok", "OK");
+                        alert.add_response("ok", &crate::t!("dialogs.ok"));
                         alert.set_default_response(Some("ok"));
                         alert.set_close_response("ok");
                         alert.choose(
@@ -536,11 +537,12 @@ impl SimpleComponent for AppModel {
                             prefix_path,
                             executable,
                         ) {
+                            let msg = crate::tf!("apps.launch_failed_desc", "name" => &executable.name, "error" => &e);
                             let alert = adw::AlertDialog::new(
-                                Some("Launch Failed"),
-                                Some(&format!("Failed to launch '{}':\n\n{}", executable.name, e)),
+                                Some(&crate::t!("apps.launch_failed")),
+                                Some(&msg),
                             );
-                            alert.add_response("ok", "OK");
+                            alert.add_response("ok", &crate::t!("dialogs.ok"));
                             alert.set_default_response(Some("ok"));
                             alert.set_close_response("ok");
                             alert.choose(
@@ -569,7 +571,7 @@ impl SimpleComponent for AppModel {
                 let s = sender.clone();
 
                 let exts = [&format!("zst.{}", prefix::TQL_EXTENSION)[..]];
-                crate::dialogs::pick_file(&parent, "Import Prefix", &exts, move |path| {
+                crate::dialogs::pick_file(&parent, &crate::t!("app.import_prefix"), &exts, move |path| {
                     if let Some(path) = path {
                         let p = PathBuf::from(&path);
                         let s = s.clone();
@@ -579,10 +581,8 @@ impl SimpleComponent for AppModel {
                             let (name, archive_wine) = match pm.inspect_archive(&p) {
                                 Ok(v) => v,
                                 Err(e) => {
-                                    let _ = s.input(AppMsg::ShowError(format!(
-                                        "Failed to read archive:\n\n{}",
-                                        e
-                                    )));
+                                    let err_str = e.to_string();
+                                    let _ = s.input(AppMsg::ShowError(crate::tf!("app.failed_to_read_archive", "error" => &err_str)));
                                     return;
                                 }
                             };
@@ -596,8 +596,8 @@ impl SimpleComponent for AppModel {
                 });
             }
             AppMsg::ShowError(msg) => {
-                let alert = adw::AlertDialog::new(Some("Error"), Some(&msg));
-                alert.add_response("ok", "OK");
+                let alert = adw::AlertDialog::new(Some(&crate::t!("dialogs.error")), Some(&msg));
+                alert.add_response("ok", &crate::t!("dialogs.ok"));
                 alert.set_default_response(Some("ok"));
                 alert.set_close_response("ok");
                 alert.choose(
@@ -727,10 +727,10 @@ impl SimpleComponent for AppModel {
                                 .await
                                 {
                                     let alert = adw::AlertDialog::new(
-                                        Some("Failed to Switch Graphics Backend"),
+                                        Some(&crate::t!("apps.launch_failed")),
                                         Some(&e),
                                     );
-                                    alert.add_response("ok", "OK");
+                                    alert.add_response("ok", &crate::t!("dialogs.ok"));
                                     alert.set_default_response(Some("ok"));
                                     alert.set_close_response("ok");
                                     alert.choose(Some(&window), None::<&gio::Cancellable>, |_| {});
@@ -813,7 +813,7 @@ impl SimpleComponent for AppModel {
                     self.set_syncing(true);
                     self.sync_overlay.set_visible(true);
                     self.sync_progress_bar.set_fraction(0.0);
-                    self.sync_progress_label.set_label("Scanning...");
+                    self.sync_progress_label.set_label(&crate::t!("app_page.scanning"));
                     handlers::handle_sync_prefixes(sender.clone(), sender.clone());
                 }
             }
@@ -824,7 +824,7 @@ impl SimpleComponent for AppModel {
                     0.0
                 });
                 self.sync_progress_label
-                    .set_label(&format!("{} / {} prefixes", completed, total));
+                    .set_label(&crate::tf!("app_page.sync_progress", "completed" => &completed.to_string(), "total" => &total.to_string()));
             }
             AppMsg::ToggleSidebar => {
                 if self.prefixes.is_empty() {

@@ -33,7 +33,7 @@ impl SimpleComponent for ImportDialogModel {
     view! {
         #[name = "dialog"]
         gtk::Window {
-            set_title: Some("Import Prefix"),
+            set_title: Some(&crate::t!("prefix.import.title")),
             set_modal: true,
             set_transient_for: Some(&parent),
             set_default_width: 420,
@@ -47,7 +47,7 @@ impl SimpleComponent for ImportDialogModel {
                 set_spacing: 12,
 
                 gtk::Label {
-                    set_label: "Import prefix:",
+                    set_label: &crate::t!("prefix.import.label"),
                     set_halign: gtk::Align::Start,
                     set_css_classes: &["heading"],
                 },
@@ -57,7 +57,7 @@ impl SimpleComponent for ImportDialogModel {
                     set_css_classes: &["dim-label"],
                 },
                 gtk::Label {
-                    set_label: "Wine Runtime:",
+                    set_label: &crate::t!("prefix.import.runtime_label"),
                     set_halign: gtk::Align::Start,
                     set_margin_top: 8,
                 },
@@ -68,7 +68,7 @@ impl SimpleComponent for ImportDialogModel {
 
                 #[name = "progress_label"]
                 gtk::Label {
-                    set_label: "Importing prefix...",
+                    set_label: &crate::t!("prefix.import.progress"),
                     set_visible: false,
                 },
                 #[name = "progress_bar"]
@@ -109,7 +109,7 @@ impl SimpleComponent for ImportDialogModel {
         header_bar.set_property("use-native-controls", true);
 
         let import_btn = gtk::Button::builder()
-            .label("Import")
+            .label(&crate::t!("prefix.import.import_btn"))
             .icon_name("document-open-symbolic")
             .css_classes(["suggested-action"])
             .build();
@@ -155,7 +155,7 @@ impl SimpleComponent for ImportDialogModel {
                 self.import_btn.set_sensitive(false);
                 self.runtime_combo.set_sensitive(false);
                 self.dialog.set_deletable(false);
-                self.progress_label.set_label("Extracting prefix...");
+                self.progress_label.set_label(&crate::t!("prefix.import.extracting"));
                 self.progress_label.set_visible(true);
                 self.progress_bar.set_visible(true);
                 self.progress_bar.set_fraction(0.0);
@@ -200,8 +200,8 @@ impl SimpleComponent for ImportDialogModel {
                         self.progress_label.set_visible(false);
                         self.progress_bar.set_visible(false);
 
-                        let alert = adw::AlertDialog::new(Some("Import Failed"), Some(&e));
-                        alert.add_response("ok", "OK");
+                        let alert = adw::AlertDialog::new(Some(&crate::t!("prefix.import.failed")), Some(&e));
+                        alert.add_response("ok", &crate::t!("dialogs.ok"));
                         alert.set_default_response(Some("ok"));
                         alert.set_close_response("ok");
                         alert.choose(

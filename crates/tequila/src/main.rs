@@ -78,6 +78,41 @@ fn main() -> ExitCode {
 
 fn start_gui() -> ExitCode {
     log::info!("[tequila] starting GUI");
+
+    // Load language preference and inject LC environment variables
+    if let Some(settings) = store::Settings::load() {
+        let lang_str = settings.language.as_str();
+        match lang_str {
+            "zh-CN" => {
+                log::info!("[i18n] setting language to zh_CN.UTF-8");
+                // SAFETY: called once at startup before any other threads, single-threaded context
+                unsafe {
+                    std::env::set_var("LANG", "zh_CN.UTF-8");
+                    std::env::set_var("LC_ALL", "zh_CN.UTF-8");
+                    std::env::set_var("LC_MESSAGES", "zh_CN.UTF-8");
+                }
+            }
+            "en" => {
+                log::info!("[i18n] setting language to en_US.UTF-8");
+                // SAFETY: called once at startup before any other threads, single-threaded context
+                unsafe {
+                    std::env::set_var("LANG", "en_US.UTF-8");
+                    std::env::set_var("LC_ALL", "en_US.UTF-8");
+                    std::env::set_var("LC_MESSAGES", "en_US.UTF-8");
+                }
+            }
+            _ => {
+                log::info!("[i18n] using system locale");
+            }
+        }
+
+        // Initialize i18n with the selected language
+        let language = ui::i18n::Language::from_str(lang_str);
+        ui::i18n::init(language);
+    } else {
+        ui::i18n::init(ui::i18n::Language::System);
+    }
+
     let app = relm4::RelmApp::new("com.github.anson2251.tequila");
     ui::initialize_custom_resources();
     app.run::<ui::AppModel>(());

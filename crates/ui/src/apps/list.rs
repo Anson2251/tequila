@@ -182,12 +182,12 @@ impl AsyncComponent for RegisteredAppsListModel {
                 #[watch]
                 set_visible: model.registered_executables.len() != 0,
                 #[watch]
-                set_label: &format!("{} applications registered", model.registered_executables.len()),
+                set_label: &crate::tf!("apps.registered_count", "count" => &model.registered_executables.len().to_string()),
                 add_css_class: "caption",
             },
 
             gtk::Label {
-                set_label: "No registered applications\nAdd applications from left panel",
+                set_label: &crate::t!("apps.no_registered"),
                 set_halign: gtk::Align::Center,
                 set_valign: gtk::Align::Center,
                 set_wrap: true,

@@ -70,7 +70,7 @@ impl SimpleComponent for CreatePrefixDialog {
     view! {
         #[name = "dialog"]
         gtk::Window {
-            set_title: Some("Create New Wine Prefix"),
+            set_title: Some(&crate::t!("prefix.create.title")),
             set_modal: true,
             set_transient_for: Some(&parent),
 
@@ -87,12 +87,12 @@ impl SimpleComponent for CreatePrefixDialog {
                     set_orientation: gtk::Orientation::Vertical,
 
                     gtk::Label {
-                        set_label: "Prefix Name:",
+                        set_label: &crate::t!("prefix.create.name_label"),
                         set_halign: gtk::Align::Start,
                     },
                     #[name = "name_entry"]
                     gtk::Entry {
-                        set_placeholder_text: Some("Enter prefix name"),
+                        set_placeholder_text: Some(&crate::t!("prefix.create.name_placeholder")),
                         set_hexpand: true,
                         set_width_chars: 32,
                     },
@@ -109,7 +109,7 @@ impl SimpleComponent for CreatePrefixDialog {
                         set_orientation: gtk::Orientation::Vertical,
 
                         gtk::Label {
-                            set_label: "Architecture:",
+                            set_label: &crate::t!("prefix.create.arch_label"),
                             set_halign: gtk::Align::Start,
                         },
                         #[name = "arch_combo"]
@@ -125,7 +125,7 @@ impl SimpleComponent for CreatePrefixDialog {
                         set_orientation: gtk::Orientation::Vertical,
 
                         gtk::Label {
-                            set_label: "Wine Runtime:",
+                            set_label: &crate::t!("prefix.create.runtime_label"),
                             set_halign: gtk::Align::Start,
                         },
                         #[local_ref]
@@ -142,7 +142,7 @@ impl SimpleComponent for CreatePrefixDialog {
                     set_orientation: gtk::Orientation::Vertical,
 
                     gtk::Label {
-                        set_label: "Graphics Backend:",
+                        set_label: &crate::t!("prefix.create.graphics_label"),
                         set_halign: gtk::Align::Start,
                     },
                     #[local_ref]
@@ -153,7 +153,7 @@ impl SimpleComponent for CreatePrefixDialog {
 
                 #[name = "progress_label"]
                 gtk::Label {
-                    set_label: "Creating Wine prefix...",
+                    set_label: &crate::t!("prefix.create.progress"),
                     set_visible: false,
                 },
                 #[name = "progress_bar"]
@@ -182,7 +182,7 @@ impl SimpleComponent for CreatePrefixDialog {
         header_bar.set_property("use-native-controls", true);
 
         let create_btn = gtk::Button::builder()
-            .label("Create")
+            .label(&crate::t!("prefix.create.create_btn"))
             .icon_name("object-select-symbolic")
             .css_classes(["suggested-action"])
             .build();
@@ -291,10 +291,10 @@ impl SimpleComponent for CreatePrefixDialog {
                                 e
                             );
                             let alert = adw::AlertDialog::new(
-                                Some("Error"),
-                                Some(&format!("Failed to create prefix '{}': {}", prefix_name, e)),
+                                Some(&crate::t!("dialogs.error")),
+                                Some(&crate::tf!("prefix.create.error_msg", "name" => &prefix_name, "error" => &e.to_string())),
                             );
-                            alert.add_response("ok", "OK");
+                            alert.add_response("ok", &crate::t!("dialogs.ok"));
                             alert.set_default_response(Some("ok"));
                             alert.set_close_response("ok");
                             alert.choose(Some(&mw), None::<&gtk::gio::Cancellable>, |_| {});
@@ -326,14 +326,10 @@ impl SimpleComponent for CreatePrefixDialog {
                                 e
                             );
                             let alert = adw::AlertDialog::new(
-                                Some("Warning"),
-                                Some(&format!(
-                                    "Prefix created, but failed to activate {}: {}",
-                                    backend.display_name(),
-                                    e
-                                )),
+                                Some(&crate::t!("dialogs.warning")),
+                                Some(&crate::tf!("prefix.create.warning_msg", "backend" => &backend.display_name(), "error" => &e.to_string())),
                             );
-                            alert.add_response("ok", "OK");
+                            alert.add_response("ok", &crate::t!("dialogs.ok"));
                             alert.set_default_response(Some("ok"));
                             alert.set_close_response("ok");
                             alert.choose(Some(&mw), None::<&gtk::gio::Cancellable>, |_| {});

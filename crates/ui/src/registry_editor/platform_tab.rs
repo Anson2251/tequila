@@ -80,12 +80,12 @@ impl SimpleComponent for PlatformTabModel {
 
                 adw::PreferencesGroup {
                     set_visible: cfg!(target_os = "macos"),
-                    set_title: "Mac Driver",
-                    set_description: Some("Configure macOS-specific Wine display and input settings"),
+                    set_title: &crate::t!("registry.platform.mac.title"),
+                    set_description: Some(&crate::t!("registry.platform.mac.desc")),
 
                     adw::ActionRow {
-                        set_title: "Allow Vertical Sync",
-                        set_subtitle: "Synchronize frame buffer updates with display refresh",
+                        set_title: &crate::t!("registry.platform.mac.vsync"),
+                        set_subtitle: &crate::t!("registry.platform.mac.vsync_sub"),
 
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
@@ -102,8 +102,8 @@ impl SimpleComponent for PlatformTabModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Capture Displays for Fullscreen",
-                        set_subtitle: "Allow Wine to capture displays when entering fullscreen",
+                        set_title: &crate::t!("registry.platform.mac.capture_displays"),
+                        set_subtitle: &crate::t!("registry.platform.mac.capture_displays_sub"),
 
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
@@ -120,8 +120,8 @@ impl SimpleComponent for PlatformTabModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Use Precise Scrolling",
-                        set_subtitle: "Enable precise pixel-based scrolling",
+                        set_title: &crate::t!("registry.platform.mac.precise_scrolling"),
+                        set_subtitle: &crate::t!("registry.platform.mac.precise_scrolling_sub"),
 
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
@@ -138,8 +138,8 @@ impl SimpleComponent for PlatformTabModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Enable Retina Mode",
-                        set_subtitle: "Enable high-DPI Retina display support",
+                        set_title: &crate::t!("registry.platform.mac.retina"),
+                        set_subtitle: &crate::t!("registry.platform.mac.retina_sub"),
 
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
@@ -160,11 +160,11 @@ impl SimpleComponent for PlatformTabModel {
                     set_margin_top: 18,
                     #[watch]
                     set_visible: cfg!(target_os = "macos"),
-                    set_title: "Mac Keyboard Modifiers",
-                    set_description: Some("Configure keyboard modifier key behavior in Wine"),
+                    set_title: &crate::t!("registry.platform.mac.keyboard"),
+                    set_description: Some(&crate::t!("registry.platform.mac.keyboard_sub")),
 
                     adw::ActionRow {
-                        set_title: "Left Option is Alt",
+                        set_title: &crate::t!("registry.platform.mac.left_option_alt"),
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
                             #[track = "model.changed(PlatformTabModel::mac())"]
@@ -180,7 +180,7 @@ impl SimpleComponent for PlatformTabModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Right Option is Alt",
+                        set_title: &crate::t!("registry.platform.mac.right_option_alt"),
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
                             #[track = "model.changed(PlatformTabModel::mac())"]
@@ -196,7 +196,7 @@ impl SimpleComponent for PlatformTabModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Left Command is Ctrl",
+                        set_title: &crate::t!("registry.platform.mac.left_command_ctrl"),
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
                             #[track = "model.changed(PlatformTabModel::mac())"]
@@ -212,7 +212,7 @@ impl SimpleComponent for PlatformTabModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Right Command is Ctrl",
+                        set_title: &crate::t!("registry.platform.mac.right_command_ctrl"),
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
                             #[track = "model.changed(PlatformTabModel::mac())"]
@@ -233,12 +233,12 @@ impl SimpleComponent for PlatformTabModel {
                 // ══════════════════════════════════════
                 adw::PreferencesGroup {
                     set_margin_top: if cfg!(target_os = "macos") { 18 } else { 0 },
-                    set_title: "Window Management",
-                    set_description: Some("Configure X11 window manager integration"),
+                    set_title: &crate::t!("registry.platform.x11.window_management"),
+                    set_description: Some(&crate::t!("registry.platform.x11.window_management_sub")),
 
                     adw::ActionRow {
-                        set_title: "Decorated Windows",
-                        set_subtitle: "Show window decorations",
+                        set_title: &crate::t!("registry.platform.x11.decorated"),
+                        set_subtitle: &crate::t!("registry.platform.x11.decorated_sub"),
 
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
@@ -255,8 +255,8 @@ impl SimpleComponent for PlatformTabModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Managed by Window Manager",
-                        set_subtitle: "Let the window manager control window positions",
+                        set_title: &crate::t!("registry.platform.x11.managed"),
+                        set_subtitle: &crate::t!("registry.platform.x11.managed_sub"),
 
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
@@ -273,8 +273,8 @@ impl SimpleComponent for PlatformTabModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Grab Pointer",
-                        set_subtitle: "Confine pointer to the Wine window",
+                        set_title: &crate::t!("registry.platform.x11.grab_pointer"),
+                        set_subtitle: &crate::t!("registry.platform.x11.grab_pointer_sub"),
 
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
@@ -291,8 +291,8 @@ impl SimpleComponent for PlatformTabModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Grab Fullscreen",
-                        set_subtitle: "Grab the pointer when entering fullscreen mode",
+                        set_title: &crate::t!("registry.platform.x11.grab_fullscreen"),
+                        set_subtitle: &crate::t!("registry.platform.x11.grab_fullscreen_sub"),
 
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
@@ -311,12 +311,12 @@ impl SimpleComponent for PlatformTabModel {
 
                 adw::PreferencesGroup {
                     set_margin_top: 18,
-                    set_title: "Rendering",
-                    set_description: Some("Configure X11 client-side rendering"),
+                    set_title: &crate::t!("registry.platform.x11.rendering"),
+                    set_description: Some(&crate::t!("registry.platform.x11.rendering_sub")),
 
                     adw::ActionRow {
-                        set_title: "Client Side Graphics",
-                        set_subtitle: "Render graphics using client-side buffers",
+                        set_title: &crate::t!("registry.platform.x11.client_side_graphics"),
+                        set_subtitle: &crate::t!("registry.platform.x11.client_side_graphics_sub"),
 
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
@@ -333,8 +333,8 @@ impl SimpleComponent for PlatformTabModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Client Side With Render",
-                        set_subtitle: "Use shared memory for client-side rendering",
+                        set_title: &crate::t!("registry.platform.x11.client_side_with_render"),
+                        set_subtitle: &crate::t!("registry.platform.x11.client_side_with_render_sub"),
 
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
@@ -351,8 +351,8 @@ impl SimpleComponent for PlatformTabModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Client Side Anti-Alias With Render",
-                        set_subtitle: "Enable anti-aliasing for client-side rendering with Render extension",
+                        set_title: &crate::t!("registry.platform.x11.client_side_antialias_render"),
+                        set_subtitle: &crate::t!("registry.platform.x11.client_side_antialias_render_sub"),
 
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
@@ -369,8 +369,8 @@ impl SimpleComponent for PlatformTabModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Client Side Anti-Alias With Core",
-                        set_subtitle: "Enable anti-aliasing for client-side rendering with core protocol",
+                        set_title: &crate::t!("registry.platform.x11.client_side_antialias_core"),
+                        set_subtitle: &crate::t!("registry.platform.x11.client_side_antialias_core_sub"),
 
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
@@ -389,12 +389,12 @@ impl SimpleComponent for PlatformTabModel {
 
                 adw::PreferencesGroup {
                     set_margin_top: 18,
-                    set_title: "Display Management",
-                    set_description: Some("Configure X11 display management"),
+                    set_title: &crate::t!("registry.platform.x11.display_management"),
+                    set_description: Some(&crate::t!("registry.platform.x11.display_management_sub")),
 
                     adw::ActionRow {
-                        set_title: "Use XRandR",
-                        set_subtitle: "Use the XRandR extension for display configuration",
+                        set_title: &crate::t!("registry.platform.x11.use_xrandr"),
+                        set_subtitle: &crate::t!("registry.platform.x11.use_xrandr_sub"),
 
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,
@@ -411,8 +411,8 @@ impl SimpleComponent for PlatformTabModel {
                     },
 
                     adw::ActionRow {
-                        set_title: "Use XVidMode",
-                        set_subtitle: "Use the XVidMode extension for video mode switching",
+                        set_title: &crate::t!("registry.platform.x11.use_xvidmode"),
+                        set_subtitle: &crate::t!("registry.platform.x11.use_xvidmode_sub"),
 
                         add_suffix = &gtk::Switch {
                             set_valign: gtk::Align::Center,

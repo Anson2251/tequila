@@ -18,6 +18,15 @@ pub struct Settings {
     /// a token at https://github.com/settings/tokens (no scopes needed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github_api_key: Option<String>,
+    /// Application language preference.
+    /// Options: "system" (follow system locale), "zh-CN", "en".
+    /// Defaults to "system" when not set.
+    #[serde(default = "default_language", skip_serializing_if = "String::is_empty")]
+    pub language: String,
+}
+
+fn default_language() -> String {
+    "system".to_string()
 }
 
 impl Settings {
@@ -54,6 +63,9 @@ impl From<RuntimeManager> for Settings {
             runtimes: rm.runtimes,
             default_id: rm.default_id,
             github_api_key: existing_key,
+            language: Self::load()
+                .map(|s| s.language)
+                .unwrap_or_else(default_language),
         }
     }
 }

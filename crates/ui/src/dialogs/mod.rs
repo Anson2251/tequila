@@ -75,7 +75,7 @@ where
     panel.setCanChooseDirectories(true);
     panel.setAllowsMultipleSelection(false);
     panel.setTitle(Some(&objc2_foundation::NSString::from_str(
-        "Choose Working Directory",
+        &crate::t!("dialogs.choose_dir"),
     )));
 
     // Set initial directory if provided
@@ -219,7 +219,7 @@ where
     F: Fn(String) + 'static,
 {
     let dialog = gtk4::FileDialog::builder()
-        .title("Choose Working Directory")
+        .title(&crate::t!("dialogs.choose_dir"))
         .build();
 
     if let Some(path) = initial_path {
