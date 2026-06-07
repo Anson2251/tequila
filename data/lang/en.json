@@ -236,6 +236,7 @@
   "settings.runtime.fetch_failed": "Failed to fetch available Wine versions",
   "settings.runtime.imported_label": "Imported: {name} ({version})",
   "settings.runtime.installed_channel": "✓ Installed ({name})",
+  "settings.runtime.installed_format": "Wine {version} ({date})",
   "settings.runtime.installed_wine": "✓ Installed (Wine {version})",
   "settings.runtime.managed_versioned": "Managed (versioned)",
   "settings.runtime.remove": "Remove Runtime",

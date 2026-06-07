@@ -236,6 +236,7 @@
   "settings.runtime.fetch_failed": "获取可用 Wine 版本失败",
   "settings.runtime.imported_label": "已导入：{name}（{version}）",
   "settings.runtime.installed_channel": "✓ 已安装（{name}）",
+  "settings.runtime.installed_format": "Wine {version}（{date}）",
   "settings.runtime.installed_wine": "✓ 已安装（Wine {version}）",
   "settings.runtime.managed_versioned": "托管（带版本）",
   "settings.runtime.remove": "删除运行时",

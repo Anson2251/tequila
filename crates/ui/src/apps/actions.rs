@@ -175,6 +175,12 @@ impl AsyncComponent for AppActionsModel {
                 set_sensitive: model.has_selection && !model.is_scanning,
                 #[track = "model.changed(AppActionsModel::desktop_tooltip())"]
                 set_tooltip_text: Some(model.desktop_tooltip.as_str()),
+                #[track = "model.changed(AppActionsModel::has_desktop())"]
+                set_css_classes: if model.has_desktop {
+                    &["destructive-action"]
+                } else {
+                    &["suggested-action"]
+                },
                 connect_clicked[sender] => move |_| {
                     sender.input(AppActionsMsg::CreateDesktop);
                 },
@@ -259,9 +265,9 @@ impl AsyncComponent for AppActionsModel {
             AppActionsMsg::SetSelectedRunning(running) => {
                 self.set_selected_running(running);
                 if running {
-                    self.launch_tooltip = crate::t!("apps.actions.kill");
+                    self.set_launch_tooltip(crate::t!("apps.actions.kill"));
                 } else {
-                    self.launch_tooltip = crate::t!("apps.actions.launch");
+                    self.set_launch_tooltip(crate::t!("apps.actions.launch"));
                 }
             }
             AppActionsMsg::SetPrefixSet(prefix_set) => {
@@ -298,11 +304,11 @@ impl AsyncComponent for AppActionsModel {
             AppActionsMsg::SetDesktopExists(exists) => {
                 self.set_has_desktop(exists);
                 if exists {
-                    self.desktop_tooltip = crate::t!("apps.actions.remove_desktop");
-                    self.desktop_label = crate::t!("apps.actions.delete");
+                    self.set_desktop_tooltip(crate::t!("apps.actions.remove_desktop"));
+                    self.set_desktop_label(crate::t!("apps.actions.delete"));
                 } else {
-                    self.desktop_tooltip = crate::t!("apps.actions.create_desktop");
-                    self.desktop_label = crate::t!("apps.actions.desktop");
+                    self.set_desktop_tooltip(crate::t!("apps.actions.create_desktop"));
+                    self.set_desktop_label(crate::t!("apps.actions.desktop"));
                 }
             }
             AppActionsMsg::CreateDesktop => {
