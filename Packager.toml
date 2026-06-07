@@ -1,0 +1,57 @@
+# =============================================================================
+# Cargo Packager configuration for Tequila
+# =============================================================================
+# This config is used by `cargo packager` (from CrabNebula) to create macOS
+# .app bundles and .dmg installers.
+#
+# IMPORTANT: cargo-packager handles the basic .app skeleton but does NOT
+# automatically bundle GTK4 dylib dependencies. For a full distributable
+# build, use the companion script:
+#
+#     scripts/bundle-macos.sh
+#
+# which runs cargo-packager and then post-processes the .app to bundle
+# GTK4/libadwaita dylibs and resources.
+#
+# Prerequisites:
+#   cargo install cargo-packager --locked
+#   brew install dylibbundler
+# =============================================================================
+
+name = "tequila"
+product-name = "Tequila"
+identifier = "com.github.anson2251.tequila"
+version = "0.1.0"
+description = "A modern Wine prefix manager — built with Rust, GTK4 & libadwaita"
+homepage = "https://github.com/anson2251/tequila"
+authors = ["Anson2251"]
+copyright = "Copyright (c) 2025 Anson2251"
+license-file = "LICENSE"
+
+out-dir = "dist"
+
+# Where the release binary lives after `cargo build --release`
+binaries-dir = "target/release"
+binaries = [{ path = "tequila", main = true }]
+
+# Build before packaging
+before-packaging-command = "cargo build --release"
+
+# Package formats to generate
+formats = ["app", "dmg"]
+
+# ── macOS-specific configuration ──────────────────────────────────────────
+[macos]
+minimum-system-version = "11.0"
+
+# Code signing (optional — uncomment and fill in when you have a Developer ID)
+# signing-identity = "Developer ID Application: YOUR_NAME (TEAM_ID)"
+# entitlements = "scripts/entitlements.plist"
+# provider-short-name = "TEAM_ID"
+
+# ── DMG appearance ────────────────────────────────────────────────────────
+[dmg]
+# background = "data/dmg-background.png"
+# window-size = { width = 660, height = 400 }
+# app-position = { x = 180, y = 180 }
+# app-folder-position = { x = 480, y = 180 }

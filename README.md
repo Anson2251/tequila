@@ -114,7 +114,7 @@ cargo build --release
 ./target/release/tequila
 ```
 
-> Binaries and installers are not yet provided. See [Roadmap](#-roadmap).
+> ✅ macOS `.app` bundles and `.dmg` installers can now be built — see [macOS Packaging](#macos-packaging).
 
 ---
 
@@ -144,6 +144,59 @@ cargo build --release
 - **SQLite persistence** — registry cache and scanned executable cache via `rusqlite`
 - **Comprehensive error handling** — user‑friendly error dialogs with actionable suggestions (rate‑limiting, missing binaries, VPN issues)
 - **macOS integration** — native menus, file dialogs (`NSSavePanel`), Dock integration, and `gdk4-macos`
+
+---
+
+## macOS Packaging
+
+You can create a standalone macOS `.app` bundle (with GTK4/libadwaita dylibs included) using the provided packaging script.
+
+### Prerequisites
+
+```sh
+brew install dylibbundler
+```
+
+Optionally, for `.dmg` creation, no extra tools are needed — macOS ships with `hdiutil`.
+
+### Build the .app
+
+```sh
+# Create Tequila.app in dist/
+./scripts/bundle-macos.sh
+
+# Open it to test
+open dist/Tequila.app
+```
+
+### Build .app + .dmg
+
+```sh
+./scripts/bundle-macos.sh --dmg
+```
+
+### Code-signing
+
+```sh
+# Requires an Apple Developer ID certificate
+./scripts/bundle-macos.sh --dmg --sign
+```
+
+> **Note**: Without code-signing, macOS will show a security dialog.
+
+### How it works
+
+The script does the following:
+
+1. `cargo build --release`
+2. Creates the `.app` directory structure with `Info.plist`
+3. Uses [`dylibbundler`](https://github.com/auriamg/macdylibbundler) to recursively bundle all GTK4/libadwaita dylib dependencies into `Contents/Frameworks/`
+4. Copies GTK runtime resources (GdkPixbuf loaders, GLib schemas, Adwaita icons)
+5. Creates a shell launcher that sets the correct `DYLD_LIBRARY_PATH`, `XDG_DATA_DIRS`, and GTK environment variables
+6. Regenerates the GdkPixbuf loaders cache
+7. Optionally code-signs and creates a `.dmg`
+
+> For advanced users: [`cargo-packager`](https://docs.crabnebula.dev/packager) (from CrabNebula) is also supported via `Packager.toml`, but the bash script is the recommended way for GTK apps.
 
 ---
 
