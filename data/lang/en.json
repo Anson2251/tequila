@@ -218,6 +218,7 @@
   "apps.actions.delete": "Delete",
   "apps.actions.desktop": "Desktop",
   "apps.actions.remove_desktop": "Remove Desktop Launcher",
+  "apps.actions.run_debug": "Run with Debug",
   "settings.graphics.cancel": "Cancel",
   "settings.graphics.cancelled": "Cancelled",
   "settings.graphics.d3dmetal_import": "Import D3DMetal (via GPTK)",

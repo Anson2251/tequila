@@ -3,6 +3,7 @@ use base::RegisteredExecutable;
 use log::{error, info};
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Stdio;
 
 use crate::AppService;
 
@@ -112,6 +113,72 @@ pub fn launch_direct_exe(
             Err(e.to_string())
         }
     }
+}
+
+/// Launch a registered executable with piped stdout/stderr/stdin for debugging.
+/// The returned `Child` has its stdout, stderr, and stdin pipes available.
+pub fn launch_executable_debug(
+    service: &AppService,
+    prefix_path: &Path,
+    executable: &RegisteredExecutable,
+) -> std::result::Result<std::process::Child, String> {
+    let prefix = match service.prefix_manager().open_prefix(prefix_path) {
+        Ok(p) => p,
+        Err(e) => return Err(e.to_string()),
+    };
+
+    if !executable.executable_path.exists() {
+        return Err("Executable file does not exist".to_string());
+    }
+
+    let mut cmd = prefix.build_wine_command_with_args(
+        &[&executable.executable_path.to_string_lossy()],
+    );
+
+    info!(
+        "[service] launching '{}' in debug mode for prefix '{}'",
+        executable.name, prefix_path.display()
+    );
+
+    // Set up pipes for debug capture
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    cmd.stdin(Stdio::piped());
+
+    // Apply per-executable environment variables
+    for (key, value) in &executable.env_vars {
+        cmd.env(key, value);
+    }
+
+    // Apply per-executable working directory (fall back to prefix path)
+    if let Some(cwd) = &executable.cwd {
+        cmd.current_dir(cwd);
+    } else {
+        cmd.current_dir(prefix_path);
+    }
+
+    match cmd.spawn() {
+        Ok(child) => {
+            info!("[service] debug process started (PID: {})", child.id());
+            Ok(child)
+        }
+        Err(e) => {
+            error!("[service] failed to launch debug '{}': {}", executable.name, e);
+            Err(format!("Failed to launch executable: {}", e))
+        }
+    }
+}
+
+/// Register a debug-mode PID with the process tracker so it gets killed
+/// on Ctrl+C / shutdown even though the debug window owns the Child handle.
+pub fn track_debug_process(
+    service: &AppService,
+    exe_path: &Path,
+    pid: u32,
+) {
+    let mut tracker = service.process_tracker().lock().unwrap();
+    tracker.track_pid(exe_path, pid);
+    info!("[service] tracking debug PID {} for {}", pid, exe_path.display());
 }
 
 /// Reinitialize a prefix with a different runtime (blocking).

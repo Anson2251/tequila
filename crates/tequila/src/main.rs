@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::sync::{Arc, Mutex};
 
 use clap::{Parser, Subcommand};
 
@@ -114,6 +115,39 @@ fn start_gui() -> ExitCode {
     }
 
     let app = relm4::RelmApp::new("com.github.anson2251.tequila");
+
+    // Kill all tracked Wine processes on clean shutdown (window close, Cmd+Q, etc.)
+    {
+        use relm4::gtk::gio::prelude::*;
+        let gtk_app = relm4::main_application();
+        gtk_app.connect_shutdown(move |_| {
+            log::info!("[tequila] shutdown — killing Wine processes...");
+            let svc = service::AppService::global();
+            let mut tracker = svc.process_tracker().lock().unwrap();
+            let count = tracker.kill_all();
+            if count > 0 {
+                log::info!("[tequila] killed {} Wine process(es)", count);
+            }
+        });
+    }
+
+    // Handle Ctrl+C / SIGINT in GUI mode.
+    // GTK's default SIGINT handling may not reliably quit, so we force-exit
+    // after cleaning up Wine processes.
+    if let Err(e) = ctrlc::set_handler(move || {
+        log::warn!("[tequila] received Ctrl+C — killing Wine processes...");
+        if service::state::is_initialized() {
+            let svc = service::AppService::global();
+            if let Ok(mut tracker) = svc.process_tracker().lock() {
+                let count = tracker.kill_all();
+                log::info!("[tequila] killed {} Wine process(es)", count);
+            }
+        }
+        std::process::exit(130);
+    }) {
+        log::error!("[tequila] failed to set ctrlc handler: {}", e);
+    }
+
     ui::initialize_custom_resources();
     app.run::<ui::AppModel>(());
     ExitCode::SUCCESS
@@ -185,11 +219,28 @@ fn run(
         prefix_path.display()
     );
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("failed to spawn wine: {e}"))?;
+    let child = Arc::new(Mutex::new(Some(
+        cmd.spawn()
+            .map_err(|e| format!("failed to spawn wine: {e}"))?
+    )));
+
+    // Kill the child process on SIGINT/SIGTERM (Ctrl+C)
+    let child_for_signal = child.clone();
+    ctrlc::set_handler(move || {
+        log::warn!("[tequila] CLI received interrupt — killing Wine...");
+        if let Some(mut child) = child_for_signal.lock().unwrap().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        std::process::exit(130);
+    })
+    .map_err(|e| format!("failed to set signal handler: {e}"))?;
 
     let status = child
+        .lock()
+        .unwrap()
+        .as_mut()
+        .ok_or_else(|| "child process already terminated".to_string())?
         .wait()
         .map_err(|e| format!("failed to wait for wine: {e}"))?;
 

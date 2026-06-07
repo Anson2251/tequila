@@ -1,5 +1,6 @@
 use gtk::prelude::*;
 use relm4::{
+    adw,
     component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
     gtk,
 };
@@ -30,6 +31,7 @@ pub enum AppActionsMsg {
     SetExeRunning(bool),
     SetDesktopExists(bool),
     Launch,
+    LaunchDebug,
     Add,
     Remove,
     ShowInfo,
@@ -42,6 +44,7 @@ pub enum AppActionsMsg {
 pub enum AppActionsOutput {
     Launch,
     Kill,
+    LaunchDebug,
     Add,
     Remove,
     ShowInfo,
@@ -201,12 +204,21 @@ impl AsyncComponent for AppActionsModel {
                 },
             },
 
+            // Separator before launch group
+            gtk::Separator {
+                set_orientation: gtk::Orientation::Vertical,
+                set_margin_start: 5,
+                set_margin_end: 5,
+            },
+
+            // ── adw::SplitButton: native split button ──────────────────
+            // Main area: Run / Kill toggle.
+            // Dropdown arrow (built-in): "Run with Debug" option.
             #[name = "launch_btn"]
-            gtk::Button {
+            adw::SplitButton {
+                set_tooltip_text: Some(model.launch_tooltip.as_str()),
                 #[track = "model.changed(AppActionsModel::has_selection()) || model.changed(AppActionsModel::is_scanning()) || model.changed(AppActionsModel::selected_running())"]
                 set_sensitive: model.has_selection && !model.is_scanning,
-                #[track = "model.changed(AppActionsModel::launch_tooltip())"]
-                set_tooltip_text: Some(model.launch_tooltip.as_str()),
                 #[track = "model.changed(AppActionsModel::selected_running())"]
                 set_icon_name: if model.selected_running { "media-playback-stop-symbolic" } else { "media-playback-start-symbolic" },
                 #[track = "model.changed(AppActionsModel::selected_running())"]
@@ -244,6 +256,29 @@ impl AsyncComponent for AppActionsModel {
         };
 
         let widgets = view_output!();
+
+        // Build the dropdown menu for the SplitButton
+        let debug_action = gtk::gio::SimpleAction::new("launch-debug", None);
+        {
+            let sender = sender.clone();
+            debug_action.connect_activate(move |_, _| {
+                sender.input(AppActionsMsg::LaunchDebug);
+            });
+        }
+        let action_group = gtk::gio::SimpleActionGroup::new();
+        action_group.add_action(&debug_action);
+        widgets.launch_btn.insert_action_group("btn", Some(&action_group));
+
+        let menu = gtk::gio::Menu::new();
+        {
+            let item = gtk::gio::MenuItem::new(
+                Some(&crate::t!("apps.actions.run_debug")),
+                Some("btn.launch-debug"),
+            );
+            item.set_icon(&gtk::gio::ThemedIcon::new("bug-symbolic"));
+            menu.append_item(&item);
+        }
+        widgets.launch_btn.set_menu_model(Some(&menu));
 
         AsyncComponentParts { model, widgets }
     }
@@ -285,6 +320,9 @@ impl AsyncComponent for AppActionsModel {
                 } else {
                     let _ = sender.output(AppActionsOutput::Launch);
                 }
+            }
+            AppActionsMsg::LaunchDebug => {
+                let _ = sender.output(AppActionsOutput::LaunchDebug);
             }
             AppActionsMsg::Add => {
                 let _ = sender.output(AppActionsOutput::Add);

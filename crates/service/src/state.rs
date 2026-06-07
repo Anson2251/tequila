@@ -78,3 +78,8 @@ pub fn icon_cache() -> &'static Arc<IconCache> {
 pub fn wine_dir() -> &'static PathBuf {
     &global().wine_dir
 }
+
+/// Check whether the global state has been initialized.
+pub fn is_initialized() -> bool {
+    GLOBAL.get().is_some()
+}

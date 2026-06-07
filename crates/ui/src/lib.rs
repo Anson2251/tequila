@@ -1,5 +1,6 @@
 pub mod app;
 pub mod apps;
+pub mod debug;
 pub mod dialogs;
 pub mod i18n;
 pub mod prefix;

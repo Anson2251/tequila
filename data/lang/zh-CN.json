@@ -218,6 +218,7 @@
   "apps.actions.delete": "删除",
   "apps.actions.desktop": "桌面",
   "apps.actions.remove_desktop": "删除桌面启动器",
+  "apps.actions.run_debug": "调试运行",
   "settings.graphics.cancel": "取消",
   "settings.graphics.cancelled": "已取消",
   "settings.graphics.d3dmetal_import": "导入 D3DMetal（通过 GPTK）",

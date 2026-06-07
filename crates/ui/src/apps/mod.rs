@@ -10,6 +10,7 @@ use crate::{
         ExecutableInfoDialogModel, ExecutableInfoDialogMsg, ExecutableInfoDialogOutput,
     },
     apps::list::{RegisteredAppsListModel, RegisteredAppsListMsg, RegisteredAppsListOutput},
+    debug::{DebugWindowModel, DebugWindowOutput},
 };
 use adw::prelude::*;
 use log::{debug, error, info};
@@ -47,6 +48,8 @@ pub struct AppManagerModel {
     uninstaller_track_path: Option<PathBuf>,
     #[tracker::do_not_track]
     external_running: HashSet<PathBuf>,
+    #[tracker::do_not_track]
+    debug_window: Option<relm4::component::AsyncController<DebugWindowModel>>,
 }
 
 #[derive(Debug)]
@@ -67,6 +70,8 @@ pub enum AppManagerMsg {
     AppActions(AppActionsOutput),
     AddAppPopover(AddAppPopoverOutput),
     ExecutableInfoDialog(ExecutableInfoDialogOutput),
+    LaunchExecutableDebug(usize),
+    DebugWindow(DebugWindowOutput),
     PollProcesses,
 }
 
@@ -184,6 +189,7 @@ impl AsyncComponent for AppManagerModel {
             running_paths: HashSet::new(),
             uninstaller_track_path: None,
             external_running: HashSet::new(),
+            debug_window: None,
             tracker: 0,
         };
 
@@ -318,6 +324,53 @@ impl AsyncComponent for AppManagerModel {
                             let alert = adw::AlertDialog::new(
                                 Some("Launch Failed"),
                                 Some(&format!("Failed to launch '{}':\n\n{}", executable.name, e)),
+                            );
+                            alert.add_response("ok", "OK");
+                            alert.set_default_response(Some("ok"));
+                            alert.set_close_response("ok");
+                            alert.choose(
+                                parent_window.as_ref(),
+                                None::<&gtk::gio::Cancellable>,
+                                |_| {},
+                            );
+                        }
+                    }
+                }
+            }
+            AppManagerMsg::LaunchExecutableDebug(index) => {
+                if let Some(executable) = self.prefix.config().registered_executables.get(index) {
+                    match service::launch::launch_executable_debug(
+                        &AppService::global(),
+                        self.prefix.path(),
+                        executable,
+                    ) {
+                        Ok(child) => {
+                            let child = child;
+                            let exec_name = executable.name.clone();
+
+                            // Track the PID so Ctrl+C can kill it
+                            let pid = child.id();
+                            service::launch::track_debug_process(
+                                &AppService::global(),
+                                &executable.executable_path,
+                                pid,
+                            );
+
+                            // Open debug window (owns the child for pipe I/O)
+                            let debug_win = DebugWindowModel::builder()
+                                .launch((exec_name, child))
+                                .forward(sender.input_sender(), |output| {
+                                    AppManagerMsg::DebugWindow(output)
+                                });
+                            self.debug_window = Some(debug_win);
+                        }
+                        Err(e) => {
+                            let parent_window = _root
+                                .ancestor(gtk::Window::static_type())
+                                .and_then(|w| w.downcast::<gtk::Window>().ok());
+                            let alert = adw::AlertDialog::new(
+                                Some("Launch Failed"),
+                                Some(&format!("Failed to launch '{}' in debug mode:\n\n{}", executable.name, e)),
                             );
                             alert.add_response("ok", "OK");
                             alert.set_default_response(Some("ok"));
@@ -513,6 +566,11 @@ impl AsyncComponent for AppManagerModel {
                     AppActionsOutput::Launch => {
                         if let Some(index) = self.selected_executable {
                             sender.input(AppManagerMsg::LaunchExecutable(index));
+                        }
+                    }
+                    AppActionsOutput::LaunchDebug => {
+                        if let Some(index) = self.selected_executable {
+                            sender.input(AppManagerMsg::LaunchExecutableDebug(index));
                         }
                     }
                     AppActionsOutput::Kill => {
@@ -757,6 +815,14 @@ impl AsyncComponent for AppManagerModel {
                 self.app_actions.emit(AppActionsMsg::SetExeRunning(
                     !self.external_running.is_empty(),
                 ));
+            }
+            AppManagerMsg::DebugWindow(output) => {
+                match output {
+                    DebugWindowOutput::CloseRequest => {
+                        self.debug_window = None;
+                        sender.input(AppManagerMsg::PollProcesses);
+                    }
+                }
             }
         }
     }
