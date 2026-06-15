@@ -139,10 +139,31 @@ pub fn tf(key: &str, args: &[(&str, &str)]) -> String {
     s
 }
 
-/// Return the path to the `data/lang/` directory.
+/// Return the path to the `lang/` directory containing translation files.
+///
+/// Search order:
+///   1. macOS `.app` bundle: `<bundle>/Contents/Resources/lang/`
+///   2. Along ancestors of the executable path: `data/lang/`
+///   3. Current working directory: `data/lang/`
+///   4. Last resort fallback: `data/lang/` (relative path)
 fn lang_dir() -> PathBuf {
-    // Try relative to the executable first
+    // 1. macOS .app bundle: Resources/lang/ (sibling to MacOS/)
     if let Ok(exe_path) = std::env::current_exe() {
+        // Check for standard macOS bundle layout:
+        //   Tequila.app/Contents/MacOS/tequila
+        //   Tequila.app/Contents/Resources/lang/
+        if let Some(parent) = exe_path.parent() {
+            // parent = .../MacOS
+            if let Some(contents) = parent.parent() {
+                // contents = .../Contents
+                let bundle_resources = contents.join("Resources").join("lang");
+                if bundle_resources.is_dir() {
+                    return bundle_resources;
+                }
+            }
+        }
+
+        // 2. Walk ancestors looking for data/lang/ relative to exe
         for ancestor in exe_path.ancestors() {
             let candidate = ancestor.join("data").join("lang");
             if candidate.is_dir() {
@@ -151,13 +172,13 @@ fn lang_dir() -> PathBuf {
         }
     }
 
-    // Fallback: look for data/ relative to the current working directory
+    // 3. Fallback: look for data/ relative to the current working directory
     let cwd_candidate = PathBuf::from("data").join("lang");
     if cwd_candidate.is_dir() {
         return cwd_candidate;
     }
 
-    // Last resort
+    // 4. Last resort
     PathBuf::from("data").join("lang")
 }
 

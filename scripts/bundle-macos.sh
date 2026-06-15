@@ -289,6 +289,16 @@ gtk-enable-animations=1
 EOF
     info "  GTK settings: $resources_dir/etc/gtk-4.0/settings.ini"
 
+    # ── Language / i18n files ──────────────────────────────────────────
+    local lang_dir="data/lang"
+    if [[ -d "$lang_dir" ]]; then
+        mkdir -p "$resources_dir/lang"
+        cp -R "$lang_dir/" "$resources_dir/lang/"
+        info "  Language files: $resources_dir/lang"
+    else
+        warn "No data/lang directory found — translations will not be available in the bundle."
+    fi
+
     # ── GStreamer runtime (if downloaded by Tequila) ────────────────────
     local gst_dir="data/gstreamer"
     if [[ -d "$gst_dir" ]]; then

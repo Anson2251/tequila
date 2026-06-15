@@ -554,37 +554,47 @@ fn gst_initial_status() -> managed_download_row::DownloadRowStatus {
         };
     }
 
-    // Homebrew GStreamer
-    if let Ok(output) = std::process::Command::new("brew")
-        .args(["--prefix", "gstreamer"])
+    // macOS .app bundles inherit a minimal PATH — brew, which, and
+    // /etc/paths.d/ entries are NOT available.  Temporarily extend PATH
+    // with every known GStreamer install location and delegate to `which`.
+    let extra_paths = if cfg!(target_arch = "aarch64") {
+        "/opt/homebrew/bin:/Library/Frameworks/GStreamer.framework/Commands:/opt/local/bin"
+    } else {
+        "/usr/local/bin:/Library/Frameworks/GStreamer.framework/Commands:/opt/local/bin"
+    };
+
+    let original_path = std::env::var("PATH").ok();
+    let extended_path = match &original_path {
+        Some(p) if !p.is_empty() => format!("{}:{}", extra_paths, p),
+        _ => extra_paths.to_string(),
+    };
+    // SAFETY: called once at startup (init) before any other threads;
+    // the temporary PATH mutation is confined to this single call.
+    unsafe {
+        std::env::set_var("PATH", &extended_path);
+    }
+
+    let found = std::process::Command::new("which")
+        .arg("gst-launch-1.0")
         .output()
-    {
-        if output.status.success() {
-            if let Ok(prefix) = String::from_utf8(output.stdout) {
-                let p = std::path::Path::new(prefix.trim());
-                if p.join("bin").join("gst-launch-1.0").exists() {
-                    return managed_download_row::DownloadRowStatus {
-                        installed: true,
-                        managed: false,
-                        status_text: crate::t!("settings.gstreamer.installed_system"),
-                    };
-                }
-            }
+        .ok()
+        .and_then(|o| if o.status.success() { Some(()) } else { None })
+        .is_some();
+
+    // SAFETY: same reasoning — single-threaded context, restoring PATH.
+    unsafe {
+        match &original_path {
+            Some(p) => std::env::set_var("PATH", p),
+            None => std::env::remove_var("PATH"),
         }
     }
 
-    // System gst-launch-1.0 in PATH
-    if let Ok(output) = std::process::Command::new("which")
-        .arg("gst-launch-1.0")
-        .output()
-    {
-        if output.status.success() {
-            return managed_download_row::DownloadRowStatus {
-                installed: true,
-                managed: false,
-                status_text: crate::t!("settings.gstreamer.installed_system"),
-            };
-        }
+    if found {
+        return managed_download_row::DownloadRowStatus {
+            installed: true,
+            managed: false,
+            status_text: crate::t!("settings.gstreamer.installed_system"),
+        };
     }
 
     managed_download_row::DownloadRowStatus {
