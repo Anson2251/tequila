@@ -287,6 +287,10 @@ impl FontsTabModel {
                 });
             }
 
+            let draft_arrow = gtk::Label::builder()
+                .label("→")
+                .build();
+
             let draft_target_entry = gtk::Entry::builder()
                 .hexpand(true)
                 .placeholder_text(crate::t!("registry.fonts.target_placeholder"))
@@ -302,6 +306,7 @@ impl FontsTabModel {
             }
 
             draft_box.append(&draft_source_entry);
+            draft_box.append(&draft_arrow);
             draft_box.append(&draft_target_entry);
             draft_box.append(&add_btn);
             draft_row.set_child(Some(&draft_box));
@@ -337,6 +342,10 @@ impl FontsTabModel {
                 });
             }
 
+            let arrow = gtk::Label::builder()
+                .label("→")
+                .build();
+
             let target_entry = gtk::Entry::builder()
                 .hexpand(true)
                 .placeholder_text(crate::t!("registry.fonts.target_placeholder"))
@@ -369,6 +378,7 @@ impl FontsTabModel {
             }
 
             hbox.append(&source_entry);
+            hbox.append(&arrow);
             hbox.append(&target_entry);
             hbox.append(&remove_btn);
             row.set_child(Some(&hbox));

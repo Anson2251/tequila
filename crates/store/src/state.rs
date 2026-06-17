@@ -29,6 +29,11 @@ impl PrefixStore {
                 prefix_path TEXT NOT NULL, section TEXT NOT NULL, key TEXT, value TEXT,
                 PRIMARY KEY (prefix_path, section, key)
             );
+            CREATE TABLE IF NOT EXISTS registry_hashes (
+                prefix_path TEXT NOT NULL PRIMARY KEY,
+                user_reg_hash TEXT NOT NULL,
+                system_reg_hash TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS scanned_executables (
                 prefix_path TEXT NOT NULL, executable_path TEXT NOT NULL, name TEXT NOT NULL,
                 description TEXT, icon_path TEXT, file_version TEXT, product_version TEXT,
@@ -128,6 +133,54 @@ impl PrefixStore {
         db.execute(
             "DELETE FROM registry_settings WHERE prefix_path = ?1",
             params![prefix_path],
+        )
+        .map_err(map_err)?;
+        db.execute(
+            "DELETE FROM registry_hashes WHERE prefix_path = ?1",
+            params![prefix_path],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    /// Check whether the stored registry hashes match the given ones.
+    pub fn verify_registry_hashes(
+        &self,
+        prefix_path: &str,
+        user_hash: &str,
+        system_hash: &str,
+    ) -> Result<bool> {
+        let db = self.db.lock().unwrap();
+        let mut stmt = db
+            .prepare(
+                "SELECT user_reg_hash, system_reg_hash FROM registry_hashes WHERE prefix_path = ?1",
+            )
+            .map_err(map_err)?;
+        match stmt.query_row(params![prefix_path], |row| {
+            let stored_user: String = row.get(0)?;
+            let stored_system: String = row.get(1)?;
+            Ok((stored_user, stored_system))
+        }) {
+            Ok((stored_user, stored_system)) => {
+                Ok(stored_user == user_hash && stored_system == system_hash)
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+            Err(e) => Err(map_err(e)),
+        }
+    }
+
+    /// Save (or update) the hashes of the registry files for a prefix.
+    pub fn save_registry_hashes(
+        &self,
+        prefix_path: &str,
+        user_hash: &str,
+        system_hash: &str,
+    ) -> Result<()> {
+        let db = self.db.lock().unwrap();
+        db.execute(
+            "INSERT OR REPLACE INTO registry_hashes (prefix_path, user_reg_hash, system_reg_hash)
+             VALUES (?1, ?2, ?3)",
+            params![prefix_path, user_hash, system_hash],
         )
         .map_err(map_err)?;
         Ok(())

@@ -9,4 +9,6 @@ regashii = "0.4.0"
 async-trait = "0.1.89"
 tokio = { version = "1.52.3", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.11"
+hex = "0.4"
 log = "0.4"

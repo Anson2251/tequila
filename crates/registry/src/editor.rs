@@ -1,16 +1,14 @@
 use crate::WineRegistry;
 use crate::keys::*;
-use crate::traits::{RegEditor, RegistryCache};
+use crate::traits::RegEditor;
 use async_trait::async_trait;
 use base::error::{PrefixError, Result};
 use regashii::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 pub struct RegistryEditor {
     pub registry: WineRegistry,
-    cache: Arc<dyn RegistryCache>,
     prefix_path: Option<PathBuf>,
 }
 
@@ -18,34 +16,23 @@ impl std::fmt::Debug for RegistryEditor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RegistryEditor")
             .field("registry", &"WineRegistry")
-            .field("cache", &"RegistryCache")
             .field("prefix_path", &self.prefix_path)
             .finish()
     }
 }
 
 impl RegistryEditor {
-    pub fn new(cache: Arc<dyn RegistryCache>) -> Self {
+    pub fn new() -> Self {
         Self {
             registry: WineRegistry::new(),
-            cache,
             prefix_path: None,
         }
     }
 
-    pub async fn with_prefix(cache: Arc<dyn RegistryCache>, prefix_path: &PathBuf) -> Result<Self> {
-        if let Some(cached_registry) = cache.get_cached_registry(prefix_path).await? {
-            return Ok(Self {
-                registry: cached_registry,
-                cache,
-                prefix_path: Some(prefix_path.clone()),
-            });
-        }
+    pub async fn with_prefix(prefix_path: &PathBuf) -> Result<Self> {
         let registry = WineRegistry::load_from_prefix(prefix_path).await?;
-        cache.cache_registry(prefix_path, registry.clone()).await?;
         Ok(Self {
             registry,
-            cache,
             prefix_path: Some(prefix_path.clone()),
         })
     }
@@ -149,16 +136,12 @@ impl RegEditor for RegistryEditor {
         let registry_path = Self::get_registry_path(prefix_path)?;
         self.registry = WineRegistry::load_from_file(&registry_path).await?;
         self.prefix_path = Some(prefix_path.clone());
-        self.cache
-            .cache_registry(prefix_path, self.registry.clone())
-            .await?;
         Ok(())
     }
 
     async fn save_registry(&self, prefix_path: &PathBuf) -> Result<()> {
         let registry_path = Self::get_registry_path(prefix_path)?;
         self.registry.save_to_file(&registry_path).await?;
-        self.cache.invalidate_cache(prefix_path).await?;
         Ok(())
     }
 

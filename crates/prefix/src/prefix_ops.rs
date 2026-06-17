@@ -4,7 +4,7 @@ use base::traits::WinePrefix;
 use base::{GraphicsBackend, GraphicsConfig};
 use log::{info, warn};
 use registry::keys::DllOverrideSetting;
-use registry::{InMemoryRegistryCache, RegEditor, RegistryEditor};
+use registry::{RegEditor, RegistryEditor};
 use runtime::graphics;
 use std::fs;
 use std::io::Write;
@@ -12,7 +12,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 use uuid::Uuid;
 
 use crate::Manager;
@@ -271,8 +270,7 @@ impl Manager {
         );
 
         // 2. Write DLL overrides to registry
-        let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
-        let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+        let mut editor = RegistryEditor::with_prefix(prefix_path).await?;
         let entries: Vec<&str> = backend
             .override_entries()
             .iter()
@@ -367,8 +365,7 @@ impl Manager {
             dxvk_version: dxvk_ver.clone(),
             vkd3d_version: vkd3d_ver.clone(),
         };
-        let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
-        let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+        let mut editor = RegistryEditor::with_prefix(prefix_path).await?;
         for (dll, setting_str) in backend.override_entries() {
             let setting = DllOverrideSetting::from_string(setting_str).ok_or_else(|| {
                 PrefixError::Validation(format!("Invalid override setting: {}", setting_str))
@@ -443,8 +440,7 @@ impl Manager {
 
         // 2. Remove registry overrides
         info!("[prefix]   step 2/3: initialising registry editor...");
-        let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
-        let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+        let mut editor = RegistryEditor::with_prefix(prefix_path).await?;
         let dlls: Vec<&str> = gfx_config.override_dlls();
         info!(
             "[prefix]   step 2/3: removing overrides: {}",
@@ -514,8 +510,7 @@ impl Manager {
         );
 
         // 2. Remove DLL overrides from registry
-        let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
-        let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+        let mut editor = RegistryEditor::with_prefix(prefix_path).await?;
         for dll in gfx_config.override_dlls() {
             editor.remove_dll_override(dll).await?;
         }
@@ -596,8 +591,7 @@ impl Manager {
         let backend = GraphicsBackend::Dxmt {
             version: version.clone(),
         };
-        let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
-        let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+        let mut editor = RegistryEditor::with_prefix(prefix_path).await?;
         for (dll, setting_str) in backend.override_entries() {
             let setting = DllOverrideSetting::from_string(setting_str).ok_or_else(|| {
                 PrefixError::Validation(format!("Invalid override setting: {}", setting_str))
@@ -650,8 +644,7 @@ impl Manager {
         info!("[prefix] removed DXMT DLL symlinks for '{}'", config.name);
 
         // 2. Remove registry overrides
-        let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
-        let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+        let mut editor = RegistryEditor::with_prefix(prefix_path).await?;
         for dll in gfx_config.override_dlls() {
             editor.remove_dll_override(dll).await?;
         }
@@ -764,8 +757,7 @@ impl Manager {
         let backend = GraphicsBackend::D3DMetal {
             version: version.clone(),
         };
-        let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
-        let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+        let mut editor = RegistryEditor::with_prefix(prefix_path).await?;
         for (dll, setting_str) in backend.override_entries() {
             let setting = DllOverrideSetting::from_string(setting_str).ok_or_else(|| {
                 PrefixError::Validation(format!("Invalid override setting: {}", setting_str))
@@ -818,8 +810,7 @@ impl Manager {
         info!("[prefix] removed D3DMetal symlinks for '{}'", config.name);
 
         // 2. Remove registry overrides
-        let cache = Arc::new(InMemoryRegistryCache::new(Duration::from_secs(30)));
-        let mut editor = RegistryEditor::with_prefix(cache, prefix_path).await?;
+        let mut editor = RegistryEditor::with_prefix(prefix_path).await?;
         for dll in gfx_config.override_dlls() {
             editor.remove_dll_override(dll).await?;
         }

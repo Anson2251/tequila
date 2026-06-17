@@ -1,7 +1,7 @@
 use adw::prelude::*;
 use notify::{RecursiveMode, Watcher, recommended_watcher};
 use prefix::registry::Value;
-use prefix::registry::cache::InMemoryRegistryCache;
+use prefix::registry::cache::hash_registry_files;
 use prefix::registry::keys::*;
 use prefix::{
     PrefixError, ProcessTracker,
@@ -381,24 +381,24 @@ impl SimpleComponent for RegistryEditorModel {
                     return;
                 }
                 if !self.prefix_path.as_os_str().is_empty() {
+                    self.set_loading(true);
                     let prefix_path = self.prefix_path.clone();
                     let prefix_path_str = prefix_path.to_string_lossy().to_string();
                     let store = Arc::clone(&self.prefix_store);
 
-                    if load_settings_from_sqlite_cache(&prefix_path_str, &store, &sender) {
+                    if load_registry_settings_from_cache_if_fresh(&prefix_path, &store, &sender) {
+                        self.loading = false;
                         return;
-                    } else {
-                        self.set_loading(true);
-                        self.registry_editor = None;
-                        self.system_registry = None;
-                        spawn_registry_load(
-                            prefix_path,
-                            prefix_path_str,
-                            Arc::clone(&self.prefix_store),
-                            false,
-                            sender.clone(),
-                        );
                     }
+
+                    self.registry_editor = None;
+                    self.system_registry = None;
+                    spawn_registry_load(
+                        prefix_path,
+                        prefix_path_str,
+                        store,
+                        sender.clone(),
+                    );
                 }
             }
 
@@ -411,12 +411,11 @@ impl SimpleComponent for RegistryEditorModel {
                     self.system_registry = None;
                     let prefix_path = self.prefix_path.clone();
                     let prefix_path_str = prefix_path.to_string_lossy().to_string();
-                    let warm = self.prefix_store.has_registry_cache(&prefix_path_str);
+                    let store = Arc::clone(&self.prefix_store);
                     spawn_registry_load(
                         prefix_path,
                         prefix_path_str,
-                        Arc::clone(&self.prefix_store),
-                        warm,
+                        store,
                         sender.clone(),
                     );
                 }
@@ -459,6 +458,7 @@ impl SimpleComponent for RegistryEditorModel {
             RegistryEditorMsg::SaveRegistry => {
                 let editor_arc = self.registry_editor.clone();
                 let system_arc = self.system_registry.clone();
+                let store = Arc::clone(&self.prefix_store);
                 let pp = self.prefix_path.clone();
                 let s = sender.clone();
 
@@ -487,6 +487,12 @@ impl SimpleComponent for RegistryEditorModel {
                             let system_path = pp.join("system.reg");
                             let system_registry = system_arc.lock().await;
                             system_registry.save_to_file(&system_path).await?;
+                        }
+
+                        // Update stored hashes so the cache stays valid
+                        let pp_str = pp.to_string_lossy();
+                        if let Ok((uh, sh)) = hash_registry_files(&pp) {
+                            let _ = store.save_registry_hashes(&pp_str, &uh, &sh);
                         }
 
                         Ok::<(), PrefixError>(())
@@ -662,7 +668,7 @@ impl SimpleComponent for RegistryEditorModel {
                 });
 
                 let prefix_path_str = self.prefix_path.to_string_lossy().to_string();
-                if !load_settings_from_sqlite_cache(&prefix_path_str, &self.prefix_store, &sender) {
+                if !send_cached_settings(&prefix_path_str, &self.prefix_store, &sender) {
                     sender.input(RegistryEditorMsg::LoadSettings(
                         default_general_settings(),
                         default_graphics_settings(),
@@ -670,6 +676,7 @@ impl SimpleComponent for RegistryEditorModel {
                         FontsSettings::default(),
                     ));
                 }
+                sender.input(RegistryEditorMsg::LoadRegistry);
             }
 
             RegistryEditorMsg::RegistrySaveComplete => {
@@ -1135,7 +1142,8 @@ fn default_graphics_settings() -> GraphicsSettings {
     }
 }
 
-fn load_settings_from_sqlite_cache(
+
+fn send_cached_settings(
     prefix_path: &str,
     store: &prefix::PrefixStore,
     sender: &ComponentSender<RegistryEditorModel>,
@@ -1155,7 +1163,23 @@ fn load_settings_from_sqlite_cache(
     true
 }
 
-/// Load settings from cache and send to tabs (cache warm path).
+fn load_registry_settings_from_cache_if_fresh(
+    prefix_path: &PathBuf,
+    store: &prefix::PrefixStore,
+    sender: &ComponentSender<RegistryEditorModel>,
+) -> bool {
+    let prefix_path_str = prefix_path.to_string_lossy().to_string();
+    let Ok((user_hash, system_hash)) = hash_registry_files(prefix_path) else {
+        return false;
+    };
+
+    let Ok(true) = store.verify_registry_hashes(&prefix_path_str, &user_hash, &system_hash) else {
+        return false;
+    };
+
+    send_cached_settings(&prefix_path_str, store, sender)
+}
+
 fn load_settings_from_cache(
     prefix_path: &str,
     store: &prefix::PrefixStore,
@@ -1306,17 +1330,12 @@ fn spawn_registry_load(
     prefix_path: PathBuf,
     prefix_path_str: String,
     store: Arc<prefix::PrefixStore>,
-    warm: bool,
     sender: ComponentSender<RegistryEditorModel>,
 ) {
     let (tx, rx) = oneshot::channel();
     tokio::spawn(async move {
         let result = async {
-            let editor = RegistryEditor::with_prefix(
-                Arc::new(InMemoryRegistryCache::with_default_ttl()),
-                &prefix_path,
-            )
-            .await?;
+            let editor = RegistryEditor::with_prefix(&prefix_path).await?;
             let system_registry = WineRegistry::load_from_file(&prefix_path.join("system.reg")).await?;
             let windows_version = editor.get_windows_version().await?;
             let d3d_renderer = editor.get_d3d_renderer().await?;
@@ -1429,7 +1448,16 @@ fn spawn_registry_load(
     tokio::spawn(async move {
         match rx.await {
             Ok(Ok((editor, system_registry, general, graphics, platform, fonts))) => {
-                if !warm {
+                // Check whether the cached data is still fresh by comparing hashes
+                let hashes_match = hash_registry_files(std::path::Path::new(&pp2))
+                    .ok()
+                    .map_or(false, |(uh, sh)| {
+                        store
+                            .verify_registry_hashes(&pp2, &uh, &sh)
+                            .unwrap_or(false)
+                    });
+
+                if !hashes_match {
                     let pp = &pp2;
                     macro_rules! save {
                         ($sec:expr, $key:expr, $val:expr) => {
@@ -1588,6 +1616,11 @@ fn spawn_registry_load(
                             substitution.source.as_str(),
                             Some(substitution.target.as_str())
                         );
+                    }
+
+                    // Save file hashes so subsequent loads can skip re-parsing
+                    if let Ok((uh, sh)) = hash_registry_files(std::path::Path::new(&pp)) {
+                        let _ = store.save_registry_hashes(pp, &uh, &sh);
                     }
                 }
                 sender.input(RegistryEditorMsg::LoadSettings(general, graphics, platform, fonts));

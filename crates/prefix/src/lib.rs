@@ -24,7 +24,7 @@ pub use base::{
 };
 pub use registry;
 pub use registry::keys;
-pub use registry::{InMemoryRegistryCache, RegEditor, RegistryCache, RegistryEditor, WineRegistry};
+pub use registry::{RegEditor, RegistryEditor, WineRegistry};
 pub use runtime;
 pub use runtime::download;
 pub use runtime::{Channel, Runtime, RuntimeManager, RuntimeSource};

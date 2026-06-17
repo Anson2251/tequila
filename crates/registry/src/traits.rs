@@ -47,18 +47,3 @@ pub trait RegEditor: Send + Sync {
     async fn validate_registry(&self) -> Result<Vec<ValidationError>>;
     async fn get_all_keys(&self) -> Result<Vec<String>>;
 }
-
-#[async_trait]
-pub trait RegistryCache: Send + Sync {
-    async fn get_cached_registry(
-        &self,
-        prefix_path: &PathBuf,
-    ) -> Result<Option<crate::WineRegistry>>;
-    async fn cache_registry(
-        &self,
-        prefix_path: &PathBuf,
-        registry: crate::WineRegistry,
-    ) -> Result<()>;
-    async fn invalidate_cache(&self, prefix_path: &PathBuf) -> Result<()>;
-    async fn clear_all_cache(&self) -> Result<()>;
-}

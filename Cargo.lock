@@ -2707,9 +2707,11 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "base",
+ "hex",
  "log",
  "regashii",
  "serde",
+ "sha2 0.11.0",
  "tokio",
 ]
 
