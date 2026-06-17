@@ -1,11 +1,12 @@
 use adw::prelude::*;
 use notify::{RecursiveMode, Watcher, recommended_watcher};
+use prefix::registry::Value;
 use prefix::registry::cache::InMemoryRegistryCache;
 use prefix::registry::keys::*;
 use prefix::{
     PrefixError, ProcessTracker,
     config::PrefixConfig,
-    registry::{RegEditor, RegistryEditor},
+    registry::{RegEditor, RegistryEditor, WineRegistry},
 };
 use relm4::{
     Component, ComponentController, ComponentParts, ComponentSender, Controller, RelmWidgetExt,
@@ -18,10 +19,12 @@ use std::sync::mpsc;
 use tokio::sync::{Mutex, oneshot};
 use tracker;
 
+pub mod fonts_tab;
 pub mod general_tab;
 pub mod graphics_tab;
 pub mod platform_tab;
 
+pub use fonts_tab::{FontsSettings, FontsTabModel};
 pub use general_tab::{GeneralSettings, GeneralTabModel};
 pub use graphics_tab::{GraphicsSettings, GraphicsTabModel};
 pub use platform_tab::{MacSettings, PlatformSettings, PlatformTabModel, X11Settings};
@@ -41,6 +44,8 @@ pub struct RegistryEditorModel {
     pending_edit: bool,
     #[tracker::do_not_track]
     registry_editor: Option<Arc<Mutex<RegistryEditor>>>,
+    #[tracker::do_not_track]
+    system_registry: Option<Arc<Mutex<WineRegistry>>>,
     // Tab component controllers
     #[tracker::do_not_track]
     parent_window: gtk::Window,
@@ -48,6 +53,8 @@ pub struct RegistryEditorModel {
     pub general_ctrl: Controller<GeneralTabModel>,
     #[tracker::do_not_track]
     pub graphics_ctrl: Controller<GraphicsTabModel>,
+    #[tracker::do_not_track]
+    pub fonts_ctrl: Controller<FontsTabModel>,
     #[tracker::do_not_track]
     pub platform_ctrl: Controller<PlatformTabModel>,
     #[tracker::do_not_track]
@@ -81,8 +88,8 @@ pub enum RegistryEditorMsg {
     SaveRegistry,
     LoadRegistry,
     LoadForEdit,
-    RegistryEditorLoaded(Arc<Mutex<RegistryEditor>>),
-    LoadSettings(GeneralSettings, GraphicsSettings, PlatformSettings),
+    RegistryEditorLoaded(Arc<Mutex<RegistryEditor>>, Arc<Mutex<WineRegistry>>),
+    LoadSettings(GeneralSettings, GraphicsSettings, PlatformSettings, FontsSettings),
     RegistrySaveComplete,
     RegistrySaveError(String),
     ConfigUpdated(PrefixConfig),
@@ -140,6 +147,11 @@ impl SimpleComponent for RegistryEditorModel {
                         append_page: (
                             &model.graphics_ctrl.widget().clone(),
                             Some(&gtk::Label::builder().label(&crate::t!("registry.tab.graphics")).build())
+                        ),
+
+                        append_page: (
+                            &model.fonts_ctrl.widget().clone(),
+                            Some(&gtk::Label::builder().label(&crate::t!("registry.tab.fonts")).build())
                         ),
 
                         append_page: (
@@ -262,6 +274,14 @@ impl SimpleComponent for RegistryEditorModel {
                 }
             });
 
+        let fonts_ctrl = FontsTabModel::builder()
+            .launch(FontsSettings::default())
+            .forward(sender.input_sender(), |msg| match msg {
+                fonts_tab::FontsTabOutput::SettingChanged(k, v) => {
+                    RegistryEditorMsg::ApplySetting(k, v)
+                }
+            });
+
         let platform_ctrl = PlatformTabModel::builder()
             .launch(PlatformSettings::default())
             .forward(sender.input_sender(), |msg| match msg {
@@ -286,6 +306,7 @@ impl SimpleComponent for RegistryEditorModel {
             prefix_path: prefix_path.clone(),
             config: config.clone(),
             registry_editor: None,
+            system_registry: None,
             editing: false,
             loading: false,
             winecfg_running: false,
@@ -296,6 +317,7 @@ impl SimpleComponent for RegistryEditorModel {
             parent_window,
             general_ctrl,
             graphics_ctrl,
+            fonts_ctrl,
             platform_ctrl,
             prefix_store,
             process_tracker,
@@ -337,7 +359,7 @@ impl SimpleComponent for RegistryEditorModel {
             RegistryEditorMsg::ToggleEdit => {
                 if self.editing {
                     sender.input(RegistryEditorMsg::SaveRegistry);
-                } else if self.registry_editor.is_none() {
+                } else if self.registry_editor.is_none() || self.system_registry.is_none() {
                     self.pending_edit = true;
                     sender.input(RegistryEditorMsg::LoadForEdit);
                 } else {
@@ -349,6 +371,8 @@ impl SimpleComponent for RegistryEditorModel {
                         .emit(graphics_tab::GraphicsTabInput::SetEditing(true));
                     self.platform_ctrl
                         .emit(platform_tab::PlatformTabInput::SetEditing(true));
+                    self.fonts_ctrl
+                        .emit(fonts_tab::FontsTabInput::SetEditing(true));
                 }
             }
 
@@ -361,18 +385,12 @@ impl SimpleComponent for RegistryEditorModel {
                     let prefix_path_str = prefix_path.to_string_lossy().to_string();
                     let store = Arc::clone(&self.prefix_store);
 
-                    let warm = store.has_registry_cache(&prefix_path_str);
-                    if warm {
-                        let load = |sec: &str, key: &str| -> Option<String> {
-                            store.get_setting(&prefix_path_str, sec, key).ok().flatten()
-                        };
-                        let load_dword = |sec: &str, key: &str| -> Option<u32> {
-                            load(sec, key).and_then(|v| v.parse().ok())
-                        };
-                        load_settings_from_cache(&load, &load_dword, &sender);
+                    if load_settings_from_sqlite_cache(&prefix_path_str, &store, &sender) {
+                        return;
                     } else {
                         self.set_loading(true);
                         self.registry_editor = None;
+                        self.system_registry = None;
                         spawn_registry_load(
                             prefix_path,
                             prefix_path_str,
@@ -390,6 +408,7 @@ impl SimpleComponent for RegistryEditorModel {
                 }
                 if !self.prefix_path.as_os_str().is_empty() {
                     self.set_loading(true);
+                    self.system_registry = None;
                     let prefix_path = self.prefix_path.clone();
                     let prefix_path_str = prefix_path.to_string_lossy().to_string();
                     let warm = self.prefix_store.has_registry_cache(&prefix_path_str);
@@ -403,17 +422,20 @@ impl SimpleComponent for RegistryEditorModel {
                 }
             }
 
-            RegistryEditorMsg::LoadSettings(general, graphics, platform) => {
+            RegistryEditorMsg::LoadSettings(general, graphics, platform, fonts) => {
                 self.general_ctrl
                     .emit(general_tab::GeneralTabInput::LoadSettings(general));
                 self.graphics_ctrl
                     .emit(graphics_tab::GraphicsTabInput::LoadSettings(graphics));
                 self.platform_ctrl
                     .emit(platform_tab::PlatformTabInput::LoadSettings(platform));
+                self.fonts_ctrl
+                    .emit(fonts_tab::FontsTabInput::LoadSettings(fonts));
             }
 
-            RegistryEditorMsg::RegistryEditorLoaded(editor) => {
+            RegistryEditorMsg::RegistryEditorLoaded(editor, system_registry) => {
                 self.registry_editor = Some(editor);
+                self.system_registry = Some(system_registry);
                 self.loading = false;
                 if self.pending_edit {
                     self.pending_edit = false;
@@ -425,6 +447,8 @@ impl SimpleComponent for RegistryEditorModel {
                         .emit(graphics_tab::GraphicsTabInput::SetEditing(true));
                     self.platform_ctrl
                         .emit(platform_tab::PlatformTabInput::SetEditing(true));
+                    self.fonts_ctrl
+                        .emit(fonts_tab::FontsTabInput::SetEditing(true));
                 }
             }
 
@@ -433,30 +457,47 @@ impl SimpleComponent for RegistryEditorModel {
             }
 
             RegistryEditorMsg::SaveRegistry => {
-                if let Some(editor_arc) = self.registry_editor.take() {
-                    let pp = self.prefix_path.clone();
-                    let (tx, rx) = std::sync::mpsc::channel();
-                    let ec = editor_arc.clone();
-                    tokio::spawn(async move {
-                        let editor = ec.lock().await;
-                        let result = editor.save_registry(&pp).await;
-                        let _ = tx.send(result);
-                    });
-                    if let Ok(result) = rx.recv() {
-                        if let Err(e) = result {
-                            log::error!("[regedit] registry save failed: {}", e);
-                        }
-                    }
-                    self.registry_editor = Some(editor_arc);
-                }
+                let editor_arc = self.registry_editor.clone();
+                let system_arc = self.system_registry.clone();
+                let pp = self.prefix_path.clone();
+                let s = sender.clone();
+
                 self.set_editing(false);
                 self.set_edit_save_tooltip(crate::t!("registry.edit"));
                 set_editing_all_tabs(
                     &self.general_ctrl,
                     &self.graphics_ctrl,
                     &self.platform_ctrl,
+                    &self.fonts_ctrl,
                     false,
                 );
+
+                tokio::spawn(async move {
+                    let font_substitutes_key =
+                        "Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes";
+
+                    let result = async {
+                        if let Some(ec) = editor_arc {
+                            let editor = ec.lock().await;
+                            let _ = editor.registry.delete_key(font_substitutes_key).await;
+                            editor.save_registry(&pp).await?;
+                        }
+
+                        if let Some(system_arc) = system_arc {
+                            let system_path = pp.join("system.reg");
+                            let system_registry = system_arc.lock().await;
+                            system_registry.save_to_file(&system_path).await?;
+                        }
+
+                        Ok::<(), PrefixError>(())
+                    }
+                    .await;
+
+                    match result {
+                        Ok(()) => s.input(RegistryEditorMsg::RegistrySaveComplete),
+                        Err(e) => s.input(RegistryEditorMsg::RegistrySaveError(e.to_string())),
+                    }
+                });
             }
 
             RegistryEditorMsg::CancelEdit => {
@@ -466,8 +507,10 @@ impl SimpleComponent for RegistryEditorModel {
                     &self.general_ctrl,
                     &self.graphics_ctrl,
                     &self.platform_ctrl,
+                    &self.fonts_ctrl,
                     false,
                 );
+                self.system_registry = None;
                 let pp = self.prefix_path.to_string_lossy().to_string();
                 let _ = self.prefix_store.invalidate_registry_cache(&pp);
                 sender.input(RegistryEditorMsg::LoadRegistry);
@@ -553,12 +596,14 @@ impl SimpleComponent for RegistryEditorModel {
                 let pp = self.prefix_path.to_string_lossy().to_string();
                 let _ = self.prefix_store.invalidate_registry_cache(&pp);
                 self.registry_editor = None;
+                self.system_registry = None;
                 self.set_editing(false);
                 self.set_edit_save_tooltip(crate::t!("registry.edit"));
                 set_editing_all_tabs(
                     &self.general_ctrl,
                     &self.graphics_ctrl,
                     &self.platform_ctrl,
+                    &self.fonts_ctrl,
                     false,
                 );
                 sender.input(RegistryEditorMsg::LoadRegistry);
@@ -575,6 +620,7 @@ impl SimpleComponent for RegistryEditorModel {
                 let pp = path.clone();
                 self.set_prefix_path(path);
                 self.registry_editor = None;
+                self.system_registry = None;
                 self.watch_kill = None;
 
                 let s = sender.clone();
@@ -614,6 +660,16 @@ impl SimpleComponent for RegistryEditorModel {
                         }
                     }
                 });
+
+                let prefix_path_str = self.prefix_path.to_string_lossy().to_string();
+                if !load_settings_from_sqlite_cache(&prefix_path_str, &self.prefix_store, &sender) {
+                    sender.input(RegistryEditorMsg::LoadSettings(
+                        default_general_settings(),
+                        default_graphics_settings(),
+                        PlatformSettings::default(),
+                        FontsSettings::default(),
+                    ));
+                }
             }
 
             RegistryEditorMsg::RegistrySaveComplete => {
@@ -623,6 +679,7 @@ impl SimpleComponent for RegistryEditorModel {
                     &self.general_ctrl,
                     &self.graphics_ctrl,
                     &self.platform_ctrl,
+                    &self.fonts_ctrl,
                     false,
                 );
             }
@@ -635,6 +692,7 @@ impl SimpleComponent for RegistryEditorModel {
                     &self.general_ctrl,
                     &self.graphics_ctrl,
                     &self.platform_ctrl,
+                    &self.fonts_ctrl,
                     false,
                 );
             }
@@ -688,6 +746,7 @@ impl RegistryEditorModel {
         }
         if let Some(editor_arc) = &self.registry_editor {
             let ec = editor_arc.clone();
+            let system_ec = self.system_registry.clone();
             let pp = self.prefix_path.to_string_lossy().to_string();
             let store = Arc::clone(&self.prefix_store);
             let section_c = section.clone();
@@ -999,6 +1058,41 @@ impl RegistryEditorModel {
                         }
                     }
 
+                    // ── Fonts: FontSubstitutes (HKLM / system.reg) ──
+                    "Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes" => {
+                        if let Some((key, val)) = setting_c.split_once('=') {
+                            let key = key.trim();
+                            let val = val.trim();
+                            if !key.is_empty() {
+                                if let Some(system_ec) = system_ec {
+                                    let system_registry = system_ec.lock().await;
+                                    if val.is_empty() {
+                                        let _ = system_registry
+                                            .delete_value(
+                                                "Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes",
+                                                key,
+                                            )
+                                            .await;
+                                    } else {
+                                        let _ = system_registry
+                                            .set_value(
+                                                "Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes",
+                                                key,
+                                                Value::Sz(val.to_string()),
+                                            )
+                                            .await;
+                                    }
+                                }
+                                let _ = store.save_setting(
+                                    &pp,
+                                    "Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes",
+                                    key,
+                                    if val.is_empty() { None } else { Some(val) },
+                                );
+                            }
+                        }
+                    }
+
                     _ => {}
                 }
             });
@@ -1012,15 +1106,59 @@ fn set_editing_all_tabs(
     general: &Controller<GeneralTabModel>,
     graphics: &Controller<GraphicsTabModel>,
     platform: &Controller<PlatformTabModel>,
+    fonts: &Controller<FontsTabModel>,
     editing: bool,
 ) {
     general.emit(general_tab::GeneralTabInput::SetEditing(editing));
     graphics.emit(graphics_tab::GraphicsTabInput::SetEditing(editing));
     platform.emit(platform_tab::PlatformTabInput::SetEditing(editing));
+    fonts.emit(fonts_tab::FontsTabInput::SetEditing(editing));
+}
+
+fn default_general_settings() -> GeneralSettings {
+    GeneralSettings {
+        windows_version: None,
+        audio_driver: None,
+        log_pixels: None,
+        virtual_desktop_enabled: false,
+        virtual_desktop_width: 1024,
+        virtual_desktop_height: 768,
+    }
+}
+
+fn default_graphics_settings() -> GraphicsSettings {
+    GraphicsSettings {
+        renderer: None,
+        csmt: None,
+        offscreen_mode: None,
+        video_memory: None,
+    }
+}
+
+fn load_settings_from_sqlite_cache(
+    prefix_path: &str,
+    store: &prefix::PrefixStore,
+    sender: &ComponentSender<RegistryEditorModel>,
+) -> bool {
+    if !store.has_registry_cache(prefix_path) {
+        return false;
+    }
+
+    let load = |sec: &str, key: &str| -> Option<String> {
+        store.get_setting(prefix_path, sec, key).ok().flatten()
+    };
+    let load_dword = |sec: &str, key: &str| -> Option<u32> {
+        load(sec, key).and_then(|v| v.parse().ok())
+    };
+
+    load_settings_from_cache(prefix_path, store, &load, &load_dword, sender);
+    true
 }
 
 /// Load settings from cache and send to tabs (cache warm path).
 fn load_settings_from_cache(
+    prefix_path: &str,
+    store: &prefix::PrefixStore,
     load: &dyn Fn(&str, &str) -> Option<String>,
     load_dword: &dyn Fn(&str, &str) -> Option<u32>,
     sender: &ComponentSender<RegistryEditorModel>,
@@ -1127,7 +1265,40 @@ fn load_settings_from_cache(
         },
     };
 
-    sender.input(RegistryEditorMsg::LoadSettings(general, graphics, platform));
+    let fonts_section = store
+        .get_settings_section(
+            prefix_path,
+            "Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes",
+        )
+        .unwrap_or_default();
+    let shell_dlg_font = load(
+        "Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes",
+        "MS Shell Dlg",
+    );
+    let shell_dlg_2_font = load(
+        "Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes",
+        "MS Shell Dlg 2",
+    );
+    let fonts = FontsSettings {
+        system_font: shell_dlg_font.clone().or_else(|| shell_dlg_2_font.clone()),
+        shell_dlg_font,
+        shell_dlg_2_font,
+        substitutions: fonts_section
+            .into_iter()
+            .filter_map(|(key, value)| {
+                if key == "MS Shell Dlg" || key == "MS Shell Dlg 2" {
+                    None
+                } else {
+                    value.map(|target| fonts_tab::FontSubstituteEntry {
+                        source: key,
+                        target,
+                    })
+                }
+            })
+            .collect(),
+    };
+
+    sender.input(RegistryEditorMsg::LoadSettings(general, graphics, platform, fonts));
 }
 
 /// Background registry load (cold path): reads .reg files, caches, sends to tabs.
@@ -1146,6 +1317,7 @@ fn spawn_registry_load(
                 &prefix_path,
             )
             .await?;
+            let system_registry = WineRegistry::load_from_file(&prefix_path.join("system.reg")).await?;
             let windows_version = editor.get_windows_version().await?;
             let d3d_renderer = editor.get_d3d_renderer().await?;
             let d3d_csmt = editor.get_d3d_csmt().await?;
@@ -1155,6 +1327,9 @@ fn spawn_registry_load(
             let virtual_desktop = editor.get_virtual_desktop().await?;
             let dpi_settings = editor.get_dpi_settings().await?;
             let x11_driver_settings = editor.get_x11_driver_settings().await?;
+            let font_substitutes = system_registry
+                .get_key_values("Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes")
+                .await?;
             #[cfg(target_os = "macos")]
             let mac_driver_settings = editor.get_mac_driver_settings().await?;
 
@@ -1212,7 +1387,39 @@ fn spawn_registry_load(
 
             let platform = PlatformSettings { mac, x11 };
 
-            Ok::<_, PrefixError>((editor, general, graphics, platform))
+            let shell_dlg_font = font_substitutes.get("MS Shell Dlg").and_then(|v| match v {
+                Value::Sz(s) | Value::ExpandSz(s) => Some(s.clone()),
+                _ => None,
+            });
+            let shell_dlg_2_font = font_substitutes.get("MS Shell Dlg 2").and_then(|v| match v {
+                Value::Sz(s) | Value::ExpandSz(s) => Some(s.clone()),
+                _ => None,
+            });
+            let fonts = FontsSettings {
+                system_font: shell_dlg_font.clone().or_else(|| shell_dlg_2_font.clone()),
+                shell_dlg_font,
+                shell_dlg_2_font,
+                substitutions: font_substitutes
+                    .iter()
+                    .filter_map(|(key, value)| {
+                        if key == "MS Shell Dlg" || key == "MS Shell Dlg 2" {
+                            None
+                        } else {
+                            match value {
+                                Value::Sz(s) | Value::ExpandSz(s) => {
+                                    Some(fonts_tab::FontSubstituteEntry {
+                                        source: key.clone(),
+                                        target: s.clone(),
+                                    })
+                                }
+                                _ => None,
+                            }
+                        }
+                    })
+                    .collect(),
+            };
+
+            Ok::<_, PrefixError>((editor, system_registry, general, graphics, platform, fonts))
         }
         .await;
         let _ = tx.send(result);
@@ -1221,7 +1428,7 @@ fn spawn_registry_load(
     let pp2 = prefix_path_str;
     tokio::spawn(async move {
         match rx.await {
-            Ok(Ok((editor, general, graphics, platform))) => {
+            Ok(Ok((editor, system_registry, general, graphics, platform, fonts))) => {
                 if !warm {
                     let pp = &pp2;
                     macro_rules! save {
@@ -1365,11 +1572,29 @@ fn spawn_registry_load(
                             mac.right_command_ctrl.map(|v| if v { "Y" } else { "N" })
                         );
                     }
+                    save!(
+                        "Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes",
+                        "MS Shell Dlg",
+                        fonts.system_font.as_deref()
+                    );
+                    save!(
+                        "Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes",
+                        "MS Shell Dlg 2",
+                        fonts.system_font.as_deref()
+                    );
+                    for substitution in &fonts.substitutions {
+                        save!(
+                            "Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes",
+                            substitution.source.as_str(),
+                            Some(substitution.target.as_str())
+                        );
+                    }
                 }
-                sender.input(RegistryEditorMsg::LoadSettings(general, graphics, platform));
-                sender.input(RegistryEditorMsg::RegistryEditorLoaded(Arc::new(
-                    Mutex::new(editor),
-                )));
+                sender.input(RegistryEditorMsg::LoadSettings(general, graphics, platform, fonts));
+                sender.input(RegistryEditorMsg::RegistryEditorLoaded(
+                    Arc::new(Mutex::new(editor)),
+                    Arc::new(Mutex::new(system_registry)),
+                ));
             }
             Ok(Err(e)) => {
                 log::error!("[regedit] failed to load registry: {}", e);
