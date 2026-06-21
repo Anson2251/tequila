@@ -1,7 +1,6 @@
 use crate::Manager;
 use base::config::PrefixConfig;
-use base::error::{PrefixError, Result};
-use runtime::{Channel, Runtime};
+use runtime::Runtime;
 use std::path::PathBuf;
 
 impl Manager {
@@ -10,41 +9,6 @@ impl Manager {
         if let Err(e) = settings.save() {
             log::error!("[runtime] failed to save runtime settings: {}", e);
         }
-    }
-
-    /// Register a channel runtime after a successful download.
-    pub fn register_channel_runtime(
-        &self,
-        channel: Channel,
-        version: String,
-        bundle_dir: PathBuf,
-    ) -> Runtime {
-        let runtime = self
-            .write_runtime()
-            .register_channel(channel, version, bundle_dir)
-            .clone();
-        self.save_runtime_state();
-        runtime
-    }
-
-    /// Download a channel-based runtime and install it.
-    pub async fn download_channel_runtime(
-        &self,
-        channel: Channel,
-        progress: runtime::download::ProgressFn,
-    ) -> Result<Runtime> {
-        let runtimes = runtime::download::runtimes_dir();
-        runtime::download::cleanup_temp_runtimes(&runtimes);
-        let bundle_dir = runtime::download::download_channel_runtime(&channel, &progress).await?;
-        let cask = runtime::homebrew::fetch_cask(channel.cask_name())
-            .await
-            .map_err(|e| PrefixError::Process(e))?;
-        let runtime = self
-            .write_runtime()
-            .register_channel(channel, cask.version, bundle_dir)
-            .clone();
-        self.save_runtime_state();
-        Ok(runtime)
     }
 
     pub fn import_runtime(

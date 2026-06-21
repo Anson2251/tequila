@@ -1,6 +1,5 @@
 use adw::prelude::*;
-#[cfg(target_os = "macos")]
-use prefix::runtime::Channel;
+
 use prefix::{
     GraphicsBackend, Manager as PrefixManager,
     runtime::{RuntimeManager, RuntimeSource},
@@ -267,132 +266,193 @@ impl AsyncComponent for RuntimeSettings {
 
 /// Build the "Available" section of the Wine Runtime settings page.
 ///
-/// On macOS the rows come from Homebrew casks (Stable / Staging / Devel).
+/// On macOS the row fetches the latest Anson2251/crossover-foss-build from GitHub.
 /// On Linux they are fetched from Kron4ek/Wine-Builds (all versions).
 #[cfg(target_os = "macos")]
 async fn build_available_channels(
     group: &adw::PreferencesGroup,
-    prefix_manager: &PrefixManager,
+    _prefix_manager: &PrefixManager,
     sender: &AsyncComponentSender<RuntimeSettings>,
 ) -> Vec<AsyncController<managed_download_row::ManagedDownloadRow>> {
     let mut ctrls: Vec<AsyncController<managed_download_row::ManagedDownloadRow>> = Vec::new();
 
-    for (channel, display_name, description) in [
-        (Channel::Stable, crate::t!("settings.runtime.stable"), crate::t!("settings.runtime.stable_desc")),
-        (Channel::Staging, crate::t!("settings.runtime.staging"), crate::t!("settings.runtime.staging_desc")),
-        (Channel::Devel, crate::t!("settings.runtime.devel"), crate::t!("settings.runtime.devel_desc")),
-    ] {
-        let pm = prefix_manager.clone();
-        let runtime_id = channel.runtime_id().to_string();
+    // ── Fetch the latest crossover-foss release from GitHub ────────────
+    let release = match prefix::runtime::anson2251::fetch_latest_release(
+        &prefix::github_client(),
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            log::error!("[runtime] failed to fetch crossover-foss release: {}", e);
+            let row = adw::ActionRow::builder()
+                .title(&crate::t!("settings.runtime.fetch_failed"))
+                .subtitle(&format!("{}", e))
+                .build();
+            group.add(&row);
+            return ctrls;
+        }
+    };
 
-        // ── check_status (checks filesystem directly, not a stale in-memory snapshot) ──
-        let check_id = runtime_id.clone();
-        // Clone outside closure since both closure and outer scope need it
-        let dn_for_title = display_name.clone();
-        let check_status = Box::new(move || {
-            let dir = prefix::runtime::download::runtimes_dir().join(&check_id);
-            let installed = dir.is_dir();
-            managed_download_row::DownloadRowStatus {
-                installed,
-                managed: installed,
-                status_text: if installed {
-                    crate::tf!("settings.runtime.installed_channel", "name" => &display_name)
-                } else {
-                    description.clone()
-                },
-            }
-        });
+    let runtime_id = format!("anson2251-{}", release.version);
+    let display_title =
+        crate::tf!("settings.runtime.anson2251_title", "version" => &release.version);
 
-        // ── start_download ──
-        let dl_sender = sender.clone();
-        let dl_channel = channel;
-        let start_download: managed_download_row::DownloadFn = Box::new(
-            move |_data_dir: PathBuf,
-                  progress: prefix::runtime::download::PhaseProgressFn,
-                  cancel: std::sync::Arc<std::sync::atomic::AtomicBool>| {
-                let s = dl_sender.clone();
-                let channel = dl_channel.clone();
-                Box::pin(async move {
-                    let (tx, rx) = std::sync::mpsc::channel::<Result<RuntimeManager, String>>();
+    // ── check_status ──
+    let check_id = runtime_id.clone();
+    let chk_version = release.version.clone();
+    let dxmt_version = release.dxmt_version.clone();
+    let check_status = Box::new(move || {
+        let dir = prefix::runtime::download::runtimes_dir().join(&check_id);
+        let installed = dir.is_dir();
+        managed_download_row::DownloadRowStatus {
+            installed,
+            managed: installed,
+            status_text: if installed {
+                crate::tf!("settings.runtime.installed_anson2251", "version" => &chk_version)
+            } else {
+                crate::tf!("settings.runtime.anson2251_desc", "dxmt" => &dxmt_version)
+            },
+        }
+    });
 
-                    std::thread::spawn(move || {
-                        let rt =
-                            tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+    // ── start_download ──
+    let dl_sender = sender.clone();
+    let dl_asset = release.asset.clone();
+    let dl_version = release.version.clone();
+    let start_download: managed_download_row::DownloadFn = Box::new(
+        move |_data_dir: PathBuf,
+              progress: prefix::runtime::download::PhaseProgressFn,
+              cancel: std::sync::Arc<std::sync::atomic::AtomicBool>| {
+            let s = dl_sender.clone();
+            let asset = dl_asset.clone();
+            let ver = dl_version.clone();
+            Box::pin(async move {
+                let (tx, rx) = std::sync::mpsc::channel::<Result<RuntimeManager, String>>();
 
-                        let result: Result<RuntimeManager, String> = rt.block_on(async {
-                            // 1. Download + verify + extract with phase progress
-                            let final_dir = prefix::runtime::download::install_channel_with_phase(
-                                &channel, &progress,
-                            )
+                let cancel_for_thread = cancel.clone();
+                let shared_progress =
+                    std::sync::Arc::new(std::sync::Mutex::new(progress));
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Runtime::new()
+                        .expect("Failed to create tokio runtime");
+
+                    let result: Result<RuntimeManager, String> = rt.block_on(async {
+                        // 1. Download + verify via the shared GitHub client
+                        let client = prefix::github_client();
+                        let download_dir = prefix::runtime::download::runtimes_dir()
+                            .join(format!(".dl-{}", &ver));
+                        std::fs::create_dir_all(&download_dir)
+                            .map_err(|e| format!("Failed to create temp dir: {}", e))?;
+                        let dl_prog: prefix::runtime::github::DownloadProgress = {
+                            let sp = shared_progress.clone();
+                            Box::new(move |d, t| {
+                                let guard = sp.lock().unwrap();
+                                let cb: &prefix::runtime::download::PhaseProgressFn = &*guard;
+                                cb(d, t, prefix::runtime::download::InstallPhase::Download)
+                            })
+                        };
+                        let archive = client
+                            .download_asset(&asset, &download_dir, &dl_prog, &cancel_for_thread)
                             .await
                             .map_err(|e| e.to_string())?;
 
-                            // 2. Fetch cask for version info
-                            let cask = prefix::runtime::homebrew::fetch_cask(channel.cask_name())
-                                .await
-                                .map_err(|e| e.to_string())?;
-
-                            // 3. Load state, register, save
-                            let mut runtime_manager: RuntimeManager =
-                                if let Some(settings) = prefix::Settings::load() {
-                                    settings.into()
-                                } else {
-                                    RuntimeManager::new()
-                                };
-                            runtime_manager.ensure_system_runtime();
-                            runtime_manager.register_channel(channel, cask.version, final_dir);
-                            let settings: prefix::Settings = runtime_manager.clone().into();
-                            if let Err(e) = settings.save() {
-                                log::error!("[runtime] failed to save: {}", e);
-                            }
-                            Ok(runtime_manager)
-                        });
-                        let _ = tx.send(result);
-                    });
-
-                    // Poll for completion
-                    loop {
-                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        if cancel_for_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                            let _ = std::fs::remove_dir_all(&download_dir);
                             return Err(crate::t!("settings.runtime.download_cancelled").into());
                         }
-                        match rx.try_recv() {
-                            Ok(Ok(rm)) => {
-                                let _ = s.input(RuntimeSettingsMsg::DownloadComplete(rm));
-                                return Ok(());
-                            }
-                            Ok(Err(e)) => return Err(e),
-                            Err(std::sync::mpsc::TryRecvError::Empty) => {
-                                gtk::glib::timeout_future(std::time::Duration::from_millis(200))
-                                    .await;
-                            }
-                            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                                return Err(crate::t!("settings.runtime.download_crashed").into());
-                            }
+
+                        // Signal verification phase
+                        {
+                            let guard = shared_progress.lock().unwrap();
+                            let cb: &prefix::runtime::download::PhaseProgressFn = &*guard;
+                            cb(0, 1, prefix::runtime::download::InstallPhase::Verify);
+                        }
+
+                        // Signal that extraction has started
+                        {
+                            let guard = shared_progress.lock().unwrap();
+                            let cb: &prefix::runtime::download::PhaseProgressFn = &*guard;
+                            cb(0, 1, prefix::runtime::download::InstallPhase::Extract);
+                        }
+
+                        // 2. Extract + resolve wine binary
+                        let final_dir =
+                            prefix::runtime::download::extract_crossover_build(&ver, &archive)
+                                .map_err(|e| e.to_string())?;
+                        let _ = std::fs::remove_dir_all(&download_dir);
+
+                        if cancel_for_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                            let _ = std::fs::remove_dir_all(&final_dir);
+                            return Err(crate::t!("settings.runtime.download_cancelled").into());
+                        }
+
+                        // 3. Load state, register, save
+                        let mut runtime_manager: RuntimeManager =
+                            if let Some(settings) = prefix::Settings::load() {
+                                settings.into()
+                            } else {
+                                RuntimeManager::new()
+                            };
+                        runtime_manager.ensure_system_runtime();
+                        runtime_manager.register_managed_build(
+                            "anson2251",
+                            "CrossOver",
+                            &ver,
+                            asset.browser_download_url,
+                            final_dir,
+                        );
+                        let settings: prefix::Settings = runtime_manager.clone().into();
+                        if let Err(e) = settings.save() {
+                            log::error!("[runtime] failed to save: {}", e);
+                        }
+                        Ok(runtime_manager)
+                    });
+                    let _ = tx.send(result);
+                });
+
+                // Poll for completion
+                loop {
+                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        return Err(crate::t!("settings.runtime.download_cancelled").into());
+                    }
+                    match rx.try_recv() {
+                        Ok(Ok(rm)) => {
+                            let _ = s.input(RuntimeSettingsMsg::DownloadComplete(rm));
+                            return Ok(());
+                        }
+                        Ok(Err(e)) => return Err(e),
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            gtk::glib::timeout_future(std::time::Duration::from_millis(200))
+                                .await;
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                            return Err(crate::t!("settings.runtime.download_crashed").into());
                         }
                     }
-                })
-            },
-        );
-
-        // ── perform_remove ──
-        let perform_remove = make_remove_runtime(runtime_id.clone(), sender.clone());
-
-        let ctrl = managed_download_row::ManagedDownloadRow::builder()
-            .launch(managed_download_row::ManagedDownloadRowInit {
-                title: dn_for_title,
-                check_status,
-                check_update: None,
-                start_download,
-                perform_remove,
-                data_dir: Default::default(),
+                }
             })
-            .forward(sender.input_sender(), |_out| {
-                RuntimeSettingsMsg::RefreshRuntimes
-            });
+        },
+    );
 
-        group.add(ctrl.widget());
-        ctrls.push(ctrl);
-    }
+    // ── perform_remove ──
+    let perform_remove = make_remove_runtime(runtime_id.clone(), sender.clone());
+
+    let ctrl = managed_download_row::ManagedDownloadRow::builder()
+        .launch(managed_download_row::ManagedDownloadRowInit {
+            title: display_title,
+            check_status,
+            check_update: None,
+            start_download,
+            perform_remove,
+            data_dir: Default::default(),
+        })
+        .forward(sender.input_sender(), |_out| {
+            RuntimeSettingsMsg::RefreshRuntimes
+        });
+
+    group.add(ctrl.widget());
+    ctrls.push(ctrl);
 
     ctrls
 }
@@ -413,9 +473,8 @@ async fn build_available_channels(
     let mut ctrls: Vec<AsyncController<managed_download_row::ManagedDownloadRow>> = Vec::new();
 
     // ── Fetch available builds from GitHub API ──────────────────────
-    let api_key = prefix::Settings::load().and_then(|s| s.github_api_key);
     let builds: Vec<WineBuild> =
-        match prefix::runtime::kron4ek::fetch_all_builds(api_key.as_deref()).await {
+        match prefix::runtime::kron4ek::fetch_all_builds(&prefix::github_client()).await {
             Ok(b) => b,
             Err(e) => {
                 log::error!("[runtime] failed to fetch Kron4ek builds: {}", e);
@@ -469,6 +528,7 @@ async fn build_available_channels(
                 Box::pin(async move {
                     let (tx, rx) = std::sync::mpsc::channel::<Result<RuntimeManager, String>>();
 
+                    let cancel_for_thread = cancel.clone();
                     std::thread::spawn(move || {
                         let rt =
                             tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
@@ -480,9 +540,15 @@ async fn build_available_channels(
                                 &build.archive_url,
                                 &build.archive_name,
                                 &progress,
+                                &cancel_for_thread,
                             )
                             .await
                             .map_err(|e| e.to_string())?;
+
+                            if cancel_for_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                                let _ = std::fs::remove_dir_all(&final_dir);
+                                return Err(crate::t!("settings.runtime.download_cancelled").into());
+                            }
 
                             // 2. Load state, register, save
                             let mut runtime_manager: RuntimeManager =
@@ -574,21 +640,15 @@ fn refresh_runtime_list(
 
         let _source = match &runtime.source {
             RuntimeSource::System => crate::t!("settings.runtime.system"),
-            RuntimeSource::ManagedChannel {
-                channel,
-                installed_cask_version,
+            RuntimeSource::ManagedVersion {
+                source_url,
+                version,
             } => {
-                crate::tf!(
-                    "settings.runtime.homebrew_source",
-                    "channel" => &channel.display_name(),
-                    "version" => &installed_cask_version,
-                )
-            }
-            RuntimeSource::ManagedVersion { source_url } => {
-                if source_url.contains("Kron4ek") {
-                    "Kron4ek".to_string()
+                let label = prefix::runtime::managed_source_label(&source_url);
+                if version.is_empty() {
+                    label.to_string()
                 } else {
-                    crate::t!("settings.runtime.managed_versioned")
+                    format!("{} · {}", label, version)
                 }
             }
             RuntimeSource::Imported {
@@ -667,6 +727,17 @@ fn refresh_runtime_list(
 
         group.add(&row);
         rows.push(row);
+    }
+
+    if rows.is_empty() {
+        let placeholder = adw::ActionRow::builder()
+            .title(&crate::t!("settings.runtime.no_runtimes_installed"))
+            .subtitle(&crate::t!("settings.runtime.install_from_available"))
+            .activatable(false)
+            .build();
+        placeholder.add_css_class("dim-label");
+        group.add(&placeholder);
+        rows.push(placeholder);
     }
 }
 

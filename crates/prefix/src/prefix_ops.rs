@@ -344,9 +344,8 @@ impl Manager {
         }
 
         // 1–2. Download latest DXVK + VKD3D
-        let api_key = store::Settings::load().and_then(|s| s.github_api_key);
         let (dxvk_dir, vkd3d_dir, dxvk_ver, vkd3d_ver) =
-            runtime::graphics::download_dxvk_vkd3d(progress, cancel, api_key.as_deref()).await?;
+            runtime::graphics::download_dxvk_vkd3d(progress, cancel, &crate::github_client()).await?;
 
         info!(
             "[prefix] downloaded DXVK {} and VKD3D-Proton {}",
@@ -564,8 +563,7 @@ impl Manager {
         }
 
         // 1. Download latest DXMT
-        let api_key = store::Settings::load().and_then(|s| s.github_api_key);
-        let (version, url) = runtime::graphics::fetch_dxmt_release(api_key.as_deref()).await?;
+        let (version, url) = runtime::graphics::fetch_dxmt_release(&crate::github_client()).await?;
 
         if let Some(ref cancel) = cancel {
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {

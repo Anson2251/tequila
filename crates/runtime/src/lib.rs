@@ -1,6 +1,7 @@
+pub mod anson2251;
 pub mod download;
+pub mod github;
 pub mod graphics;
-pub mod homebrew;
 pub mod kron4ek;
 
 use serde::{Deserialize, Serialize};
@@ -21,50 +22,17 @@ pub struct Runtime {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum RuntimeSource {
     System,
-    ManagedChannel {
-        channel: Channel,
-        installed_cask_version: String,
-    },
     ManagedVersion {
         source_url: String,
+        /// Version identifier for update checking, e.g. `"26.2.0"` or `"11.9"`.
+        /// Uses `#[serde(default)]` for backwards compat with older configs.
+        #[serde(default)]
+        version: String,
     },
     Imported {
         label: String,
         original_path: PathBuf,
     },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum Channel {
-    Stable,
-    Devel,
-    Staging,
-}
-
-impl Channel {
-    pub fn cask_name(&self) -> &'static str {
-        match self {
-            Channel::Stable => "wine-stable",
-            Channel::Devel => "wine@devel",
-            Channel::Staging => "wine@staging",
-        }
-    }
-
-    pub fn runtime_id(&self) -> &'static str {
-        match self {
-            Channel::Stable => "wine-stable",
-            Channel::Devel => "wine-devel",
-            Channel::Staging => "wine-staging",
-        }
-    }
-
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            Channel::Stable => "Stable",
-            Channel::Devel => "Devel",
-            Channel::Staging => "Staging",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -110,27 +78,33 @@ impl RuntimeManager {
         }
     }
 
-    pub fn register_channel(
+    /// Register a managed build from an external source (e.g. Anson2251, Kron4ek).
+    ///
+    /// `source_id` becomes the ID prefix (e.g. `"anson2251"` → id `anson2251-26.2.0`).
+    /// `display_name` is used for the runtime name (e.g. `"CrossOver"` → `"CrossOver 26.2.0"`).
+    pub fn register_managed_build(
         &mut self,
-        channel: Channel,
-        installed_cask_version: String,
+        source_id: &str,
+        display_name: &str,
+        version: &str,
+        source_url: String,
         bundle_dir: PathBuf,
     ) -> &Runtime {
-        let id = channel.runtime_id().to_string();
+        let id = format!("{}-{}", source_id, version);
         let wine_bin = discover_wine_binary(&bundle_dir);
-        let version = wine_bin
+        let wine_version = wine_bin
             .as_ref()
             .and_then(|b| run_wine_version(b))
-            .unwrap_or_else(|| "unknown".to_string());
+            .unwrap_or_else(|| version.to_string());
         self.runtimes.retain(|r| r.id != id);
         self.runtimes.push(Runtime {
             id: id.clone(),
-            name: format!("Wine ({})", channel.display_name()),
-            wine_version: version,
+            name: format!("{} {}", display_name, version),
+            wine_version,
             bundle_dir,
-            source: RuntimeSource::ManagedChannel {
-                channel,
-                installed_cask_version,
+            source: RuntimeSource::ManagedVersion {
+                source_url,
+                version: version.to_string(),
             },
             graphics: Vec::new(),
             installed_at: chrono::Utc::now().to_rfc3339(),
@@ -159,7 +133,10 @@ impl RuntimeManager {
             name: format!("Wine {}", version),
             wine_version,
             bundle_dir,
-            source: RuntimeSource::ManagedVersion { source_url },
+            source: RuntimeSource::ManagedVersion {
+                source_url,
+                version: version.to_string(),
+            },
             graphics: Vec::new(),
             installed_at: chrono::Utc::now().to_rfc3339(),
         });
@@ -283,6 +260,19 @@ impl Default for RuntimeManager {
     }
 }
 
+/// Returns a human-readable source label for a managed version URL.
+///
+/// Used by UI code to display where a runtime was downloaded from.
+pub fn managed_source_label(source_url: &str) -> &str {
+    if source_url.contains("Kron4ek") {
+        "Kron4ek"
+    } else if source_url.contains("crossover-foss-build") {
+        "Anson2251"
+    } else {
+        "Managed"
+    }
+}
+
 fn run_wine_version(wine_bin: &Path) -> Option<String> {
     let output = std::process::Command::new(wine_bin)
         .arg("--version")
@@ -314,7 +304,7 @@ pub fn discover_wine_binary(path: &Path) -> Option<PathBuf> {
         }
     }
     for entry in walkdir::WalkDir::new(path)
-        .max_depth(6)
+        .max_depth(10)
         .into_iter()
         .flatten()
     {

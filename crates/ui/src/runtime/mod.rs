@@ -1,5 +1,5 @@
 use adw::prelude::*;
-use prefix::runtime::{Channel, RuntimeManager, RuntimeSource};
+use prefix::runtime::{RuntimeManager, RuntimeSource};
 use relm4::{
     RelmWidgetExt, adw,
     component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
@@ -11,28 +11,14 @@ use tracker;
 
 #[tracker::track]
 pub struct RuntimeManagerModel {
-    downloading: bool,
-    download_progress: f64,
     #[tracker::do_not_track]
     list_box: gtk::ListBox,
     #[tracker::do_not_track]
     add_popover: gtk::Popover,
     #[tracker::do_not_track]
-    #[allow(dead_code)]
-    channel_combo: gtk::DropDown,
-    #[tracker::do_not_track]
-    progress_bar: gtk::ProgressBar,
-    #[tracker::do_not_track]
-    progress_label: gtk::Label,
-    #[tracker::do_not_track]
-    #[allow(dead_code)]
-    download_button: gtk::Button,
-    #[tracker::do_not_track]
-    download_stack: gtk::Stack,
+    menu_btn: gtk::MenuButton,
     #[tracker::do_not_track]
     count_label: gtk::Label,
-    #[tracker::do_not_track]
-    menu_btn: gtk::MenuButton,
 }
 
 #[derive(Debug)]
@@ -40,11 +26,6 @@ pub enum RuntimeManagerMsg {
     Refresh,
     SetDefault(String),
     RemoveRuntime(String),
-    ShowAddMenu,
-    StartDownload(Channel),
-    DownloadProgress(u64, u64),
-    DownloadComplete(RuntimeManager),
-    DownloadFailed(String),
     ImportRuntime,
     ImportFromPath(PathBuf),
     Close,
@@ -154,26 +135,9 @@ impl AsyncComponent for RuntimeManagerModel {
             });
         }
 
-        // Extract named widgets from the popover for model
-        let download_stack = add_popover
-            .child()
-            .and_then(|c| c.downcast::<gtk::Stack>().ok())
-            .unwrap_or_else(|| gtk::Stack::new());
-
-        // Find channel_combo, progress_bar, progress_label, download_button in download stack
-        let (channel_combo, progress_bar, progress_label, download_button) =
-            extract_download_widgets(&download_stack);
-
-        let model = RuntimeManagerModel {
-            downloading: false,
-            download_progress: 0.0,
+        let mut model = RuntimeManagerModel {
             list_box: widgets.list_box.clone(),
             add_popover,
-            channel_combo,
-            progress_bar,
-            progress_label,
-            download_button,
-            download_stack,
             count_label: widgets.count_label.clone(),
             menu_btn: widgets.menu_btn.clone(),
             tracker: 0,
@@ -224,88 +188,6 @@ impl AsyncComponent for RuntimeManagerModel {
                     update_count_label(&self.count_label, &rm);
                     emit_updated(&rm, &sender);
                 }
-            }
-            RuntimeManagerMsg::ShowAddMenu => {
-                self.download_stack.set_visible_child_name("download");
-            }
-            RuntimeManagerMsg::StartDownload(channel) => {
-                self.set_downloading(true);
-                self.menu_btn.set_sensitive(false);
-                self.progress_bar.set_visible(true);
-                self.progress_label.set_visible(true);
-                self.progress_label.set_label(&crate::t!("settings.runtime.starting_download"));
-                self.progress_bar.set_fraction(0.0);
-
-                let pm = AppService::global().prefix_manager().clone();
-                let s = sender.clone();
-
-                gtk::glib::spawn_future_local(async move {
-                    let progress: prefix::download::ProgressFn = Box::new({
-                        let s = s.clone();
-                        move |downloaded, total| {
-                            let _ = s.input(RuntimeManagerMsg::DownloadProgress(downloaded, total));
-                        }
-                    });
-
-                    match pm.download_channel_runtime(channel, progress).await {
-                        Ok(_runtime) => {
-                            let rm = pm.clone_runtime();
-                            let _ = s.input(RuntimeManagerMsg::DownloadComplete(rm));
-                        }
-                        Err(e) => {
-                            let _ = s.input(RuntimeManagerMsg::DownloadFailed(e.to_string()));
-                        }
-                    }
-                });
-            }
-            RuntimeManagerMsg::DownloadProgress(downloaded, total) => {
-                if total > 0 {
-                    let frac = downloaded as f64 / total as f64;
-                    self.set_download_progress(frac);
-                    self.progress_bar.set_fraction(frac);
-                    let mb = |b: u64| b as f64 / 1_048_576.0;
-                    self.progress_label.set_label(&crate::tf!(
-                        "settings.runtime.download_progress",
-                        "downloaded" => &format!("{:.1}", mb(downloaded)),
-                        "total" => &format!("{:.1}", mb(total)),
-                    ));
-                }
-            }
-            RuntimeManagerMsg::DownloadComplete(updated_rm) => {
-                let svc = AppService::global();
-                let pm = svc.prefix_manager_mut();
-                *pm.write_runtime() = updated_rm;
-                pm.save_runtime_state();
-
-                self.set_downloading(false);
-                self.set_download_progress(0.0);
-                self.menu_btn.set_sensitive(true);
-                self.progress_bar.set_visible(false);
-                self.progress_label.set_visible(false);
-                self.download_stack.set_visible_child_name("menu");
-                self.add_popover.popdown();
-
-                let rm = AppService::global()
-                    .prefix_manager()
-                    .clone_runtime();
-                populate_runtime_list(&self.list_box, &rm, sender.clone());
-                update_count_label(&self.count_label, &rm);
-                emit_updated(&rm, &sender);
-            }
-            RuntimeManagerMsg::DownloadFailed(err) => {
-                self.set_downloading(false);
-                self.set_download_progress(0.0);
-                self.menu_btn.set_sensitive(true);
-                self.progress_bar.set_visible(false);
-                self.progress_label.set_visible(false);
-                self.progress_label.set_label(&format!("{}", err));
-                self.download_stack.set_visible_child_name("menu");
-
-                let alert = adw::AlertDialog::new(Some(&crate::t!("settings.runtime.download_failed")), Some(&err));
-                alert.add_response("ok", &crate::t!("dialogs.ok"));
-                alert.set_default_response(Some("ok"));
-                alert.set_close_response("ok");
-                alert.choose(Some(root), None::<&gtk::gio::Cancellable>, |_| {});
             }
             RuntimeManagerMsg::ImportRuntime => {
                 self.add_popover.popdown();
@@ -368,8 +250,7 @@ impl AsyncComponent for RuntimeManagerModel {
 // ── Widget construction helpers ────────────────────────────────────────
 
 fn build_add_popover(sender: AsyncComponentSender<RuntimeManagerModel>) -> gtk::Popover {
-    // Menu page
-    let menu_page = gtk::Box::builder()
+    let box_ = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(6)
         .margin_top(10)
@@ -377,7 +258,7 @@ fn build_add_popover(sender: AsyncComponentSender<RuntimeManagerModel>) -> gtk::
         .margin_start(10)
         .margin_end(10)
         .build();
-    menu_page.append(
+    box_.append(
         &gtk::Label::builder()
             .label("Add Wine Runtime")
             .halign(gtk::Align::Start)
@@ -386,183 +267,20 @@ fn build_add_popover(sender: AsyncComponentSender<RuntimeManagerModel>) -> gtk::
             .build(),
     );
 
-    {
-        let s = sender.clone();
-        let btn = gtk::Button::builder()
-            .label("Download from Homebrew")
-            .halign(gtk::Align::Fill)
-            .css_classes(["suggested-action"])
-            .build();
-        btn.connect_clicked(move |_| {
-            s.input(RuntimeManagerMsg::ShowAddMenu);
-        });
-        menu_page.append(&btn);
-    }
-
-    {
-        let s = sender.clone();
-        let btn = gtk::Button::builder()
-            .label("Import from Disk")
-            .halign(gtk::Align::Fill)
-            .build();
-        btn.connect_clicked(move |_| {
-            s.input(RuntimeManagerMsg::ImportRuntime);
-        });
-        menu_page.append(&btn);
-    }
-
-    // Download page
-    let download_page = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(8)
-        .margin_top(10)
-        .margin_bottom(10)
-        .margin_start(10)
-        .margin_end(10)
+    let btn = gtk::Button::builder()
+        .label("Import from Disk")
+        .halign(gtk::Align::Fill)
         .build();
-    download_page.append(
-        &gtk::Label::builder()
-            .label("Download Wine Runtime")
-            .halign(gtk::Align::Start)
-            .css_classes(["heading"])
-            .build(),
-    );
-    download_page.append(
-        &gtk::Label::builder()
-            .label("Channel:")
-            .halign(gtk::Align::Start)
-            .build(),
-    );
-
-    let channel_combo = gtk::DropDown::from_strings(&[
-        "Stable (wine-stable)",
-        "Devel (wine@devel)",
-        "Staging (wine@staging)",
-    ]);
-    channel_combo.set_hexpand(true);
-    channel_combo.set_selected(0);
-    download_page.append(&channel_combo);
-
-    let progress_bar = gtk::ProgressBar::builder()
-        .visible(false)
-        .hexpand(true)
-        .build();
-    download_page.append(&progress_bar);
-
-    let progress_label = gtk::Label::builder()
-        .visible(false)
-        .halign(gtk::Align::Center)
-        .css_classes(["caption"])
-        .build();
-    download_page.append(&progress_label);
-
-    let button_box = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(6)
-        .halign(gtk::Align::End)
-        .margin_top(6)
-        .build();
-
-    {
-        let _stack_ref = gtk::Stack::new(); // placeholder, will find parent
-        let back_btn = gtk::Button::with_label("Back");
-        back_btn.connect_clicked(move |btn| {
-            // Walk up to find the Stack and switch to menu page
-            if let Some(stack) = btn
-                .parent()
-                .and_then(|p| p.parent())
-                .and_then(|p| p.downcast::<gtk::Stack>().ok())
-            {
-                stack.set_visible_child_name("menu");
-            }
-        });
-        button_box.append(&back_btn);
-    }
-
-    {
-        let s = sender.clone();
-        let combo = channel_combo.clone();
-        let download_btn = gtk::Button::builder()
-            .label("Download")
-            .css_classes(["suggested-action"])
-            .build();
-        download_btn.connect_clicked(move |_| {
-            let channel = match combo.selected() {
-                0 => Channel::Stable,
-                1 => Channel::Devel,
-                2 => Channel::Staging,
-                _ => Channel::Stable,
-            };
-            s.input(RuntimeManagerMsg::StartDownload(channel));
-        });
-        button_box.append(&download_btn);
-    }
-
-    download_page.append(&button_box);
-
-    // Stack holding both pages
-    let stack = gtk::Stack::new();
-    stack.set_transition_type(gtk::StackTransitionType::SlideLeftRight);
-    stack.add_named(&menu_page, Some("menu"));
-    stack.add_named(&download_page, Some("download"));
-    stack.set_visible_child_name("menu");
+    btn.connect_clicked(move |_| {
+        sender.input(RuntimeManagerMsg::ImportRuntime);
+    });
+    box_.append(&btn);
 
     let popover = gtk::Popover::new();
     popover.set_width_request(280);
-    popover.set_child(Some(&stack));
+    popover.set_child(Some(&box_));
 
     popover
-}
-
-/// Extract widget references from the download stack page.
-fn extract_download_widgets(
-    stack: &gtk::Stack,
-) -> (gtk::DropDown, gtk::ProgressBar, gtk::Label, gtk::Button) {
-    // Get the download page (second child of stack)
-    let download_page = stack
-        .first_child()
-        .and_then(|c| c.next_sibling())
-        .and_then(|c| c.downcast::<gtk::Box>().ok())
-        .unwrap_or_else(|| gtk::Box::default());
-
-    let mut children = Vec::new();
-    let mut child = download_page.first_child();
-    while let Some(c) = child {
-        child = c.next_sibling();
-        children.push(c);
-    }
-
-    // children[0] = heading label, [1] = "Channel:" label, [2] = channel_combo,
-    // [3] = progress_bar, [4] = progress_label, [5] = button_box
-    let channel_combo = children
-        .get(2)
-        .and_then(|c| c.clone().downcast::<gtk::DropDown>().ok())
-        .unwrap_or_else(|| gtk::DropDown::from_strings(&["Stable", "Devel", "Staging"]));
-    let progress_bar = children
-        .get(3)
-        .and_then(|c| c.clone().downcast::<gtk::ProgressBar>().ok())
-        .unwrap_or_else(|| gtk::ProgressBar::new());
-    let progress_label = children
-        .get(4)
-        .and_then(|c| c.clone().downcast::<gtk::Label>().ok())
-        .unwrap_or_else(|| gtk::Label::new(None));
-
-    // button_box children: [0] = back button, [1] = download button
-    let download_button = children
-        .get(5)
-        .and_then(|c| c.clone().downcast::<gtk::Box>().ok())
-        .and_then(|b| {
-            let mut btn = b.first_child();
-            // Skip back button
-            if let Some(ref first) = btn {
-                btn = first.next_sibling();
-            }
-            btn
-        })
-        .and_then(|c| c.downcast::<gtk::Button>().ok())
-        .unwrap_or_else(|| gtk::Button::new());
-
-    (channel_combo, progress_bar, progress_label, download_button)
 }
 
 // ── List population ────────────────────────────────────────────────────
@@ -593,17 +311,17 @@ fn populate_runtime_list(
 
         let source_str = match &runtime.source {
             RuntimeSource::System => "System (PATH)".to_string(),
-            RuntimeSource::ManagedChannel {
-                channel,
-                installed_cask_version,
+            RuntimeSource::ManagedVersion {
+                source_url,
+                version,
             } => {
-                format!(
-                    "Homebrew {} — cask {}",
-                    channel.display_name(),
-                    installed_cask_version
-                )
+                let label = prefix::runtime::managed_source_label(&source_url);
+                if version.is_empty() {
+                    format!("Managed ({})", label)
+                } else {
+                    format!("{} ({})", label, version)
+                }
             }
-            RuntimeSource::ManagedVersion { source_url: _ } => "Managed (versioned)".to_string(),
             RuntimeSource::Imported {
                 label,
                 original_path,

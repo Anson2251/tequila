@@ -4,34 +4,6 @@ use std::path::PathBuf;
 
 use crate::state;
 
-/// Download a channel-based runtime and install it.
-///
-/// This is a blocking operation — run it on a background thread.
-pub fn download_channel_runtime_blocking(
-    channel: runtime::Channel,
-    progress: runtime::download::ProgressFn,
-) -> std::result::Result<RuntimeManager, String> {
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| format!("Failed to create tokio runtime: {}", e))?;
-
-    rt.block_on(async {
-        let _ = progress(0, 0); // signal start
-
-        // Async download OUTSIDE the Manager lock
-        let bundle_dir = runtime::download::download_channel_runtime(&channel, &progress)
-            .await
-            .map_err(|e| e.to_string())?;
-        let cask = runtime::homebrew::fetch_cask(channel.cask_name())
-            .await
-            .map_err(|e| e.to_string())?;
-
-        // Lock Manager briefly for registration + save
-        let mgr = state::manager_write();
-        mgr.register_channel_runtime(channel, cask.version, bundle_dir);
-        Ok(mgr.clone_runtime())
-    })
-}
-
 /// Import a runtime from a local directory.
 pub fn import_runtime_from_path(
     source_path: &PathBuf,

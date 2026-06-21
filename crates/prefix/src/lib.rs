@@ -27,6 +27,20 @@ pub use registry::keys;
 pub use registry::{RegEditor, RegistryEditor, WineRegistry};
 pub use runtime;
 pub use runtime::download;
-pub use runtime::{Channel, Runtime, RuntimeManager, RuntimeSource};
+pub use runtime::{Runtime, RuntimeManager, RuntimeSource};
 pub use scan::{ApplicationScanner, IconCache};
 pub use store::{PrefixStore, Settings};
+
+// ── GitHub API client ────────────────────────────────────────────────
+
+use std::sync::Arc;
+
+/// Return a [`GitHubClient`] initialised from the current settings.
+///
+/// A new client is created on every call so that API-key changes are
+/// picked up immediately.  The struct is lightweight (`Option<String>`),
+/// so the allocation overhead is negligible.
+pub fn github_client() -> Arc<runtime::github::GitHubClient> {
+    let api_key = store::Settings::load().and_then(|s| s.github_api_key);
+    Arc::new(runtime::github::GitHubClient::new(api_key))
+}

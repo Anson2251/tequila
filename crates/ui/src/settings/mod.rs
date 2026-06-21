@@ -1,7 +1,7 @@
 use adw::prelude::*;
 use prefix::{
     GraphicsBackend,
-    runtime::{RuntimeManager, download, graphics as prefix_graphics},
+    runtime::{RuntimeManager, graphics as prefix_graphics},
 };
 use relm4::prelude::*;
 use service::AppService;
@@ -19,10 +19,6 @@ pub struct SettingsWindow {
     // Page subtitle data
     runtime_subtitle: String,
     graphics_subtitle: String,
-
-    // Managed download row controller for GStreamer
-    #[tracker::do_not_track]
-    gst_ctrl: AsyncController<managed_download_row::ManagedDownloadRow>,
 
     // NavigationView kept in model for push/pop actions in update()
     #[tracker::do_not_track]
@@ -47,9 +43,6 @@ pub enum SettingsMsg {
     RuntimeSubtitleChanged(String),
     GraphicsSubtitleChanged(String),
     RuntimesUpdated(RuntimeManager),
-
-    // Forwarded from GStreamer child component
-    GStreamerStatusChanged,
 
     // GitHub API key entry
     GithubKeyChanged(Option<String>),
@@ -164,20 +157,13 @@ impl AsyncComponent for SettingsWindow {
                     connect_activated => SettingsMsg::ShowRuntime,
                 },
                 adw::ActionRow {
+                    set_visible: cfg!(not(target_os = "macos")),
                     set_title: &crate::t!("settings.graphics_backends"),
                     set_activatable: true,
                     #[watch]
                     set_subtitle: &model.graphics_subtitle,
                     connect_activated => SettingsMsg::ShowGraphics,
                 },
-            },
-
-            #[name = "gst_group"]
-            adw::PreferencesGroup {
-                set_title: &crate::t!("settings.gstreamer"),
-                set_description: Some(&crate::t!("settings.gstreamer_desc")),
-                #[watch]
-                set_visible: cfg!(target_os = "macos"),
             },
 
             adw::PreferencesGroup {
@@ -337,38 +323,6 @@ impl AsyncComponent for SettingsWindow {
                 SettingsMsg::GraphicsSubtitleChanged(graphics_subtitle())
             });
 
-        // ── GStreamer managed download row (macOS only) ──
-        let gst_ctrl = managed_download_row::ManagedDownloadRow::builder()
-            .launch(managed_download_row::ManagedDownloadRowInit {
-                title: "GStreamer".into(),
-                check_status: Box::new(gst_initial_status),
-                check_update: None,
-                start_download: Box::new(|data_dir, progress, cancel| {
-                    Box::pin(async move {
-                        prefix::runtime::download::download_gstreamer(
-                            &data_dir,
-                            progress,
-                            Some(cancel),
-                        )
-                        .await
-                        .map(|_| ())
-                        .map_err(|e| e.to_string())
-                    })
-                }),
-                perform_remove: Box::new(|| {
-                    let gst_dir = prefix::runtime::download::runtimes_dir().join("gstreamer");
-                    if gst_dir.exists() {
-                        std::fs::remove_dir_all(&gst_dir).map_err(|e| e.to_string())
-                    } else {
-                        Ok(())
-                    }
-                }),
-                data_dir: data_dir.clone(),
-            })
-            .forward(sender.input_sender(), |_out| {
-                SettingsMsg::GStreamerStatusChanged
-            });
-
         // Create local widgets referenced by #[local_ref] in view!
         let prefs_page = adw::PreferencesPage::new();
 
@@ -377,7 +331,6 @@ impl AsyncComponent for SettingsWindow {
         let mut model = SettingsWindow {
             runtime_subtitle,
             graphics_subtitle: graphics_subtitle_str,
-            gst_ctrl,
             nav: placeholder_nav,
             runtime_ctrl,
             graphics_ctrl,
@@ -412,9 +365,6 @@ impl AsyncComponent for SettingsWindow {
                 back.set_visible(!is_root);
             });
         }
-
-        // Add GStreamer ManagedDownloadRow to its group (group declared in view!)
-        widgets.gst_group.add(model.gst_ctrl.widget());
 
         // Load initial GitHub API key from settings
         if let Some(key) = prefix::Settings::load().and_then(|s| s.github_api_key) {
@@ -481,13 +431,6 @@ impl AsyncComponent for SettingsWindow {
                 ));
             }
 
-            // ── Forwarded from GStreamer child component ──
-            SettingsMsg::GStreamerStatusChanged => {
-                // GStreamer component manages its own state internally.
-                // This message is available if the parent needs to react
-                // (e.g., to update a section-level summary).
-            }
-
             // ── GitHub API key ──
             SettingsMsg::GithubKeyChanged(value) => {
                 let mut settings =
@@ -496,6 +439,8 @@ impl AsyncComponent for SettingsWindow {
                 if let Err(e) = settings.save() {
                     log::error!("[settings] failed to save github_api_key: {}", e);
                 }
+                // The API key change will be picked up on the next
+                // `prefix::github_client()` call — no explicit reset needed.
             }
             // ── Language ──
             SettingsMsg::LanguageChanged(idx) => {
@@ -534,72 +479,4 @@ impl AsyncComponent for SettingsWindow {
     }
 }
 
-// ── GStreamer helpers ───────────────────────────────────────────────────
 
-fn gst_initial_status() -> managed_download_row::DownloadRowStatus {
-    // Check managed installation (has version.txt)
-    let gst_dir = download::runtimes_dir().join("gstreamer");
-    let managed = std::fs::read_to_string(gst_dir.join("version.txt"))
-        .ok()
-        .and_then(|v| {
-            let t = v.trim().to_string();
-            if t.is_empty() { None } else { Some(t) }
-        });
-
-    if let Some(ver) = managed {
-        return managed_download_row::DownloadRowStatus {
-            installed: true,
-            managed: true,
-            status_text: crate::tf!("settings.gstreamer.installed", "version" => &ver),
-        };
-    }
-
-    // macOS .app bundles inherit a minimal PATH — brew, which, and
-    // /etc/paths.d/ entries are NOT available.  Temporarily extend PATH
-    // with every known GStreamer install location and delegate to `which`.
-    let extra_paths = if cfg!(target_arch = "aarch64") {
-        "/opt/homebrew/bin:/Library/Frameworks/GStreamer.framework/Commands:/opt/local/bin"
-    } else {
-        "/usr/local/bin:/Library/Frameworks/GStreamer.framework/Commands:/opt/local/bin"
-    };
-
-    let original_path = std::env::var("PATH").ok();
-    let extended_path = match &original_path {
-        Some(p) if !p.is_empty() => format!("{}:{}", extra_paths, p),
-        _ => extra_paths.to_string(),
-    };
-    // SAFETY: called once at startup (init) before any other threads;
-    // the temporary PATH mutation is confined to this single call.
-    unsafe {
-        std::env::set_var("PATH", &extended_path);
-    }
-
-    let found = std::process::Command::new("which")
-        .arg("gst-launch-1.0")
-        .output()
-        .ok()
-        .and_then(|o| if o.status.success() { Some(()) } else { None })
-        .is_some();
-
-    // SAFETY: same reasoning — single-threaded context, restoring PATH.
-    unsafe {
-        match &original_path {
-            Some(p) => std::env::set_var("PATH", p),
-            None => std::env::remove_var("PATH"),
-        }
-    }
-
-    if found {
-        return managed_download_row::DownloadRowStatus {
-            installed: true,
-            managed: false,
-            status_text: crate::t!("settings.gstreamer.installed_system"),
-        };
-    }
-
-    managed_download_row::DownloadRowStatus {
-        installed: false,
-        managed: false,
-        status_text: crate::t!("settings.gstreamer.not_installed"),
-    }
-}

@@ -91,6 +91,7 @@ pub struct ManagedDownloadRow {
     progress: f64,
     status_text: String,
     downloading: bool,
+    cancellable: bool,
 
     // Speed tracking helpers (for large downloads like GStreamer)
     #[tracker::do_not_track]
@@ -144,7 +145,7 @@ impl AsyncComponent for ManagedDownloadRow {
                 #[name = "install_btn"]
                 gtk::Button {
                     set_icon_name: "document-save-symbolic",
-                    set_tooltip: "Install",
+                    set_tooltip: &crate::t!("settings.runtime.install_btn"),
                     add_css_class: "flat",
                     set_valign: gtk::Align::Center,
                     add_css_class: "circular",
@@ -157,7 +158,7 @@ impl AsyncComponent for ManagedDownloadRow {
                 #[name = "remove_btn"]
                 gtk::Button {
                     set_icon_name: "user-trash-symbolic",
-                    set_tooltip: "Remove",
+                    set_tooltip: &crate::t!("settings.runtime.remove_btn"),
                     add_css_class: "flat",
                     set_valign: gtk::Align::Center,
                     add_css_class: "circular",
@@ -187,9 +188,11 @@ impl AsyncComponent for ManagedDownloadRow {
                     #[name = "cancel_btn"]
                     gtk::Button {
                         set_icon_name: "window-close-symbolic",
-                        set_tooltip: "Cancel download",
+                        set_tooltip: &crate::t!("settings.runtime.cancel_btn"),
                         add_css_class: "flat",
                         add_css_class: "circular",
+                        #[watch]
+                        set_sensitive: model.cancellable,
                         connect_clicked => ManagedDownloadRowMsg::Cancel,
                     },
                 },
@@ -215,6 +218,7 @@ impl AsyncComponent for ManagedDownloadRow {
             progress: 0.0,
             status_text: status.status_text,
             downloading: false,
+            cancellable: false,
             cancel_flag: None,
             last_bytes: 0,
             last_time: Instant::now(),
@@ -243,14 +247,14 @@ impl AsyncComponent for ManagedDownloadRow {
             // ── Install: confirmation dialog ──
             ManagedDownloadRowMsg::Install => {
                 let alert = adw::AlertDialog::new(
-                    Some(&format!("Install {}?", self.title)),
-                    Some(&format!(
-                        "This will download and install {}. Continue?",
-                        self.title
+                    Some(&crate::tf!("settings.runtime.install_confirm_title", "name" => &self.title)),
+                    Some(&crate::tf!(
+                        "settings.runtime.install_confirm_body",
+                        "name" => &self.title,
                     )),
                 );
-                alert.add_response("cancel", "Cancel");
-                alert.add_response("install", "Install");
+                alert.add_response("cancel", &crate::t!("dialogs.cancel"));
+                alert.add_response("install", &crate::t!("settings.runtime.install_btn"));
                 alert.set_response_appearance("install", adw::ResponseAppearance::Suggested);
                 alert.set_default_response(Some("install"));
                 alert.set_close_response("cancel");
@@ -269,8 +273,9 @@ impl AsyncComponent for ManagedDownloadRow {
             // ── Actual download start ──
             ManagedDownloadRowMsg::BeginInstall => {
                 self.set_downloading(true);
+                self.set_cancellable(true);
                 self.set_progress(0.0);
-                self.set_status_text("Starting download...".into());
+                self.set_status_text(crate::t!("settings.runtime.starting_download"));
                 self.last_bytes = 0;
                 self.last_time = Instant::now();
 
@@ -335,21 +340,23 @@ impl AsyncComponent for ManagedDownloadRow {
                         if total > 0 {
                             self.set_progress((downloaded as f64 / total as f64) * 0.8);
                             let speed_mb = self.current_speed / 1_048_576.0;
-                            self.set_status_text(format!(
-                                "Downloading — {:.1} / {:.1} MB ({:.1} MB/s)",
-                                mb(downloaded),
-                                mb(total),
-                                speed_mb
+                            self.set_status_text(crate::tf!(
+                                "settings.runtime.download_progress",
+                                "downloaded" => &format!("{:.1}", mb(downloaded)),
+                                "total" => &format!("{:.1}", mb(total)),
+                                "speed" => &format!("{:.1}", speed_mb),
                             ));
                         }
                     }
                     InstallPhase::Verify => {
+                        self.set_cancellable(false);
                         self.set_progress(0.80 + (downloaded as f64 / total.max(1) as f64) * 0.10);
-                        self.set_status_text("Verifying checksum...".into());
+                        self.set_status_text(crate::t!("settings.runtime.verifying_checksum"));
                     }
                     InstallPhase::Extract => {
+                        self.set_cancellable(false);
                         self.set_progress(0.90 + (downloaded as f64 / total.max(1) as f64) * 0.10);
-                        self.set_status_text("Unpacking...".into());
+                        self.set_status_text(crate::t!("settings.runtime.unpacking"));
                     }
                 }
             }
@@ -357,6 +364,7 @@ impl AsyncComponent for ManagedDownloadRow {
             // ── Complete ──
             ManagedDownloadRowMsg::Complete => {
                 self.cancel_flag = None;
+                self.set_cancellable(false);
                 let status = (self.check_status)();
                 self.set_installed(status.installed);
                 self.set_managed(status.managed);
@@ -370,6 +378,7 @@ impl AsyncComponent for ManagedDownloadRow {
             // ── Failed ──
             ManagedDownloadRowMsg::Failed(err) => {
                 self.cancel_flag = None;
+                self.set_cancellable(false);
                 let status = (self.check_status)();
                 self.set_installed(status.installed);
                 self.set_managed(status.managed);
@@ -378,8 +387,8 @@ impl AsyncComponent for ManagedDownloadRow {
 
                 let _ = sender.output(ManagedDownloadRowOutput::DownloadFailed(err.clone()));
 
-                let alert = adw::AlertDialog::new(Some("Download Failed"), Some(&err));
-                alert.add_response("ok", "OK");
+                let alert = adw::AlertDialog::new(Some(&crate::t!("settings.runtime.download_failed")), Some(&err));
+                alert.add_response("ok", &crate::t!("dialogs.ok"));
                 alert.set_default_response(Some("ok"));
                 alert.set_close_response("ok");
                 alert.choose(Some(root), None::<&gtk::gio::Cancellable>, |_| {});
@@ -388,8 +397,8 @@ impl AsyncComponent for ManagedDownloadRow {
             // ── Remove ──
             ManagedDownloadRowMsg::Remove => {
                 if let Err(e) = (self.perform_remove)() {
-                    let alert = adw::AlertDialog::new(Some("Failed to Remove"), Some(&e));
-                    alert.add_response("ok", "OK");
+                    let alert = adw::AlertDialog::new(Some(&crate::t!("settings.runtime.remove_failed")), Some(&e));
+                    alert.add_response("ok", &crate::t!("dialogs.ok"));
                     alert.set_default_response(Some("ok"));
                     alert.set_close_response("ok");
                     alert.choose(Some(root), None::<&gtk::gio::Cancellable>, |_| {});

@@ -262,6 +262,7 @@ impl SimpleComponent for PrefixConfigModel {
 
                 // ══ Graphics ══
                 adw::PreferencesGroup {
+                    set_visible: cfg!(not(target_os = "macos")),
                     set_title: &crate::t!("prefix.graphics"),
 
                     adw::ActionRow {

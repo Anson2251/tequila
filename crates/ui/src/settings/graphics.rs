@@ -15,8 +15,6 @@ pub struct GraphicsSettings {
     rows: Vec<adw::ActionRow>,
     #[tracker::do_not_track]
     available_ctrls: Vec<AsyncController<managed_download_row::ManagedDownloadRow>>,
-    #[tracker::do_not_track]
-    d3dmetal_dialog: Option<Controller<D3DMetalImportDialog>>,
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────
@@ -24,7 +22,6 @@ pub struct GraphicsSettings {
 #[derive(Debug)]
 pub enum GraphicsSettingsMsg {
     RefreshInstalled,
-    ShowD3DMetalImportDialog(std::sync::mpsc::Sender<Option<String>>),
 }
 
 #[derive(Debug)]
@@ -75,7 +72,6 @@ impl AsyncComponent for GraphicsSettings {
             installed_group: placeholder_group,
             rows: Vec::new(),
             available_ctrls: Vec::new(),
-            d3dmetal_dialog: None,
             tracker: 0,
         };
 
@@ -95,28 +91,12 @@ impl AsyncComponent for GraphicsSettings {
         &mut self,
         msg: Self::Input,
         sender: AsyncComponentSender<Self>,
-        root: &Self::Root,
+        _root: &Self::Root,
     ) {
         match msg {
             GraphicsSettingsMsg::RefreshInstalled => {
                 refresh_graphics_list(&self.installed_group, &mut self.rows);
                 let _ = sender.output(GraphicsSettingsOutput::Changed);
-            }
-            GraphicsSettingsMsg::ShowD3DMetalImportDialog(tx) => {
-                // Lazily initialize the dialog on first use
-                if self.d3dmetal_dialog.is_none() {
-                    if let Some(parent) = root.root().and_then(|s| s.downcast::<gtk::Window>().ok())
-                    {
-                        let skip = runtime::graphics::graphics_dir().join(".d3dmetal_skip_dialog");
-                        let ctrl = D3DMetalImportDialog::builder()
-                            .launch((parent, skip))
-                            .detach();
-                        self.d3dmetal_dialog = Some(ctrl);
-                    }
-                }
-                if let Some(ref ctrl) = self.d3dmetal_dialog {
-                    let _ = ctrl.sender().send(D3DMetalImportMsg::Show(tx));
-                }
             }
         }
     }
@@ -205,145 +185,15 @@ fn make_remove_backends(
 
 // ── Available backends — each gets its own ManagedDownloadRow ───────────
 
+#[cfg_attr(target_os = "macos", allow(unused_variables, unused_mut))]
 fn build_available_graphics_rows(
     group: &adw::PreferencesGroup,
     sender: &AsyncComponentSender<GraphicsSettings>,
 ) -> Vec<AsyncController<managed_download_row::ManagedDownloadRow>> {
     let mut ctrls: Vec<AsyncController<managed_download_row::ManagedDownloadRow>> = Vec::new();
 
-    #[cfg(target_os = "macos")]
-    {
-        // ── DXMT ──
-        let dxmt_ctrl = managed_download_row::ManagedDownloadRow::builder()
-            .launch(managed_download_row::ManagedDownloadRowInit {
-                title: crate::t!("settings.graphics.dxmt"),
-                check_status: make_check_status(
-                    "dxmt-",
-                    crate::t!("settings.graphics.installed_status"),
-                    crate::t!("settings.graphics.dxmt_desc"),
-                ),
-                check_update: None,
-                start_download: Box::new(|_data_dir, progress, cancel| {
-                    Box::pin(async move {
-                        let api_key = prefix::Settings::load().and_then(|s| s.github_api_key);
-                        let (version, url) =
-                            runtime::graphics::fetch_dxmt_release(api_key.as_deref())
-                                .await
-                                .map_err(|e| e.to_string())?;
-                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                            return Err(crate::t!("settings.graphics.cancelled").into());
-                        }
-                        let simple_prog: runtime::download::ProgressFn = Box::new(move |d, t| {
-                            progress(d, t, runtime::download::InstallPhase::Download);
-                        });
-                        runtime::graphics::download_dxmt(&version, &url, &simple_prog)
-                            .await
-                            .map_err(|e| e.to_string())?;
-                        Ok(())
-                    })
-                }),
-                perform_remove: make_remove_backends("dxmt-"),
-                data_dir: Default::default(),
-            })
-            .forward(sender.input_sender(), |_out| {
-                GraphicsSettingsMsg::RefreshInstalled
-            });
-        group.add(dxmt_ctrl.widget());
-        ctrls.push(dxmt_ctrl);
-
-        // ── D3DMetal (via GPTK) — requires manual download from Apple Developer ──
-        let d3d_gs_sender = sender.input_sender();
-        let d3d_ctrl = managed_download_row::ManagedDownloadRow::builder()
-            .launch(managed_download_row::ManagedDownloadRowInit {
-                title: crate::t!("settings.graphics.d3dmetal"),
-                check_status: make_check_status(
-                    "d3dmetal-",
-                    crate::t!("settings.graphics.installed_status"),
-                    crate::t!("settings.graphics.d3dmetal_desc"),
-                ),
-                check_update: None,
-                start_download: Box::new({
-                    let gs_sender = d3d_gs_sender.clone();
-                    move |_data_dir, _progress, cancel| {
-                        let gs = gs_sender.clone();
-                        Box::pin(async move {
-                            use std::sync::atomic::Ordering;
-                            use std::sync::mpsc::{TryRecvError, channel};
-                            use std::time::Duration;
-
-                            let (tx, rx) = channel::<Option<String>>();
-
-                            // Tell GraphicsSettings to show the dialog
-                            if gs
-                                .send(GraphicsSettingsMsg::ShowD3DMetalImportDialog(tx))
-                                .is_err()
-                            {
-                                return Err(crate::t!("settings.graphics.open_import_failed").into());
-                            }
-
-                            // Poll for user action (folder path or cancel)
-                            let selected = loop {
-                                match rx.try_recv() {
-                                    Ok(Some(path)) => break path,
-                                    Ok(None) => return Err(crate::t!("settings.graphics.import_cancelled").into()),
-                                    Err(TryRecvError::Empty) => {
-                                        if cancel.load(Ordering::Relaxed) {
-                                            return Err(crate::t!("settings.graphics.cancelled").into());
-                                        }
-                                        gtk::glib::timeout_future(Duration::from_millis(100)).await;
-                                    }
-                                    Err(TryRecvError::Disconnected) => {
-                                        return Err(crate::t!("settings.graphics.import_cancelled").into());
-                                    }
-                                }
-                            };
-
-                            // Import (blocking) on background thread
-                            let path = std::path::PathBuf::from(&selected);
-                            let (tx_import, rx_import) = std::sync::mpsc::channel();
-                            std::thread::spawn(move || {
-                                let result =
-                                    if path.extension().map(|e| e == "dmg").unwrap_or(false) {
-                                        runtime::graphics::import_d3dmetal_from_dmg(&path)
-                                            .map(|_| ())
-                                            .map_err(|e| e.to_string())
-                                    } else {
-                                        runtime::graphics::import_d3dmetal_from_folder(&path)
-                                            .map(|_| ())
-                                            .map_err(|e| e.to_string())
-                                    };
-                                let _ = tx_import.send(result);
-                            });
-
-                            // Poll for completion
-                            let result = loop {
-                                match rx_import.try_recv() {
-                                    Ok(r) => break r,
-                                    Err(TryRecvError::Empty) => {
-                                        if cancel.load(Ordering::Relaxed) {
-                                            return Err(crate::t!("settings.graphics.cancelled").into());
-                                        }
-                                        gtk::glib::timeout_future(Duration::from_millis(200)).await;
-                                    }
-                                    Err(_) => {
-                                        break Err(crate::t!("settings.graphics.import_crashed").into());
-                                    }
-                                }
-                            };
-                            result?;
-                            Ok(())
-                        })
-                    }
-                }),
-                perform_remove: make_remove_backends("d3dmetal-"),
-                data_dir: Default::default(),
-            })
-            .forward(sender.input_sender(), |_out| {
-                GraphicsSettingsMsg::RefreshInstalled
-            });
-        group.add(d3d_ctrl.widget());
-        ctrls.push(d3d_ctrl);
-    }
+    // macOS: DXMT and D3DMetal are no longer offered as separate downloads.
+    // The Anson2251 crossover-foss build bundles DXMT directly (see Wine Runtime settings).
 
     #[cfg(target_os = "linux")]
     {
@@ -363,10 +213,8 @@ fn build_available_graphics_rows(
                             progress(d, t, runtime::download::InstallPhase::Download);
                         });
 
-                        let api_key = prefix::Settings::load().and_then(|s| s.github_api_key);
-
                         let (v_version, v_url) =
-                            runtime::graphics::fetch_dxvk_release(api_key.as_deref())
+                            runtime::graphics::fetch_dxvk_release(&prefix::github_client())
                                 .await
                                 .map_err(|e| e.to_string())?;
                         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
@@ -385,7 +233,7 @@ fn build_available_graphics_rows(
                             return Err(crate::t!("settings.graphics.cancelled").into());
                         }
                         let (v3_version, v3_url) =
-                            runtime::graphics::fetch_vkd3d_release(api_key.as_deref())
+                            runtime::graphics::fetch_vkd3d_release(&prefix::github_client())
                                 .await
                                 .map_err(|e| e.to_string())?;
                         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
@@ -417,147 +265,4 @@ fn build_available_graphics_rows(
     ctrls
 }
 
-// ═══ D3DMetal Import Dialog — Apple Developer → pick folder → import ═════
 
-struct D3DMetalImportDialog {
-    skip_path: std::path::PathBuf,
-    result_tx: Option<std::sync::mpsc::Sender<Option<String>>>,
-    dialog: gtk::Window,
-    info_label: gtk::Label,
-    checkbox: gtk::CheckButton,
-}
-
-#[derive(Debug)]
-enum D3DMetalImportMsg {
-    Show(std::sync::mpsc::Sender<Option<String>>),
-    SelectDmg,
-    Cancel,
-}
-
-#[relm4::component]
-impl SimpleComponent for D3DMetalImportDialog {
-    type Init = (gtk::Window, std::path::PathBuf);
-    type Input = D3DMetalImportMsg;
-    type Output = ();
-
-    view! {
-        #[name = "dialog"]
-        gtk::Window {
-            set_title: Some(&crate::t!("settings.graphics.d3dmetal_import")),
-            set_modal: true,
-            set_default_width: 440,
-            set_transient_for: Some(&parent),
-
-            gtk::Box {
-                set_orientation: gtk::Orientation::Vertical,
-                set_spacing: 8,
-                set_margin_all: 16,
-
-                #[name = "info_label"]
-                gtk::Label {
-                    set_use_markup: true,
-                    set_label: &crate::t!("settings.graphics.d3dmetal_import_info"),
-                    set_wrap: true,
-                    set_halign: gtk::Align::Start,
-                    set_selectable: false,
-                    set_visible: false,
-                },
-
-                #[name = "checkbox"]
-                gtk::CheckButton {
-                    set_label: Some(&crate::t!("settings.graphics.dont_show_again")),
-                    set_margin_bottom: 8,
-                },
-
-                gtk::Box {
-                    set_orientation: gtk::Orientation::Horizontal,
-                    set_halign: gtk::Align::End,
-                    set_spacing: 8,
-                    set_margin_top: 8,
-
-                    gtk::Button {
-                        set_label: &crate::t!("settings.graphics.cancel"),
-                        connect_clicked => D3DMetalImportMsg::Cancel,
-                    },
-                    gtk::Button {
-                        set_label: &crate::t!("settings.graphics.select_dmg"),
-                        add_css_class: "suggested-action",
-                        connect_clicked => D3DMetalImportMsg::SelectDmg,
-                    },
-                },
-            },
-        }
-    }
-
-    fn init(
-        (parent, skip_path): Self::Init,
-        _root: Self::Root,
-        sender: ComponentSender<Self>,
-    ) -> ComponentParts<Self> {
-        let widgets = view_output!();
-
-        // Intercept window close (red X) — treat as cancel
-        let s = sender.clone();
-        widgets.dialog.connect_close_request(move |_| {
-            let _ = s.input(D3DMetalImportMsg::Cancel);
-            gtk::glib::Propagation::Stop
-        });
-
-        let model = D3DMetalImportDialog {
-            skip_path,
-            result_tx: None,
-            dialog: widgets.dialog.clone(),
-            info_label: widgets.info_label.clone(),
-            checkbox: widgets.checkbox.clone(),
-        };
-
-        ComponentParts { model, widgets }
-    }
-
-    fn update(&mut self, msg: Self::Input, _sender: ComponentSender<Self>) {
-        match msg {
-            D3DMetalImportMsg::Show(tx) => {
-                self.result_tx = Some(tx);
-                let show_info = !self.skip_path.exists();
-                if show_info {
-                    self.info_label.set_visible(true);
-                    self.checkbox.set_visible(true);
-                    self.dialog.present();
-                } else {
-                    // "Don't show again" — skip the dialog entirely,
-                    // go straight to the file picker.
-                    self.start_pick_file();
-                }
-            }
-            D3DMetalImportMsg::SelectDmg => {
-                self.start_pick_file();
-            }
-            D3DMetalImportMsg::Cancel => {
-                if let Some(tx) = self.result_tx.take() {
-                    let _ = tx.send(None);
-                }
-                self.dialog.set_visible(false);
-            }
-        }
-    }
-}
-
-impl D3DMetalImportDialog {
-    fn start_pick_file(&mut self) {
-        if let Some(tx) = self.result_tx.take() {
-            let skip = self.skip_path.clone();
-            let dont_ask = self.checkbox.is_active();
-            let dlg = self.dialog.clone();
-            crate::dialogs::pick_file(&self.dialog, &crate::t!("settings.graphics.select_gptk_dmg"), &["dmg"], move |path| {
-                if let Some(p) = path {
-                    if dont_ask {
-                        let _ = std::fs::write(&skip, "1");
-                    }
-                    let _ = tx.send(Some(p));
-                }
-                // if cancelled, tx drops (receiver gets Disconnected)
-                dlg.set_visible(false);
-            });
-        }
-    }
-}

@@ -6,19 +6,6 @@
 //! and picks the correct architecture asset for the current system.
 
 use base::error::{PrefixError, Result};
-use serde::Deserialize;
-
-#[derive(Debug, Deserialize)]
-struct GitHubRelease {
-    tag_name: String,
-    assets: Vec<GitHubAsset>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GitHubAsset {
-    name: String,
-    browser_download_url: String,
-}
 
 /// A single Wine build published by Kron4ek.
 #[derive(Debug, Clone)]
@@ -55,7 +42,7 @@ pub fn system_arch_suffix() -> Option<&'static str> {
 /// sorted with vanilla first and newest versions on top.
 ///
 /// * `api_key` — optional GitHub Personal Access Token to avoid rate-limiting.
-pub async fn fetch_all_builds(api_key: Option<&str>) -> Result<Vec<WineBuild>> {
+pub async fn fetch_all_builds(client: &crate::github::GitHubClient) -> Result<Vec<WineBuild>> {
     let arch_suffix = system_arch_suffix().ok_or_else(|| {
         PrefixError::Process(format!(
             "Unsupported CPU architecture '{}'. Kron4ek/Wine-Builds only provides \
@@ -64,33 +51,7 @@ pub async fn fetch_all_builds(api_key: Option<&str>) -> Result<Vec<WineBuild>> {
         ))
     })?;
 
-    let url = "https://api.github.com/repos/Kron4ek/Wine-Builds/releases?per_page=100";
-
-    let response = crate::graphics::github_api_get(url, api_key).await?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let body_text = response.text().await.unwrap_or_default();
-        let msg = serde_json::from_str::<serde_json::Value>(&body_text)
-            .ok()
-            .and_then(|v| v.get("message")?.as_str().map(|s| s.to_string()))
-            .unwrap_or_else(|| format!("HTTP {}", status));
-        return Err(PrefixError::Process(format!(
-            "Failed to fetch Kron4ek/Wine-Builds release information: {}\n\n\
-             If you are using a VPN or proxy, try switching to a different node \
-             or disabling it temporarily, as shared IPs are often rate-limited \
-             by GitHub.",
-            msg,
-        )));
-    }
-
-    let releases: Vec<GitHubRelease> = response.json().await.map_err(|e| {
-        PrefixError::Process(format!(
-            "Failed to parse Kron4ek/Wine-Builds release data: {}. \
-             If this persists, the release format may have changed.",
-            e,
-        ))
-    })?;
+    let releases = client.fetch_all_releases("Kron4ek", "Wine-Builds", Some(100)).await?;
 
     let mut builds = Vec::new();
 

@@ -136,6 +136,7 @@ impl SimpleComponent for CreatePrefixDialog {
                 },
 
                 gtk::Box {
+                    set_visible: cfg!(not(target_os = "macos")),
                     set_hexpand: true,
                     set_spacing: 10,
                     set_margin_top: 10,
@@ -241,10 +242,13 @@ impl SimpleComponent for CreatePrefixDialog {
                         .unwrap_or_else(|| rm.default_id.clone())
                 };
 
+                #[cfg(not(target_os = "macos"))]
                 let selected_backend = {
                     let i = self.graphics_combo.selected() as usize;
                     self.graphics_backends.get(i).cloned().unwrap_or(None)
                 };
+                #[cfg(target_os = "macos")]
+                let selected_backend: Option<GraphicsBackend> = None;
 
                 // Show progress, disable inputs
                 self.name_entry.set_sensitive(false);
