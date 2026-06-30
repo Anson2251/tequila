@@ -25,6 +25,9 @@ pub type DownloadProgress = Box<dyn Fn(u64, u64) + Send>;
 pub struct GitHubRelease {
     /// Tag name, e.g. `"11.9"` or `"v26.2.0"`.
     pub tag_name: String,
+    /// Whether this is a pre-release (GitHub pre-release flag).
+    #[serde(default)]
+    pub prerelease: bool,
     /// Assets attached to this release.
     pub assets: Vec<GitHubAsset>,
 }

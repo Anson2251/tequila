@@ -244,6 +244,7 @@
   "settings.runtime.fetch_failed": "Failed to fetch available Wine versions",
   "settings.runtime.imported_label": "Imported: {name} ({version})",
   "settings.runtime.anson2251_title": "CrossOver {version}",
+  "settings.runtime.prerelease_badge": "Pre-release",
   "settings.runtime.anson2251_desc": "Includes DXMT {dxmt}",
   "settings.runtime.installed_anson2251": "✓ CrossOver {version} installed",
   "settings.runtime.installed_format": "Wine {version} ({date})",

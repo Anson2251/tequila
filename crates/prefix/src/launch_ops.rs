@@ -82,11 +82,11 @@ impl Manager {
         let config = self.load_or_create_config(prefix_path, dir_name, &None)?;
 
         // Check winecfg is available before spawning
-        self.check_wine_available("winecfg", &config)?;
+        self.check_wine_available("wine", &config)?;
 
         info!("[launch] opening winecfg for prefix '{}'", config.name);
         let child = self
-            .build_wine_command_for_exe("winecfg", &config, prefix_path)
+            .build_wine_command_with_args(&["winecfg"], &config, prefix_path)
             .current_dir(prefix_path)
             .spawn()
             .map_err(|e| PrefixError::Process(format!("Failed to run winecfg: {}", e)))?;

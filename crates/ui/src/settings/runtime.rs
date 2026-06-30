@@ -276,15 +276,15 @@ async fn build_available_channels(
 ) -> Vec<AsyncController<managed_download_row::ManagedDownloadRow>> {
     let mut ctrls: Vec<AsyncController<managed_download_row::ManagedDownloadRow>> = Vec::new();
 
-    // ── Fetch the latest crossover-foss release from GitHub ────────────
-    let release = match prefix::runtime::anson2251::fetch_latest_release(
+    // ── Fetch all crossover-foss releases from GitHub ───────────────
+    let releases = match prefix::runtime::anson2251::fetch_all_releases(
         &prefix::github_client(),
     )
     .await
     {
         Ok(r) => r,
         Err(e) => {
-            log::error!("[runtime] failed to fetch crossover-foss release: {}", e);
+            log::error!("[runtime] failed to fetch crossover-foss releases: {}", e);
             let row = adw::ActionRow::builder()
                 .title(&crate::t!("settings.runtime.fetch_failed"))
                 .subtitle(&format!("{}", e))
@@ -294,165 +294,173 @@ async fn build_available_channels(
         }
     };
 
-    let runtime_id = format!("anson2251-{}", release.version);
-    let display_title =
-        crate::tf!("settings.runtime.anson2251_title", "version" => &release.version);
+    for release in releases {
+        let runtime_id = format!("anson2251-{}", release.version);
+        let display_title =
+            crate::tf!("settings.runtime.anson2251_title", "version" => &release.version);
+        let badge = if release.is_prerelease {
+            Some(crate::t!("settings.runtime.prerelease_badge"))
+        } else {
+            None
+        };
 
-    // ── check_status ──
-    let check_id = runtime_id.clone();
-    let chk_version = release.version.clone();
-    let dxmt_version = release.dxmt_version.clone();
-    let check_status = Box::new(move || {
-        let dir = prefix::runtime::download::runtimes_dir().join(&check_id);
-        let installed = dir.is_dir();
-        managed_download_row::DownloadRowStatus {
-            installed,
-            managed: installed,
-            status_text: if installed {
-                crate::tf!("settings.runtime.installed_anson2251", "version" => &chk_version)
-            } else {
-                crate::tf!("settings.runtime.anson2251_desc", "dxmt" => &dxmt_version)
-            },
-        }
-    });
-
-    // ── start_download ──
-    let dl_sender = sender.clone();
-    let dl_asset = release.asset.clone();
-    let dl_version = release.version.clone();
-    let start_download: managed_download_row::DownloadFn = Box::new(
-        move |_data_dir: PathBuf,
-              progress: prefix::runtime::download::PhaseProgressFn,
-              cancel: std::sync::Arc<std::sync::atomic::AtomicBool>| {
-            let s = dl_sender.clone();
-            let asset = dl_asset.clone();
-            let ver = dl_version.clone();
-            Box::pin(async move {
-                let (tx, rx) = std::sync::mpsc::channel::<Result<RuntimeManager, String>>();
-
-                let cancel_for_thread = cancel.clone();
-                let shared_progress =
-                    std::sync::Arc::new(std::sync::Mutex::new(progress));
-                std::thread::spawn(move || {
-                    let rt = tokio::runtime::Runtime::new()
-                        .expect("Failed to create tokio runtime");
-
-                    let result: Result<RuntimeManager, String> = rt.block_on(async {
-                        // 1. Download + verify via the shared GitHub client
-                        let client = prefix::github_client();
-                        let download_dir = prefix::runtime::download::runtimes_dir()
-                            .join(format!(".dl-{}", &ver));
-                        std::fs::create_dir_all(&download_dir)
-                            .map_err(|e| format!("Failed to create temp dir: {}", e))?;
-                        let dl_prog: prefix::runtime::github::DownloadProgress = {
-                            let sp = shared_progress.clone();
-                            Box::new(move |d, t| {
-                                let guard = sp.lock().unwrap();
-                                let cb: &prefix::runtime::download::PhaseProgressFn = &*guard;
-                                cb(d, t, prefix::runtime::download::InstallPhase::Download)
-                            })
-                        };
-                        let archive = client
-                            .download_asset(&asset, &download_dir, &dl_prog, &cancel_for_thread)
-                            .await
-                            .map_err(|e| e.to_string())?;
-
-                        if cancel_for_thread.load(std::sync::atomic::Ordering::Relaxed) {
-                            let _ = std::fs::remove_dir_all(&download_dir);
-                            return Err(crate::t!("settings.runtime.download_cancelled").into());
-                        }
-
-                        // Signal verification phase
-                        {
-                            let guard = shared_progress.lock().unwrap();
-                            let cb: &prefix::runtime::download::PhaseProgressFn = &*guard;
-                            cb(0, 1, prefix::runtime::download::InstallPhase::Verify);
-                        }
-
-                        // Signal that extraction has started
-                        {
-                            let guard = shared_progress.lock().unwrap();
-                            let cb: &prefix::runtime::download::PhaseProgressFn = &*guard;
-                            cb(0, 1, prefix::runtime::download::InstallPhase::Extract);
-                        }
-
-                        // 2. Extract + resolve wine binary
-                        let final_dir =
-                            prefix::runtime::download::extract_crossover_build(&ver, &archive)
-                                .map_err(|e| e.to_string())?;
-                        let _ = std::fs::remove_dir_all(&download_dir);
-
-                        if cancel_for_thread.load(std::sync::atomic::Ordering::Relaxed) {
-                            let _ = std::fs::remove_dir_all(&final_dir);
-                            return Err(crate::t!("settings.runtime.download_cancelled").into());
-                        }
-
-                        // 3. Load state, register, save
-                        let mut runtime_manager: RuntimeManager =
-                            if let Some(settings) = prefix::Settings::load() {
-                                settings.into()
-                            } else {
-                                RuntimeManager::new()
-                            };
-                        runtime_manager.ensure_system_runtime();
-                        runtime_manager.register_managed_build(
-                            "anson2251",
-                            "CrossOver",
-                            &ver,
-                            asset.browser_download_url,
-                            final_dir,
-                        );
-                        let settings: prefix::Settings = runtime_manager.clone().into();
-                        if let Err(e) = settings.save() {
-                            log::error!("[runtime] failed to save: {}", e);
-                        }
-                        Ok(runtime_manager)
-                    });
-                    let _ = tx.send(result);
-                });
-
-                // Poll for completion
-                loop {
-                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                        return Err(crate::t!("settings.runtime.download_cancelled").into());
-                    }
-                    match rx.try_recv() {
-                        Ok(Ok(rm)) => {
-                            let _ = s.input(RuntimeSettingsMsg::DownloadComplete(rm));
-                            return Ok(());
-                        }
-                        Ok(Err(e)) => return Err(e),
-                        Err(std::sync::mpsc::TryRecvError::Empty) => {
-                            gtk::glib::timeout_future(std::time::Duration::from_millis(200))
-                                .await;
-                        }
-                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                            return Err(crate::t!("settings.runtime.download_crashed").into());
-                        }
-                    }
-                }
-            })
-        },
-    );
-
-    // ── perform_remove ──
-    let perform_remove = make_remove_runtime(runtime_id.clone(), sender.clone());
-
-    let ctrl = managed_download_row::ManagedDownloadRow::builder()
-        .launch(managed_download_row::ManagedDownloadRowInit {
-            title: display_title,
-            check_status,
-            check_update: None,
-            start_download,
-            perform_remove,
-            data_dir: Default::default(),
-        })
-        .forward(sender.input_sender(), |_out| {
-            RuntimeSettingsMsg::RefreshRuntimes
+        // ── check_status ──
+        let check_id = runtime_id.clone();
+        let chk_version = release.version.clone();
+        let dxmt_version = release.dxmt_version.clone();
+        let check_status = Box::new(move || {
+            let dir = prefix::runtime::download::runtimes_dir().join(&check_id);
+            let installed = dir.is_dir();
+            managed_download_row::DownloadRowStatus {
+                installed,
+                managed: installed,
+                status_text: if installed {
+                    crate::tf!("settings.runtime.installed_anson2251", "version" => &chk_version)
+                } else {
+                    crate::tf!("settings.runtime.anson2251_desc", "dxmt" => &dxmt_version)
+                },
+            }
         });
 
-    group.add(ctrl.widget());
-    ctrls.push(ctrl);
+        // ── start_download ──
+        let dl_sender = sender.clone();
+        let dl_asset = release.asset.clone();
+        let dl_version = release.version.clone();
+        let start_download: managed_download_row::DownloadFn = Box::new(
+            move |_data_dir: PathBuf,
+                  progress: prefix::runtime::download::PhaseProgressFn,
+                  cancel: std::sync::Arc<std::sync::atomic::AtomicBool>| {
+                let s = dl_sender.clone();
+                let asset = dl_asset.clone();
+                let ver = dl_version.clone();
+                Box::pin(async move {
+                    let (tx, rx) = std::sync::mpsc::channel::<Result<RuntimeManager, String>>();
+
+                    let cancel_for_thread = cancel.clone();
+                    let shared_progress =
+                        std::sync::Arc::new(std::sync::Mutex::new(progress));
+                    std::thread::spawn(move || {
+                        let rt = tokio::runtime::Runtime::new()
+                            .expect("Failed to create tokio runtime");
+
+                        let result: Result<RuntimeManager, String> = rt.block_on(async {
+                            // 1. Download + verify via the shared GitHub client
+                            let client = prefix::github_client();
+                            let download_dir = prefix::runtime::download::runtimes_dir()
+                                .join(format!(".dl-{}", &ver));
+                            std::fs::create_dir_all(&download_dir)
+                                .map_err(|e| format!("Failed to create temp dir: {}", e))?;
+                            let dl_prog: prefix::runtime::github::DownloadProgress = {
+                                let sp = shared_progress.clone();
+                                Box::new(move |d, t| {
+                                    let guard = sp.lock().unwrap();
+                                    let cb: &prefix::runtime::download::PhaseProgressFn = &*guard;
+                                    cb(d, t, prefix::runtime::download::InstallPhase::Download)
+                                })
+                            };
+                            let archive = client
+                                .download_asset(&asset, &download_dir, &dl_prog, &cancel_for_thread)
+                                .await
+                                .map_err(|e| e.to_string())?;
+
+                            if cancel_for_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                                let _ = std::fs::remove_dir_all(&download_dir);
+                                return Err(crate::t!("settings.runtime.download_cancelled").into());
+                            }
+
+                            // Signal verification phase
+                            {
+                                let guard = shared_progress.lock().unwrap();
+                                let cb: &prefix::runtime::download::PhaseProgressFn = &*guard;
+                                cb(0, 1, prefix::runtime::download::InstallPhase::Verify);
+                            }
+
+                            // Signal that extraction has started
+                            {
+                                let guard = shared_progress.lock().unwrap();
+                                let cb: &prefix::runtime::download::PhaseProgressFn = &*guard;
+                                cb(0, 1, prefix::runtime::download::InstallPhase::Extract);
+                            }
+
+                            // 2. Extract + resolve wine binary
+                            let final_dir =
+                                prefix::runtime::download::extract_crossover_build(&ver, &archive)
+                                    .map_err(|e| e.to_string())?;
+                            let _ = std::fs::remove_dir_all(&download_dir);
+
+                            if cancel_for_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                                let _ = std::fs::remove_dir_all(&final_dir);
+                                return Err(crate::t!("settings.runtime.download_cancelled").into());
+                            }
+
+                            // 3. Load state, register, save
+                            let mut runtime_manager: RuntimeManager =
+                                if let Some(settings) = prefix::Settings::load() {
+                                    settings.into()
+                                } else {
+                                    RuntimeManager::new()
+                                };
+                            runtime_manager.ensure_system_runtime();
+                            runtime_manager.register_managed_build(
+                                "anson2251",
+                                "CrossOver",
+                                &ver,
+                                asset.browser_download_url,
+                                final_dir,
+                            );
+                            let settings: prefix::Settings = runtime_manager.clone().into();
+                            if let Err(e) = settings.save() {
+                                log::error!("[runtime] failed to save: {}", e);
+                            }
+                            Ok(runtime_manager)
+                        });
+                        let _ = tx.send(result);
+                    });
+
+                    // Poll for completion
+                    loop {
+                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                            return Err(crate::t!("settings.runtime.download_cancelled").into());
+                        }
+                        match rx.try_recv() {
+                            Ok(Ok(rm)) => {
+                                let _ = s.input(RuntimeSettingsMsg::DownloadComplete(rm));
+                                return Ok(());
+                            }
+                            Ok(Err(e)) => return Err(e),
+                            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                                gtk::glib::timeout_future(std::time::Duration::from_millis(200))
+                                    .await;
+                            }
+                            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                                return Err(crate::t!("settings.runtime.download_crashed").into());
+                            }
+                        }
+                    }
+                })
+            },
+        );
+
+        // ── perform_remove ──
+        let perform_remove = make_remove_runtime(runtime_id.clone(), sender.clone());
+
+        let ctrl = managed_download_row::ManagedDownloadRow::builder()
+            .launch(managed_download_row::ManagedDownloadRowInit {
+                title: display_title,
+                badge,
+                check_status,
+                check_update: None,
+                start_download,
+                perform_remove,
+                data_dir: Default::default(),
+            })
+            .forward(sender.input_sender(), |_out| {
+                RuntimeSettingsMsg::RefreshRuntimes
+            });
+
+        group.add(ctrl.widget());
+        ctrls.push(ctrl);
+    }
 
     ctrls
 }
@@ -605,6 +613,7 @@ async fn build_available_channels(
         let ctrl = managed_download_row::ManagedDownloadRow::builder()
             .launch(managed_download_row::ManagedDownloadRowInit {
                 title: crate::tf!("settings.runtime.wine_version_title", "version" => &version_label),
+                badge: None,
                 check_status,
                 check_update: None,
                 start_download,

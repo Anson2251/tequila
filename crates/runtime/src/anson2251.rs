@@ -17,6 +17,10 @@ pub struct Anson2251Release {
     pub version: String,
     /// DXMT version (e.g. "0.80")
     pub dxmt_version: String,
+    /// GitHub tag name (e.g. "v26.2.0")
+    pub tag: String,
+    /// Whether this release is marked as a pre-release on GitHub.
+    pub is_prerelease: bool,
     /// The matching asset from GitHub (carries the download URL and optional digest).
     pub asset: crate::github::GitHubAsset,
 }
@@ -56,8 +60,42 @@ pub async fn fetch_latest_release(client: &crate::github::GitHubClient) -> Resul
     Ok(Anson2251Release {
         version,
         dxmt_version,
+        tag: release.tag_name,
+        is_prerelease: release.prerelease,
         asset,
     })
+}
+
+/// Fetch **all** available releases from Anson2251/crossover-foss-build on GitHub.
+///
+/// Returns a vector of releases that have a `with-dxmt-*-osx64.tar.zst` asset,
+/// sorted newest-first.  This lets the UI show all available CrossOver versions
+/// instead of only the latest.
+pub async fn fetch_all_releases(client: &crate::github::GitHubClient) -> Result<Vec<Anson2251Release>> {
+    let releases = client
+        .fetch_all_releases("Anson2251", "crossover-foss-build", Some(100))
+        .await?;
+
+    let mut results = Vec::new();
+    for release in releases {
+        if let Some(asset) = release
+            .assets
+            .into_iter()
+            .find(|a| a.name.contains("with-dxmt") && a.name.ends_with("-osx64.tar.zst"))
+        {
+            if let Some((version, dxmt_version)) = parse_asset_name(&asset.name) {
+                results.push(Anson2251Release {
+                    version,
+                    dxmt_version,
+                    tag: release.tag_name.clone(),
+                    is_prerelease: release.prerelease,
+                    asset,
+                });
+            }
+        }
+    }
+
+    Ok(results)
 }
 
 /// Parse version and dxmt_version from an Anson2251 crossover-foss asset filename.

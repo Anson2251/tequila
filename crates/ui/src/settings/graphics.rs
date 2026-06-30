@@ -207,6 +207,7 @@ fn build_available_graphics_rows(
                     crate::t!("settings.graphics.dxvk_vkd3d_desc"),
                 ),
                 check_update: None,
+                badge: None,
                 start_download: Box::new(|_data_dir, progress, cancel| {
                     Box::pin(async move {
                         let simple_prog: runtime::download::ProgressFn = Box::new(move |d, t| {

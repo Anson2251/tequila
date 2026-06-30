@@ -40,6 +40,7 @@ pub type DownloadFn = Box<
 
 pub struct ManagedDownloadRowInit {
     pub title: String,
+    pub badge: Option<String>,
     pub check_status: Box<dyn Fn() -> DownloadRowStatus + Send + 'static>,
     pub check_update: Option<Box<dyn Fn() -> Option<String> + Send + 'static>>,
     pub start_download: DownloadFn,
@@ -84,6 +85,7 @@ pub enum ManagedDownloadRowOutput {
 pub struct ManagedDownloadRow {
     // Static config
     title: String,
+    badge: Option<String>,
 
     // Tracked reactive state
     installed: bool,
@@ -140,6 +142,19 @@ impl AsyncComponent for ManagedDownloadRow {
                 set_orientation: gtk::Orientation::Horizontal,
                 set_halign: gtk::Align::End,
                 set_spacing: 4,
+
+                // ── Pre-release badge ──
+                #[name = "badge_label"]
+                gtk::Label {
+                    #[watch]
+                    set_visible: model.badge.is_some(),
+                    #[watch]
+                    set_label: model.badge.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                    add_css_class: "badge-label",
+                    add_css_class: "caption",
+                    set_valign: gtk::Align::Center,
+                    set_margin_end: 4,
+                },
 
                 // ── Install button ──
                 #[name = "install_btn"]
@@ -213,6 +228,7 @@ impl AsyncComponent for ManagedDownloadRow {
 
         let model = ManagedDownloadRow {
             title: init.title,
+            badge: init.badge,
             installed: status.installed,
             managed: status.managed,
             progress: 0.0,
@@ -433,7 +449,15 @@ fn init_css_once() {
     INIT.call_once(|| {
         let provider = gtk::CssProvider::new();
         provider
-            .load_from_data(".managed-installed { background-color: rgba(76, 175, 80, 0.12); }");
+            .load_from_data(".managed-installed { background-color: rgba(76, 175, 80, 0.12); }\n\
+                .badge-label {\n\
+                    font-size: 0.8rem;\n\
+                    font-weight: 600;\n\
+                    padding: 2px 8px;\n\
+                    border-radius: 10px;\n\
+                    background-color: rgba(255, 179, 0, 0.2);\n\
+                    color: #cc8800;\n\
+                }");
         if let Some(display) = gtk::gdk::Display::default() {
             gtk::style_context_add_provider_for_display(
                 &display,

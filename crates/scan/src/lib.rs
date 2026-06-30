@@ -7,9 +7,11 @@ use base::config::RegisteredExecutable;
 use base::error::{PrefixError, Result};
 use base::traits::Scanner;
 use exe::VecPE;
-use exe::types::{CCharString, ImportDirectory, VSVersionInfo};
+use exe::types::VSVersionInfo;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::Read;
+use std::io::Seek;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -115,17 +117,25 @@ impl ApplicationScanner {
         let description = self.extract_description_from_path(path);
 
         let exe_path_for_meta = path.clone();
-        let metadata = catch_unwind(AssertUnwindSafe(|| {
-            let image = VecPE::from_disk_file(&exe_path_for_meta).ok()?;
-            self.extract_executable_metadata(&image)
-        }))
-        .unwrap_or_else(|_| {
-            log::warn!(
-                "[scan] PE parsing panicked for: {}",
+        let metadata = if is_valid_pe_file(path) {
+            catch_unwind(AssertUnwindSafe(|| {
+                let image = VecPE::from_disk_file(&exe_path_for_meta).ok()?;
+                self.extract_executable_metadata(&image)
+            }))
+            .unwrap_or_else(|_| {
+                log::warn!(
+                    "[scan] PE parsing panicked for: {}",
+                    exe_path_for_meta.display()
+                );
+                None
+            })
+        } else {
+            log::debug!(
+                "[scan] skipping PE parsing for non-PE file: {}",
                 exe_path_for_meta.display()
             );
             None
-        });
+        };
 
         let mut executable = RegisteredExecutable::new(name, path.to_path_buf())
             .with_description(description.unwrap_or_default());
@@ -241,7 +251,10 @@ impl ApplicationScanner {
     fn extract_executable_metadata(&self, image: &VecPE) -> Option<ExecutableMetadata> {
         let mut metadata = ExecutableMetadata::default();
         self.extract_version_info(image, &mut metadata);
-        self.extract_imported_modules(image, &mut metadata);
+        // NOTE: ImportDirectory::parse is intentionally omitted here because
+        // exe 0.5.7 uses pkbuffer's get_slice_ref internally, which triggers an
+        // uncatchable non-unwinding abort when the import directory is at an
+        // unaligned file offset (a valid condition in many PE files).
         Some(metadata)
     }
 
@@ -288,21 +301,6 @@ impl ApplicationScanner {
             Err(_) => {
                 metadata.file_description = Some("Windows Application".to_string());
             }
-        }
-    }
-
-    fn extract_imported_modules(&self, image: &VecPE, metadata: &mut ExecutableMetadata) {
-        match ImportDirectory::parse(image) {
-            Ok(import_directory) => {
-                for descriptor in import_directory.descriptors {
-                    if let Ok(name) = descriptor.get_name(image) {
-                        if let Ok(name_str) = name.as_str() {
-                            metadata.imported_modules.push(name_str.to_string());
-                        }
-                    }
-                }
-            }
-            Err(_) => {}
         }
     }
 
@@ -406,7 +404,67 @@ impl ApplicationScanner {
     }
 }
 
+/// Validate that a file has a proper PE header structure.
+///
+/// This reads the DOS header, checks the `MZ` magic, resolves `e_lfanew`,
+/// and verifies the `PE\0\0` signature. It's a lightweight pre-validation
+/// that prevents the `pkbuffer` crate from hitting an unsafe-alignment abort
+/// when parsing non-PE files that happen to have an `.exe` extension
+/// (e.g. DOS-only executables in Wine prefixes).
+fn is_valid_pe_file(path: &Path) -> bool {
+    let mut file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+
+    let file_size = match file.metadata() {
+        Ok(m) => m.len(),
+        Err(_) => return false,
+    };
+
+    // Need at least the DOS header (64 bytes) plus room for e_lfanew
+    if file_size < 64 {
+        return false;
+    }
+
+    // Read the DOS header
+    let mut dos = [0u8; 64];
+    if file.read_exact(&mut dos).is_err() {
+        return false;
+    }
+
+    // Check MZ magic
+    if dos[0] != b'M' || dos[1] != b'Z' {
+        return false;
+    }
+
+    // Read e_lfanew at offset 0x3C (offset to PE signature)
+    let e_lfanew = u32::from_le_bytes([dos[0x3C], dos[0x3D], dos[0x3E], dos[0x3F]]);
+
+    // e_lfanew must point at least past the DOS header, leave room for
+    // the 4-byte PE signature, be within the file, and be 4-byte aligned.
+    if e_lfanew < 64 || e_lfanew as u64 > file_size - 4 || e_lfanew % 4 != 0 {
+        return false;
+    }
+
+    // Seek to the PE signature location
+    if file.seek(std::io::SeekFrom::Start(e_lfanew as u64)).is_err() {
+        return false;
+    }
+
+    // Read and verify the PE\0\0 signature
+    let mut sig = [0u8; 4];
+    if file.read_exact(&mut sig).is_err() {
+        return false;
+    }
+
+    sig == [b'P', b'E', 0, 0]
+}
+
 pub fn extract_icon_for_exe(exe_path: &Path, icon_cache: &IconCache) -> Option<PathBuf> {
+    if !is_valid_pe_file(exe_path) {
+        return None;
+    }
     let file_bytes = std::fs::read(exe_path).ok()?;
     let sha256 = hex::encode(Sha256::digest(&file_bytes));
     match icon_cache.has_icon(&sha256) {
@@ -428,6 +486,9 @@ pub fn extract_icon_for_exe(exe_path: &Path, icon_cache: &IconCache) -> Option<P
 }
 
 pub fn extract_metadata_for_exe(exe_path: &Path) -> ExecutableMetadata {
+    if !is_valid_pe_file(exe_path) {
+        return ExecutableMetadata::default();
+    }
     catch_unwind(AssertUnwindSafe(|| {
         let image = VecPE::from_disk_file(exe_path).ok()?;
         let mut meta = ExecutableMetadata::default();
@@ -465,15 +526,6 @@ pub fn extract_metadata_for_exe(exe_path: &Path) -> ExecutableMetadata {
                                 _ => {}
                             }
                         }
-                    }
-                }
-            }
-        }
-        if let Ok(import_dir) = ImportDirectory::parse(&image) {
-            for descriptor in import_dir.descriptors {
-                if let Ok(name) = descriptor.get_name(&image) {
-                    if let Ok(name_str) = name.as_str() {
-                        meta.imported_modules.push(name_str.to_string());
                     }
                 }
             }
