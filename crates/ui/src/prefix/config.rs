@@ -127,6 +127,7 @@ impl SimpleComponent for PrefixConfigModel {
     type Output = PrefixConfigOutput;
     type Widgets = PrefixConfigWidgets;
 
+    #[rustfmt::skip]
     view! {
         #[root]
         gtk::Box {
@@ -337,9 +338,7 @@ impl SimpleComponent for PrefixConfigModel {
         let (prefix_path, config, back_btn, parent_window) = init;
 
         // ── Build wine runtime dropdown ──
-        let runtime_manager = AppService::global()
-            .prefix_manager()
-            .clone_runtime();
+        let runtime_manager = AppService::global().prefix_manager().clone_runtime();
         let mut runtime_items: Vec<String> = Vec::new();
         let mut runtime_ids: Vec<String> = Vec::new();
         let mut selected_wine_runtime: u32 = 0;
@@ -594,7 +593,9 @@ impl SimpleComponent for PrefixConfigModel {
                             content.set_margin_end(20);
                             content.set_margin_bottom(20);
                             content.set_margin_start(20);
-                            let label = gtk::Label::new(Some(&crate::t!("prefix.detail.change_wine.reinit")));
+                            let label = gtk::Label::new(Some(&crate::t!(
+                                "prefix.detail.change_wine.reinit"
+                            )));
                             content.append(&label);
                             content.append(&pb);
 

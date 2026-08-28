@@ -128,6 +128,7 @@ impl AsyncComponent for ManagedDownloadRow {
     type CommandOutput = ();
     type Widgets = ManagedDownloadRowWidgets;
 
+    #[rustfmt::skip]
     view! {
         #[root]
         adw::ActionRow {
@@ -263,7 +264,9 @@ impl AsyncComponent for ManagedDownloadRow {
             // ── Install: confirmation dialog ──
             ManagedDownloadRowMsg::Install => {
                 let alert = adw::AlertDialog::new(
-                    Some(&crate::tf!("settings.runtime.install_confirm_title", "name" => &self.title)),
+                    Some(
+                        &crate::tf!("settings.runtime.install_confirm_title", "name" => &self.title),
+                    ),
                     Some(&crate::tf!(
                         "settings.runtime.install_confirm_body",
                         "name" => &self.title,
@@ -403,7 +406,10 @@ impl AsyncComponent for ManagedDownloadRow {
 
                 let _ = sender.output(ManagedDownloadRowOutput::DownloadFailed(err.clone()));
 
-                let alert = adw::AlertDialog::new(Some(&crate::t!("settings.runtime.download_failed")), Some(&err));
+                let alert = adw::AlertDialog::new(
+                    Some(&crate::t!("settings.runtime.download_failed")),
+                    Some(&err),
+                );
                 alert.add_response("ok", &crate::t!("dialogs.ok"));
                 alert.set_default_response(Some("ok"));
                 alert.set_close_response("ok");
@@ -413,7 +419,10 @@ impl AsyncComponent for ManagedDownloadRow {
             // ── Remove ──
             ManagedDownloadRowMsg::Remove => {
                 if let Err(e) = (self.perform_remove)() {
-                    let alert = adw::AlertDialog::new(Some(&crate::t!("settings.runtime.remove_failed")), Some(&e));
+                    let alert = adw::AlertDialog::new(
+                        Some(&crate::t!("settings.runtime.remove_failed")),
+                        Some(&e),
+                    );
                     alert.add_response("ok", &crate::t!("dialogs.ok"));
                     alert.set_default_response(Some("ok"));
                     alert.set_close_response("ok");
@@ -448,8 +457,8 @@ fn init_css_once() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         let provider = gtk::CssProvider::new();
-        provider
-            .load_from_data(".managed-installed { background-color: rgba(76, 175, 80, 0.12); }\n\
+        provider.load_from_data(
+            ".managed-installed { background-color: rgba(76, 175, 80, 0.12); }\n\
                 .badge-label {\n\
                     font-size: 0.8rem;\n\
                     font-weight: 600;\n\
@@ -457,7 +466,8 @@ fn init_css_once() {
                     border-radius: 10px;\n\
                     background-color: rgba(255, 179, 0, 0.2);\n\
                     color: #cc8800;\n\
-                }");
+                }",
+        );
         if let Some(display) = gtk::gdk::Display::default() {
             gtk::style_context_add_provider_for_display(
                 &display,

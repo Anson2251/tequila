@@ -24,13 +24,22 @@ pub fn setup_menu_bar(app: gtk::Application, sender: ComponentSender<crate::app:
 
         let file_menu = Menu::new();
         file_menu.append(Some(&crate::t!("menu.new_prefix")), Some("app.new-prefix"));
-        file_menu.append(Some(&crate::t!("menu.import_prefix")), Some("app.import-prefix"));
-        file_menu.append(Some(&crate::t!("menu.preferences")), Some("app.preferences"));
+        file_menu.append(
+            Some(&crate::t!("menu.import_prefix")),
+            Some("app.import-prefix"),
+        );
+        file_menu.append(
+            Some(&crate::t!("menu.preferences")),
+            Some("app.preferences"),
+        );
         file_menu.append(Some(&crate::t!("menu.quit")), Some("app.quit"));
         menubar.append_submenu(Some(&crate::t!("menu.file")), &file_menu);
 
         let view_menu = Menu::new();
-        view_menu.append(Some(&crate::t!("menu.toggle_sidebar")), Some("app.toggle-sidebar"));
+        view_menu.append(
+            Some(&crate::t!("menu.toggle_sidebar")),
+            Some("app.toggle-sidebar"),
+        );
         menubar.append_submenu(Some(&crate::t!("menu.view")), &view_menu);
 
         app.set_menubar(Some(&menubar));

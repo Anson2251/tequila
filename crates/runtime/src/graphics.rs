@@ -261,7 +261,9 @@ pub async fn fetch_dxvk_release(client: &crate::github::GitHubClient) -> Result<
 }
 
 pub async fn fetch_vkd3d_release(client: &crate::github::GitHubClient) -> Result<(String, String)> {
-    let release = client.fetch_latest_release("HansKristian-Work", "vkd3d-proton").await?;
+    let release = client
+        .fetch_latest_release("HansKristian-Work", "vkd3d-proton")
+        .await?;
     let asset = release
         .assets
         .iter()

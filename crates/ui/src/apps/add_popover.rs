@@ -80,6 +80,7 @@ impl FactoryComponent for AvailableExecutable {
     type CommandOutput = ();
     type ParentWidget = gtk::ListBox;
 
+    #[rustfmt::skip]
     view! {
         #[root]
         gtk::ListBoxRow {
@@ -195,6 +196,7 @@ impl AsyncComponent for AddAppPopoverModel {
     type CommandOutput = ();
     type Widgets = AddAppPopoverWidgets;
 
+    #[rustfmt::skip]
     view! {
         #[name = "popover"]
         gtk::Popover {
@@ -475,7 +477,11 @@ impl AsyncComponent for AddAppPopoverModel {
             }
             AddAppPopoverMsg::SetScanning(scanning) => {
                 self.set_is_scanning(scanning);
-                self.set_scan_button_label(if scanning { crate::t!("apps.add.scanning_btn") } else { crate::t!("apps.add.scan_btn") });
+                self.set_scan_button_label(if scanning {
+                    crate::t!("apps.add.scanning_btn")
+                } else {
+                    crate::t!("apps.add.scan_btn")
+                });
             }
             AddAppPopoverMsg::ResetProcessingFlag => {
                 self.is_processing_selection = false;

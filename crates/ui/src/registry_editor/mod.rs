@@ -89,7 +89,12 @@ pub enum RegistryEditorMsg {
     LoadRegistry,
     LoadForEdit,
     RegistryEditorLoaded(Arc<Mutex<RegistryEditor>>, Arc<Mutex<WineRegistry>>),
-    LoadSettings(GeneralSettings, GraphicsSettings, PlatformSettings, FontsSettings),
+    LoadSettings(
+        GeneralSettings,
+        GraphicsSettings,
+        PlatformSettings,
+        FontsSettings,
+    ),
     RegistrySaveComplete,
     RegistrySaveError(String),
     ConfigUpdated(PrefixConfig),
@@ -118,6 +123,7 @@ impl SimpleComponent for RegistryEditorModel {
     type Output = RegistryEditorMsg;
     type Widgets = RegistryEditorWidgets;
 
+    #[rustfmt::skip]
     view! {
         gtk::Box {
             set_orientation: gtk::Orientation::Vertical,
@@ -393,12 +399,7 @@ impl SimpleComponent for RegistryEditorModel {
 
                     self.registry_editor = None;
                     self.system_registry = None;
-                    spawn_registry_load(
-                        prefix_path,
-                        prefix_path_str,
-                        store,
-                        sender.clone(),
-                    );
+                    spawn_registry_load(prefix_path, prefix_path_str, store, sender.clone());
                 }
             }
 
@@ -412,12 +413,7 @@ impl SimpleComponent for RegistryEditorModel {
                     let prefix_path = self.prefix_path.clone();
                     let prefix_path_str = prefix_path.to_string_lossy().to_string();
                     let store = Arc::clone(&self.prefix_store);
-                    spawn_registry_load(
-                        prefix_path,
-                        prefix_path_str,
-                        store,
-                        sender.clone(),
-                    );
+                    spawn_registry_load(prefix_path, prefix_path_str, store, sender.clone());
                 }
             }
 
@@ -1142,7 +1138,6 @@ fn default_graphics_settings() -> GraphicsSettings {
     }
 }
 
-
 fn send_cached_settings(
     prefix_path: &str,
     store: &prefix::PrefixStore,
@@ -1155,9 +1150,8 @@ fn send_cached_settings(
     let load = |sec: &str, key: &str| -> Option<String> {
         store.get_setting(prefix_path, sec, key).ok().flatten()
     };
-    let load_dword = |sec: &str, key: &str| -> Option<u32> {
-        load(sec, key).and_then(|v| v.parse().ok())
-    };
+    let load_dword =
+        |sec: &str, key: &str| -> Option<u32> { load(sec, key).and_then(|v| v.parse().ok()) };
 
     load_settings_from_cache(prefix_path, store, &load, &load_dword, sender);
     true
@@ -1322,7 +1316,9 @@ fn load_settings_from_cache(
             .collect(),
     };
 
-    sender.input(RegistryEditorMsg::LoadSettings(general, graphics, platform, fonts));
+    sender.input(RegistryEditorMsg::LoadSettings(
+        general, graphics, platform, fonts,
+    ));
 }
 
 /// Background registry load (cold path): reads .reg files, caches, sends to tabs.
@@ -1336,7 +1332,8 @@ fn spawn_registry_load(
     tokio::spawn(async move {
         let result = async {
             let editor = RegistryEditor::with_prefix(&prefix_path).await?;
-            let system_registry = WineRegistry::load_from_file(&prefix_path.join("system.reg")).await?;
+            let system_registry =
+                WineRegistry::load_from_file(&prefix_path.join("system.reg")).await?;
             let windows_version = editor.get_windows_version().await?;
             let d3d_renderer = editor.get_d3d_renderer().await?;
             let d3d_csmt = editor.get_d3d_csmt().await?;
@@ -1410,10 +1407,12 @@ fn spawn_registry_load(
                 Value::Sz(s) | Value::ExpandSz(s) => Some(s.clone()),
                 _ => None,
             });
-            let shell_dlg_2_font = font_substitutes.get("MS Shell Dlg 2").and_then(|v| match v {
-                Value::Sz(s) | Value::ExpandSz(s) => Some(s.clone()),
-                _ => None,
-            });
+            let shell_dlg_2_font = font_substitutes
+                .get("MS Shell Dlg 2")
+                .and_then(|v| match v {
+                    Value::Sz(s) | Value::ExpandSz(s) => Some(s.clone()),
+                    _ => None,
+                });
             let fonts = FontsSettings {
                 system_font: shell_dlg_font.clone().or_else(|| shell_dlg_2_font.clone()),
                 shell_dlg_font,
@@ -1449,13 +1448,14 @@ fn spawn_registry_load(
         match rx.await {
             Ok(Ok((editor, system_registry, general, graphics, platform, fonts))) => {
                 // Check whether the cached data is still fresh by comparing hashes
-                let hashes_match = hash_registry_files(std::path::Path::new(&pp2))
-                    .ok()
-                    .map_or(false, |(uh, sh)| {
+                let hashes_match = hash_registry_files(std::path::Path::new(&pp2)).ok().map_or(
+                    false,
+                    |(uh, sh)| {
                         store
                             .verify_registry_hashes(&pp2, &uh, &sh)
                             .unwrap_or(false)
-                    });
+                    },
+                );
 
                 if !hashes_match {
                     let pp = &pp2;
@@ -1623,7 +1623,9 @@ fn spawn_registry_load(
                         let _ = store.save_registry_hashes(pp, &uh, &sh);
                     }
                 }
-                sender.input(RegistryEditorMsg::LoadSettings(general, graphics, platform, fonts));
+                sender.input(RegistryEditorMsg::LoadSettings(
+                    general, graphics, platform, fonts,
+                ));
                 sender.input(RegistryEditorMsg::RegistryEditorLoaded(
                     Arc::new(Mutex::new(editor)),
                     Arc::new(Mutex::new(system_registry)),

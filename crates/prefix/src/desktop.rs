@@ -170,30 +170,30 @@ pub fn launcher_exists(prefix_path: &Path, exe_path: &Path) -> bool {
 
 // ── Helper functions (shared logic) ────────────────────────────────────
 
+/// Data directory for Tequila-managed files, honoring the `TEQUILA_DATA_DIR`
+/// environment variable override (primarily for tests and sandboxing).
+fn tequila_data_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("TEQUILA_DATA_DIR").filter(|v| !v.is_empty()) {
+        return PathBuf::from(dir);
+    }
+    dirs::data_dir().unwrap_or_else(|| {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("~"))
+            .join(".local/share")
+    })
+}
+
 /// Default base directory for Tequila-managed desktop files.
 /// Desktop files are stored under `<base>/<prefix_uuid>/<sha256>.desktop`.
 /// A symlink is placed in `~/.local/share/applications/` so the entry
 /// appears in the system application menu.
 pub fn desktop_base_dir() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("~"))
-                .join(".local/share")
-        })
-        .join("tequila")
-        .join("desktop")
+    tequila_data_dir().join("tequila").join("desktop")
 }
 
 /// System applications directory where symlinks are placed.
 fn system_applications_dir() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("~"))
-                .join(".local/share")
-        })
-        .join("applications")
+    tequila_data_dir().join("applications")
 }
 
 /// Compute a deterministic filename-safe hash (SHA-256, hex-encoded) from
@@ -433,11 +433,7 @@ fn sanitize_name(name: &str) -> String {
         })
         .collect();
     let s = s.trim().to_string();
-    if s.is_empty() {
-        "App".to_string()
-    } else {
-        s
-    }
+    if s.is_empty() { "App".to_string() } else { s }
 }
 
 /// Find an `.app` bundle in the given directory whose `Contents/.tequila_hash`
@@ -624,11 +620,7 @@ exec "{tequila}" run --uuid {uuid} '{rel}' "$@"
                                 }
                             }
                             Err(e) => {
-                                warn!(
-                                    "[desktop] failed to open {}: {}",
-                                    png_path.display(),
-                                    e
-                                );
+                                warn!("[desktop] failed to open {}: {}", png_path.display(), e);
                             }
                         }
                     }
@@ -763,4 +755,188 @@ pub fn list_app_launchers(prefix_path: &Path) -> Result<Vec<PathBuf>> {
         }
     }
     Ok(launchers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    /// Run `f` with `TEQUILA_DATA_DIR` pointed at a fresh temp dir, so tests
+    /// never touch the real user data directory.
+    fn with_isolated_data_dir<T>(f: impl FnOnce(&Path) -> T) -> T {
+        let _guard = env_lock().lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        // SAFETY: all env access for this variable is serialized by env_lock.
+        unsafe { std::env::set_var("TEQUILA_DATA_DIR", dir.path()) };
+        let result = f(dir.path());
+        // SAFETY: see above.
+        unsafe { std::env::remove_var("TEQUILA_DATA_DIR") };
+        result
+    }
+
+    fn fixture_prefix() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix_path = dir.path().join("11111111-2222-3333-4444-555555555555");
+        let drive_c = prefix_path.join("drive_c");
+        fs::create_dir_all(&drive_c).unwrap();
+        let exe_path = drive_c.join("game.exe");
+        fs::write(&exe_path, b"MZ").unwrap();
+        (dir, prefix_path, exe_path)
+    }
+
+    #[test]
+    fn hash_path_is_deterministic() {
+        assert_eq!(hash_path("drive_c/game.exe"), hash_path("drive_c/game.exe"));
+        assert_ne!(hash_path("a.exe"), hash_path("b.exe"));
+    }
+
+    #[test]
+    fn hash_path_is_sha256_hex() {
+        assert_eq!(
+            hash_path("a"),
+            "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+        );
+        assert_eq!(hash_path("").len(), 64);
+        assert!(
+            hash_path("anything")
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
+    }
+
+    #[test]
+    fn desktop_launcher_roundtrip() {
+        with_isolated_data_dir(|data_dir| {
+            let (_prefix_dir, prefix_path, exe_path) = fixture_prefix();
+            let icon_src = _prefix_dir.path().join("icon.png");
+            fs::write(&icon_src, b"png-data").unwrap();
+
+            let symlink_path = create_desktop_launcher(
+                &prefix_path,
+                "My Prefix",
+                "Game",
+                &exe_path,
+                Some(&icon_src),
+            )
+            .unwrap();
+
+            let prefix_uuid = prefix_path.file_name().unwrap().to_str().unwrap();
+            let exe_hash = hash_path("drive_c/game.exe");
+
+            assert!(symlink_path.exists());
+            assert!(symlink_path.is_symlink());
+
+            let desktop_file = desktop_base_dir()
+                .join(prefix_uuid)
+                .join(format!("{}.desktop", exe_hash));
+            assert!(desktop_file.exists());
+            assert!(desktop_file.starts_with(data_dir.join("tequila/desktop")));
+
+            let content = fs::read_to_string(&desktop_file).unwrap();
+            assert!(content.contains("[Desktop Entry]"));
+            assert!(content.contains("Name=Game"));
+            assert!(content.contains("Comment=Wine prefix: My Prefix"));
+            assert!(content.contains(&format!("--uuid {}", prefix_uuid)));
+            assert!(content.contains("'drive_c/game.exe'"));
+            let icon_copy = desktop_base_dir()
+                .join(prefix_uuid)
+                .join(format!("{}.png", exe_hash));
+            assert!(content.contains(&format!("Icon={}", icon_copy.to_string_lossy())));
+            assert_eq!(fs::read(&icon_copy).unwrap(), b"png-data");
+
+            assert!(desktop_launcher_exists(&prefix_path, &exe_path));
+            assert_eq!(
+                list_desktop_launchers(&prefix_path).unwrap(),
+                vec![desktop_file]
+            );
+
+            remove_desktop_launcher(&prefix_path, &exe_path).unwrap();
+            assert!(!desktop_launcher_exists(&prefix_path, &exe_path));
+            assert!(!symlink_path.exists());
+            assert!(list_desktop_launchers(&prefix_path).unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn create_launcher_without_icon_leaves_icon_empty() {
+        with_isolated_data_dir(|_| {
+            let (_dir, prefix_path, exe_path) = fixture_prefix();
+            let symlink_path =
+                create_desktop_launcher(&prefix_path, "P", "NoIcon", &exe_path, None).unwrap();
+            assert!(symlink_path.exists());
+
+            let desktop_file = &list_desktop_launchers(&prefix_path).unwrap()[0];
+            let content = fs::read_to_string(desktop_file).unwrap();
+            assert!(content.contains("Icon=\n"));
+        });
+    }
+
+    #[test]
+    fn create_launcher_with_missing_icon_file_skips_icon() {
+        with_isolated_data_dir(|_| {
+            let (_dir, prefix_path, exe_path) = fixture_prefix();
+            let ghost = _dir.path().join("ghost.png");
+            create_desktop_launcher(&prefix_path, "P", "Game", &exe_path, Some(&ghost)).unwrap();
+            let content =
+                fs::read_to_string(&list_desktop_launchers(&prefix_path).unwrap()[0]).unwrap();
+            assert!(content.contains("Icon=\n"));
+        });
+    }
+
+    #[test]
+    fn remove_nonexistent_launcher_is_ok() {
+        with_isolated_data_dir(|_| {
+            let (_dir, prefix_path, exe_path) = fixture_prefix();
+            assert!(remove_desktop_launcher(&prefix_path, &exe_path).is_ok());
+        });
+    }
+
+    #[test]
+    fn launcher_exists_false_for_unknown_exe() {
+        with_isolated_data_dir(|_| {
+            let (_dir, prefix_path, exe_path) = fixture_prefix();
+            assert!(!desktop_launcher_exists(&prefix_path, &exe_path));
+            assert!(list_desktop_launchers(&prefix_path).unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn exe_outside_prefix_uses_absolute_path_hash() {
+        with_isolated_data_dir(|_| {
+            let dir = tempfile::tempdir().unwrap();
+            let prefix_path = dir.path().join("aaaaaaaa-0000-0000-0000-000000000000");
+            fs::create_dir_all(&prefix_path).unwrap();
+            let exe_path = dir.path().join("elsewhere.exe");
+            fs::write(&exe_path, b"MZ").unwrap();
+
+            create_desktop_launcher(&prefix_path, "P", "External", &exe_path, None).unwrap();
+
+            let exe_hash = hash_path(&exe_path.to_string_lossy());
+            assert!(
+                desktop_base_dir()
+                    .join(prefix_path.file_name().unwrap())
+                    .join(format!("{}.desktop", exe_hash))
+                    .exists()
+            );
+        });
+    }
+
+    #[test]
+    fn recreate_launcher_overwrites_existing() {
+        with_isolated_data_dir(|_| {
+            let (_dir, prefix_path, exe_path) = fixture_prefix();
+            let first =
+                create_desktop_launcher(&prefix_path, "P", "Game", &exe_path, None).unwrap();
+            let second =
+                create_desktop_launcher(&prefix_path, "P", "Game", &exe_path, None).unwrap();
+            assert_eq!(first, second);
+            assert_eq!(list_desktop_launchers(&prefix_path).unwrap().len(), 1);
+        });
+    }
 }

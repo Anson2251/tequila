@@ -179,3 +179,187 @@ impl GraphicsConfig {
         matches!(self.backend.as_str(), "dxmt" | "d3dmetal" | "dxvk-vkd3d")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_labels() {
+        let dxmt = GraphicsBackend::Dxmt {
+            version: "0.80".to_string(),
+        };
+        let d3dmetal = GraphicsBackend::D3DMetal {
+            version: "1.0".to_string(),
+        };
+        let dxvk = GraphicsBackend::DxvkVkd3d {
+            dxvk_version: "2.4".to_string(),
+            vkd3d_version: "1.14".to_string(),
+        };
+        assert_eq!(dxmt.label(), "dxmt");
+        assert_eq!(d3dmetal.label(), "d3dmetal");
+        assert_eq!(dxvk.label(), "dxvk-vkd3d");
+        assert_eq!(dxmt.display_name(), "DXMT");
+        assert_eq!(d3dmetal.display_name(), "D3DMetal");
+        assert_eq!(dxvk.display_name(), "DXVK+VKD3D");
+    }
+
+    #[test]
+    fn version_strings() {
+        let dxmt = GraphicsBackend::Dxmt {
+            version: "0.80".to_string(),
+        };
+        let dxvk = GraphicsBackend::DxvkVkd3d {
+            dxvk_version: "2.4".to_string(),
+            vkd3d_version: "1.14".to_string(),
+        };
+        assert_eq!(dxmt.version_string(), "0.80");
+        assert_eq!(dxvk.version_string(), "dxvk-2.4+vkd3d-1.14");
+    }
+
+    #[test]
+    fn dxmt_overrides() {
+        let dxmt = GraphicsBackend::Dxmt {
+            version: "0.80".to_string(),
+        };
+        let entries = dxmt.override_entries();
+        assert_eq!(
+            entries,
+            vec![
+                ("winemetal", "native,builtin"),
+                ("d3d11", "native,builtin"),
+                ("dxgi", "native,builtin"),
+                ("d3d10core", "native,builtin"),
+            ]
+        );
+        assert_eq!(
+            dxmt.override_env_string(),
+            "winemetal,d3d11,dxgi,d3d10core=native,builtin"
+        );
+        assert_eq!(
+            dxmt.override_dlls(),
+            entries.iter().map(|(d, _)| *d).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn d3dmetal_overrides() {
+        let backend = GraphicsBackend::D3DMetal {
+            version: "1.0".to_string(),
+        };
+        assert_eq!(backend.override_dlls(), vec!["d3d11", "d3d12", "dxgi"]);
+    }
+
+    #[test]
+    fn dxvk_overrides() {
+        let backend = GraphicsBackend::DxvkVkd3d {
+            dxvk_version: "2.4".to_string(),
+            vkd3d_version: "1.14".to_string(),
+        };
+        assert_eq!(
+            backend.override_dlls(),
+            vec![
+                "d3d8",
+                "d3d9",
+                "d3d10core",
+                "d3d11",
+                "dxgi",
+                "d3d12",
+                "d3d12core"
+            ]
+        );
+    }
+
+    #[test]
+    fn arch_support() {
+        let dxmt = GraphicsBackend::Dxmt {
+            version: "0.80".to_string(),
+        };
+        let dxvk = GraphicsBackend::DxvkVkd3d {
+            dxvk_version: "2.4".to_string(),
+            vkd3d_version: "1.14".to_string(),
+        };
+        assert!(dxmt.supports_arch("win64"));
+        assert!(!dxmt.supports_arch("win32"));
+        assert!(dxvk.supports_arch("win32"));
+        assert!(dxvk.supports_arch("win64"));
+    }
+
+    #[test]
+    fn config_to_backend_roundtrip() {
+        let dxmt = GraphicsConfig {
+            backend: "dxmt".to_string(),
+            version: "0.80".to_string(),
+        };
+        assert_eq!(
+            dxmt.to_backend(),
+            Some(GraphicsBackend::Dxmt {
+                version: "0.80".to_string()
+            })
+        );
+
+        let d3dmetal = GraphicsConfig {
+            backend: "d3dmetal".to_string(),
+            version: "1.0".to_string(),
+        };
+        assert_eq!(
+            d3dmetal.to_backend(),
+            Some(GraphicsBackend::D3DMetal {
+                version: "1.0".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn config_dxvk_version_parsing() {
+        let config = GraphicsConfig {
+            backend: "dxvk-vkd3d".to_string(),
+            version: "dxvk-2.4+vkd3d-1.14".to_string(),
+        };
+        assert_eq!(
+            config.to_backend(),
+            Some(GraphicsBackend::DxvkVkd3d {
+                dxvk_version: "2.4".to_string(),
+                vkd3d_version: "1.14".to_string(),
+            })
+        );
+
+        let malformed = GraphicsConfig {
+            backend: "dxvk-vkd3d".to_string(),
+            version: "2.4".to_string(),
+        };
+        assert!(malformed.to_backend().is_none());
+    }
+
+    #[test]
+    fn config_unknown_backend() {
+        let config = GraphicsConfig {
+            backend: "carbide".to_string(),
+            version: "1.0".to_string(),
+        };
+        assert!(config.to_backend().is_none());
+        assert!(!config.is_valid());
+        assert!(config.override_dlls().is_empty());
+        assert_eq!(config.display_name(), "carbide");
+    }
+
+    #[test]
+    fn config_display_names_and_validity() {
+        assert!(
+            GraphicsConfig {
+                backend: "dxmt".to_string(),
+                version: "1".to_string(),
+            }
+            .is_valid()
+        );
+        let config = GraphicsConfig {
+            backend: "dxvk-vkd3d".to_string(),
+            version: "dxvk-2.4+vkd3d-1.14".to_string(),
+        };
+        assert_eq!(config.display_name(), "DXVK+VKD3D");
+        assert_eq!(
+            config.override_env_string(),
+            "d3d8,d3d9,d3d10core,d3d11,dxgi,d3d12,d3d12core=native,builtin"
+        );
+    }
+}

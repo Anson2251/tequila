@@ -217,6 +217,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -2391,6 +2392,7 @@ dependencies = [
  "sha2 0.11.0",
  "store",
  "tar",
+ "tempfile",
  "tokio",
  "uuid",
  "walkdir",
@@ -2711,6 +2713,7 @@ dependencies = [
  "log",
  "regashii",
  "serde",
+ "serde_json",
  "sha2 0.11.0",
  "tokio",
 ]
@@ -3165,6 +3168,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -3260,6 +3264,19 @@ name = "target-lexicon"
 version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df7f62577c25e07834649fc3b39fafdc597c0a3527dc1c60129201ccfcbaa50c"
+
+[[package]]
+name = "tempfile"
+version = "3.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
+dependencies = [
+ "fastrand",
+ "getrandom 0.4.2",
+ "once_cell",
+ "rustix",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "tequila"

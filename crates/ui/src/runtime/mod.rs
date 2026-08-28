@@ -44,6 +44,7 @@ impl AsyncComponent for RuntimeManagerModel {
     type CommandOutput = ();
     type Widgets = RuntimeManagerWidgets;
 
+    #[rustfmt::skip]
     view! {
         #[root]
         gtk::Window {
@@ -108,7 +109,10 @@ impl AsyncComponent for RuntimeManagerModel {
         // Title widget
         widgets
             .header_bar
-            .set_title_widget(Some(&adw::WindowTitle::new(&crate::t!("settings.runtime.installed"), "")));
+            .set_title_widget(Some(&adw::WindowTitle::new(
+                &crate::t!("settings.runtime.installed"),
+                "",
+            )));
 
         // Close button
         {
@@ -143,9 +147,7 @@ impl AsyncComponent for RuntimeManagerModel {
             tracker: 0,
         };
 
-        let rm = AppService::global()
-            .prefix_manager()
-            .clone_runtime();
+        let rm = AppService::global().prefix_manager().clone_runtime();
         populate_runtime_list(&model.list_box, &rm, sender.clone());
         update_count_label(&model.count_label, &rm);
 
@@ -161,9 +163,7 @@ impl AsyncComponent for RuntimeManagerModel {
         self.reset();
         match msg {
             RuntimeManagerMsg::Refresh => {
-                let rm = AppService::global()
-                    .prefix_manager()
-                    .clone_runtime();
+                let rm = AppService::global().prefix_manager().clone_runtime();
                 populate_runtime_list(&self.list_box, &rm, sender.clone());
                 update_count_label(&self.count_label, &rm);
             }

@@ -345,7 +345,8 @@ impl Manager {
 
         // 1–2. Download latest DXVK + VKD3D
         let (dxvk_dir, vkd3d_dir, dxvk_ver, vkd3d_ver) =
-            runtime::graphics::download_dxvk_vkd3d(progress, cancel, &crate::github_client()).await?;
+            runtime::graphics::download_dxvk_vkd3d(progress, cancel, &crate::github_client())
+                .await?;
 
         info!(
             "[prefix] downloaded DXVK {} and VKD3D-Proton {}",

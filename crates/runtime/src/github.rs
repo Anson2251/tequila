@@ -66,11 +66,7 @@ impl GitHubClient {
     }
 
     /// Fetch the **latest** release for a GitHub repository.
-    pub async fn fetch_latest_release(
-        &self,
-        owner: &str,
-        repo: &str,
-    ) -> Result<GitHubRelease> {
+    pub async fn fetch_latest_release(&self, owner: &str, repo: &str) -> Result<GitHubRelease> {
         let url = format!(
             "https://api.github.com/repos/{}/{}/releases/latest",
             owner, repo,
@@ -193,8 +189,7 @@ impl GitHubClient {
 // ── Internal helpers ───────────────────────────────────────────────────
 
 /// User-agent sent with every GitHub API request.
-const USER_AGENT: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
      (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 /// Check the HTTP status; on success deserialize JSON, on error consume

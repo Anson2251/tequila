@@ -83,6 +83,7 @@ impl AsyncComponent for AppManagerModel {
     type CommandOutput = ();
     type Widgets = AppManagerWidgets;
 
+    #[rustfmt::skip]
     view! {
         gtk::Box {
             set_orientation: gtk::Orientation::Vertical,
@@ -108,6 +109,7 @@ impl AsyncComponent for AppManagerModel {
     }
 
     fn init_loading_widgets(root: Self::Root) -> Option<relm4::loading_widgets::LoadingWidgets> {
+        #[rustfmt::skip]
         view! {
             #[local]
             root {
@@ -158,14 +160,22 @@ impl AsyncComponent for AppManagerModel {
 
         // Initialize add app popover (hidden by default) - will be connected to the actual add button later
         let add_app_popover = AddAppPopoverModel::builder()
-            .launch((gtk::Button::new(), prefix.path().to_path_buf(), icon_cache.clone()))
+            .launch((
+                gtk::Button::new(),
+                prefix.path().to_path_buf(),
+                icon_cache.clone(),
+            ))
             .forward(sender.input_sender(), |output| {
                 AppManagerMsg::AddAppPopover(output)
             });
 
         // Initialize executable info dialog (hidden by default)
         let executable_info_dialog = ExecutableInfoDialogModel::builder()
-            .launch((prefix.path().to_path_buf(), main_window.clone(), icon_cache.clone()))
+            .launch((
+                prefix.path().to_path_buf(),
+                main_window.clone(),
+                icon_cache.clone(),
+            ))
             .forward(sender.input_sender(), |output| {
                 AppManagerMsg::ExecutableInfoDialog(output)
             });
@@ -263,7 +273,8 @@ impl AsyncComponent for AppManagerModel {
                         self.prefix.config_mut(),
                         executable.clone(),
                     ) {
-                        let _ = sender.output(AppManagerMsg::ConfigUpdated(self.prefix.config().clone()));
+                        let _ = sender
+                            .output(AppManagerMsg::ConfigUpdated(self.prefix.config().clone()));
                     }
                 }
             }
@@ -286,7 +297,8 @@ impl AsyncComponent for AppManagerModel {
                         .emit(RegisteredAppsListMsg::UpdateExecutables(
                             self.prefix.config().registered_executables.clone(),
                         ));
-                    let _ = sender.output(AppManagerMsg::ConfigUpdated(self.prefix.config().clone()));
+                    let _ =
+                        sender.output(AppManagerMsg::ConfigUpdated(self.prefix.config().clone()));
                 }
             }
             AppManagerMsg::RemoveExecutable(index) => {
@@ -303,7 +315,8 @@ impl AsyncComponent for AppManagerModel {
                         self.prefix.config_mut(),
                         index,
                     ) {
-                        let _ = sender.output(AppManagerMsg::ConfigUpdated(self.prefix.config().clone()));
+                        let _ = sender
+                            .output(AppManagerMsg::ConfigUpdated(self.prefix.config().clone()));
                     }
                 }
             }
@@ -370,7 +383,10 @@ impl AsyncComponent for AppManagerModel {
                                 .and_then(|w| w.downcast::<gtk::Window>().ok());
                             let alert = adw::AlertDialog::new(
                                 Some("Launch Failed"),
-                                Some(&format!("Failed to launch '{}' in debug mode:\n\n{}", executable.name, e)),
+                                Some(&format!(
+                                    "Failed to launch '{}' in debug mode:\n\n{}",
+                                    executable.name, e
+                                )),
                             );
                             alert.add_response("ok", "OK");
                             alert.set_default_response(Some("ok"));
@@ -443,9 +459,9 @@ impl AsyncComponent for AppManagerModel {
 
                 // Reset selection if the config has no executables or index is out of bounds
                 if self.prefix.config().registered_executables.is_empty()
-                    || self
-                        .selected_executable
-                        .map_or(false, |i| i >= self.prefix.config().registered_executables.len())
+                    || self.selected_executable.map_or(false, |i| {
+                        i >= self.prefix.config().registered_executables.len()
+                    })
                 {
                     self.set_selected_executable(None);
                     self.app_actions.emit(AppActionsMsg::SetSelection(false));
@@ -512,8 +528,7 @@ impl AsyncComponent for AppManagerModel {
                                     "[apps] updated desktop launcher for '{}'",
                                     updated_exec.name
                                 );
-                                self.app_actions
-                                    .emit(AppActionsMsg::SetDesktopExists(true));
+                                self.app_actions.emit(AppActionsMsg::SetDesktopExists(true));
                             }
                         }
 
@@ -521,7 +536,8 @@ impl AsyncComponent for AppManagerModel {
                             .emit(RegisteredAppsListMsg::UpdateExecutables(
                                 self.prefix.config().registered_executables.clone(),
                             ));
-                        let _ = sender.output(AppManagerMsg::ConfigUpdated(self.prefix.config().clone()));
+                        let _ = sender
+                            .output(AppManagerMsg::ConfigUpdated(self.prefix.config().clone()));
                     }
                 }
             },
@@ -575,7 +591,9 @@ impl AsyncComponent for AppManagerModel {
                     }
                     AppActionsOutput::Kill => {
                         if let Some(index) = self.selected_executable {
-                            if let Some(exe) = self.prefix.config().registered_executables.get(index) {
+                            if let Some(exe) =
+                                self.prefix.config().registered_executables.get(index)
+                            {
                                 let killed = service::launch::kill_process(
                                     &AppService::global(),
                                     &exe.executable_path,
@@ -666,7 +684,9 @@ impl AsyncComponent for AppManagerModel {
                     }
                     AppActionsOutput::CreateDesktop => {
                         if let Some(index) = self.selected_executable {
-                            if let Some(exe) = self.prefix.config().registered_executables.get(index) {
+                            if let Some(exe) =
+                                self.prefix.config().registered_executables.get(index)
+                            {
                                 let prefix_path = self.prefix.path().to_path_buf();
                                 let prefix_name = self.prefix.name().to_string();
                                 let exe_name = exe.name.clone();
@@ -676,12 +696,9 @@ impl AsyncComponent for AppManagerModel {
                                     .and_then(|w| w.downcast::<gtk::Window>().ok());
 
                                 // Toggle: if launcher exists, remove it; otherwise create it
-                                if prefix::desktop::launcher_exists(&prefix_path, &exe_path)
-                                {
-                                    match prefix::desktop::remove_launcher(
-                                        &prefix_path,
-                                        &exe_path,
-                                    ) {
+                                if prefix::desktop::launcher_exists(&prefix_path, &exe_path) {
+                                    match prefix::desktop::remove_launcher(&prefix_path, &exe_path)
+                                    {
                                         Ok(()) => {
                                             info!(
                                                 "[apps] removed desktop launcher for '{}'",
@@ -816,14 +833,12 @@ impl AsyncComponent for AppManagerModel {
                     !self.external_running.is_empty(),
                 ));
             }
-            AppManagerMsg::DebugWindow(output) => {
-                match output {
-                    DebugWindowOutput::CloseRequest => {
-                        self.debug_window = None;
-                        sender.input(AppManagerMsg::PollProcesses);
-                    }
+            AppManagerMsg::DebugWindow(output) => match output {
+                DebugWindowOutput::CloseRequest => {
+                    self.debug_window = None;
+                    sender.input(AppManagerMsg::PollProcesses);
                 }
-            }
+            },
         }
     }
 }

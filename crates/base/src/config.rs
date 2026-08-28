@@ -166,37 +166,7 @@ impl ConfigOperations for PrefixConfig {
     }
 
     fn validate(&self) -> Result<()> {
-        if self.name.is_empty() {
-            return Err(PrefixError::Validation(
-                "Prefix name cannot be empty".to_string(),
-            ));
-        }
-        if self.architecture.is_empty() {
-            return Err(PrefixError::Validation(
-                "Architecture cannot be empty".to_string(),
-            ));
-        }
-        if !["win32", "win64"].contains(&self.architecture.as_str()) {
-            return Err(PrefixError::Validation(
-                "Architecture must be 'win32' or 'win64'".to_string(),
-            ));
-        }
-        for (i, exe) in self.registered_executables.iter().enumerate() {
-            if exe.name.is_empty() {
-                return Err(PrefixError::Validation(format!(
-                    "Executable {} has empty name",
-                    i
-                )));
-            }
-            if !exe.executable_path.exists() {
-                return Err(PrefixError::Validation(format!(
-                    "Executable {} has non-existent path: {}",
-                    i,
-                    exe.executable_path.display()
-                )));
-            }
-        }
-        Ok(())
+        PrefixConfig::validate(self)
     }
 
     fn update_last_modified(&mut self) {
@@ -457,5 +427,234 @@ impl RegisteredExecutableBuilder {
 impl Default for RegisteredExecutableBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn valid_config() -> PrefixConfig {
+        PrefixConfig::new("Gaming".to_string(), "win64".to_string())
+    }
+
+    fn exe(name: &str, path: &Path) -> RegisteredExecutable {
+        RegisteredExecutable::new(name.to_string(), path.to_path_buf())
+    }
+
+    fn config_with_exe(dir: &Path) -> PrefixConfig {
+        let exe_path = dir.join("game.exe");
+        fs::write(&exe_path, b"MZ").unwrap();
+        let mut config = valid_config();
+        config.add_executable(exe("Game", &exe_path));
+        config
+    }
+
+    #[test]
+    fn new_has_defaults() {
+        let config = valid_config();
+        assert_eq!(config.version, "1.0.0");
+        assert_eq!(config.name, "Gaming");
+        assert_eq!(config.architecture, "win64");
+        assert!(config.registered_executables.is_empty());
+        assert_eq!(config.creation_date, config.last_modified);
+    }
+
+    #[test]
+    fn validate_accepts_win32_and_win64() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = config_with_exe(dir.path());
+        config.architecture = "win32".to_string();
+        config.validate().unwrap();
+        config.architecture = "win64".to_string();
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_empty_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = config_with_exe(dir.path());
+        config.name = String::new();
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("name"));
+    }
+
+    #[test]
+    fn validate_rejects_unknown_architecture() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = config_with_exe(dir.path());
+        config.architecture = "win128".to_string();
+        assert!(config.validate().is_err());
+        config.architecture = String::new();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_executable_with_empty_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe_path = dir.path().join("game.exe");
+        fs::write(&exe_path, b"MZ").unwrap();
+        let mut config = valid_config();
+        config.add_executable(exe("", &exe_path));
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("empty name"));
+    }
+
+    #[test]
+    fn validate_rejects_missing_executable_path() {
+        let mut config = valid_config();
+        config.add_executable(exe("Ghost", &dir_join("nope.exe")));
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("non-existent path"));
+    }
+
+    fn dir_join(name: &str) -> PathBuf {
+        PathBuf::from("/definitely/not/a/real/dir").join(name)
+    }
+
+    #[test]
+    fn save_and_load_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = config_with_exe(dir.path());
+        config.description = Some("test prefix".to_string());
+        config.wine_version = Some("wine-10.0".to_string());
+        let mut exe = config.registered_executables.remove(0);
+        exe.env_vars.insert("FOO".to_string(), "bar".to_string());
+        exe.imported_modules = vec!["KERNEL32.dll".to_string()];
+        config.add_executable(exe);
+
+        config.save_to_file(dir.path()).unwrap();
+        let loaded = PrefixConfig::load_from_file(dir.path())
+            .unwrap()
+            .expect("config should exist");
+        assert_eq!(loaded, config);
+    }
+
+    #[test]
+    fn load_missing_config_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(PrefixConfig::load_from_file(dir.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn add_and_count_executables() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe_path = dir.path().join("a.exe");
+        fs::write(&exe_path, b"MZ").unwrap();
+        let mut config = valid_config();
+        config.add_executable(exe("A", &exe_path));
+        config.add_executable(exe("B", &exe_path));
+        assert_eq!(config.executable_count(), 2);
+        assert_eq!(config.get_executable_count(), 2);
+    }
+
+    #[test]
+    fn remove_executable_by_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe_path = dir.path().join("a.exe");
+        fs::write(&exe_path, b"MZ").unwrap();
+        let mut config = valid_config();
+        config.add_executable(exe("A", &exe_path));
+        config.add_executable(exe("B", &exe_path));
+        config.remove_executable(0);
+        assert_eq!(config.executable_count(), 1);
+        assert_eq!(config.registered_executables[0].name, "B");
+    }
+
+    #[test]
+    fn remove_out_of_bounds_index_is_noop() {
+        let mut config = valid_config();
+        config.remove_executable(0);
+        config.remove_executable(999);
+        assert_eq!(config.executable_count(), 0);
+    }
+
+    #[test]
+    fn find_executable_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = config_with_exe(dir.path());
+        assert!(config.get_executable_by_name("Game").is_some());
+        assert!(config.get_executable_by_name("missing").is_none());
+        let found = config.find_executable_by_name("Game").unwrap();
+        assert_eq!(found.executable_path, dir.path().join("game.exe"));
+    }
+
+    #[test]
+    fn resolve_icon_path_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = RegisteredExecutable::new("A".to_string(), dir.path().join("a.exe"));
+        assert!(exe.resolve_icon_path(dir.path()).is_none());
+    }
+
+    #[test]
+    fn resolve_icon_path_absolute() {
+        let dir = tempfile::tempdir().unwrap();
+        let icon = dir.path().join("icon.png");
+        fs::write(&icon, b"png").unwrap();
+        let missing = dir.path().join("missing.png");
+        let exe = RegisteredExecutable::new("A".to_string(), dir.path().join("a.exe"));
+
+        let exe = exe.with_icon_path(icon.clone());
+        assert_eq!(exe.resolve_icon_path(dir.path()), Some(icon));
+
+        let exe = exe.with_icon_path(missing);
+        assert!(exe.resolve_icon_path(dir.path()).is_none());
+    }
+
+    #[test]
+    fn resolve_icon_path_relative_joins_prefix() {
+        let prefix = tempfile::tempdir().unwrap();
+        let icons = prefix.path().join("icons");
+        fs::create_dir(&icons).unwrap();
+        let icon = icons.join("app.png");
+        fs::write(&icon, b"png").unwrap();
+
+        let exe = RegisteredExecutable::new("A".to_string(), prefix.path().join("a.exe"))
+            .with_icon_path(PathBuf::from("icons/app.png"));
+        assert_eq!(
+            exe.resolve_icon_path(prefix.path()),
+            Some(prefix.path().join("icons/app.png"))
+        );
+    }
+
+    #[test]
+    fn builder_requires_name_and_path() {
+        let err = RegisteredExecutableBuilder::new().build().unwrap_err();
+        assert!(err.to_string().contains("Name is required"));
+
+        let err = RegisteredExecutableBuilder::new()
+            .name("A")
+            .build()
+            .unwrap_err();
+        assert!(err.to_string().contains("Executable path is required"));
+    }
+
+    #[test]
+    fn builder_builds_complete_executable() {
+        let exe = RegisteredExecutableBuilder::new()
+            .name("Steam")
+            .description("Valve launcher")
+            .executable_path("C:\\Program Files\\Steam\\steam.exe")
+            .file_version("1.2.3")
+            .product_version("9.9")
+            .company_name("Valve")
+            .file_description("Steam Client")
+            .product_name("Steam")
+            .imported_modules(vec!["USER32.dll".to_string()])
+            .env_vars(HashMap::from([(
+                "WINEDEBUG".to_string(),
+                "-all".to_string(),
+            )]))
+            .cwd(Some(PathBuf::from("C:\\Program Files\\Steam")))
+            .build()
+            .unwrap();
+        assert_eq!(exe.name, "Steam");
+        assert_eq!(exe.company_name.as_deref(), Some("Valve"));
+        assert_eq!(exe.imported_modules, vec!["USER32.dll"]);
+        assert_eq!(
+            exe.env_vars.get("WINEDEBUG").map(String::as_str),
+            Some("-all")
+        );
     }
 }

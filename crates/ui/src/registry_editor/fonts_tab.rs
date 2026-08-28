@@ -69,6 +69,7 @@ impl SimpleComponent for FontsTabModel {
     type Output = FontsTabOutput;
     type Widgets = FontsTabWidgets;
 
+    #[rustfmt::skip]
     view! {
         #[root]
         gtk::ScrolledWindow {
@@ -158,7 +159,11 @@ impl SimpleComponent for FontsTabModel {
                 self.refresh_list(&sender);
                 if v {
                     self.mismatch_dialog_shown = false;
-                    maybe_show_shell_dlg_mismatch_dialog(self, self.root_widget.as_ref(), sender.clone());
+                    maybe_show_shell_dlg_mismatch_dialog(
+                        self,
+                        self.root_widget.as_ref(),
+                        sender.clone(),
+                    );
                 }
             }
             FontsTabInput::LoadSettings(s) => {
@@ -183,8 +188,16 @@ impl SimpleComponent for FontsTabModel {
                 }
                 self.set_system_font(normalized.clone());
                 self.system_font_entry.set_text(&normalized);
-                self.shell_dlg_font = if normalized.is_empty() { None } else { Some(normalized.clone()) };
-                self.shell_dlg_2_font = if normalized.is_empty() { None } else { Some(normalized.clone()) };
+                self.shell_dlg_font = if normalized.is_empty() {
+                    None
+                } else {
+                    Some(normalized.clone())
+                };
+                self.shell_dlg_2_font = if normalized.is_empty() {
+                    None
+                } else {
+                    Some(normalized.clone())
+                };
                 self.mismatch_dialog_shown = true;
                 emit_font_setting(&sender, "MS Shell Dlg", normalized.as_str());
                 emit_font_setting(&sender, "MS Shell Dlg 2", normalized.as_str());
@@ -219,10 +232,13 @@ impl SimpleComponent for FontsTabModel {
                     return;
                 }
 
-                self.substitutions.insert(0, FontSubstituteEntry {
-                    source: source.clone(),
-                    target: target.clone(),
-                });
+                self.substitutions.insert(
+                    0,
+                    FontSubstituteEntry {
+                        source: source.clone(),
+                        target: target.clone(),
+                    },
+                );
                 self.draft_source.clear();
                 self.draft_target.clear();
                 let idx = self.substitutions.len() - 1;
@@ -287,9 +303,7 @@ impl FontsTabModel {
                 });
             }
 
-            let draft_arrow = gtk::Label::builder()
-                .label("→")
-                .build();
+            let draft_arrow = gtk::Label::builder().label("→").build();
 
             let draft_target_entry = gtk::Entry::builder()
                 .hexpand(true)
@@ -342,9 +356,7 @@ impl FontsTabModel {
                 });
             }
 
-            let arrow = gtk::Label::builder()
-                .label("→")
-                .build();
+            let arrow = gtk::Label::builder().label("→").build();
 
             let target_entry = gtk::Entry::builder()
                 .hexpand(true)
@@ -429,10 +441,13 @@ fn maybe_show_shell_dlg_mismatch_dialog(
         )),
     );
     alert.add_response("ok", &crate::t!("dialogs.ok"));
-    alert.add_response("unify", &crate::tf!(
-        "registry.fonts.mismatch.unify",
-        "shell_dlg" => &shell_dlg,
-    ));
+    alert.add_response(
+        "unify",
+        &crate::tf!(
+            "registry.fonts.mismatch.unify",
+            "shell_dlg" => &shell_dlg,
+        ),
+    );
     alert.set_response_appearance("unify", adw::ResponseAppearance::Suggested);
     alert.set_default_response(Some("ok"));
     alert.set_close_response("ok");

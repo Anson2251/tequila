@@ -69,6 +69,7 @@ impl FactoryComponent for RegisteredExecutableItem {
     type CommandOutput = ();
     type ParentWidget = gtk::FlowBox;
 
+    #[rustfmt::skip]
     view! {
         #[root]
         gtk::Box {
@@ -147,6 +148,7 @@ impl AsyncComponent for RegisteredAppsListModel {
     type CommandOutput = ();
     type Widgets = RegisteredAppsListWidgets;
 
+    #[rustfmt::skip]
     view! {
         gtk::Box {
             set_orientation: gtk::Orientation::Vertical,

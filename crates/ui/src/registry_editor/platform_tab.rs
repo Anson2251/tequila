@@ -60,6 +60,7 @@ impl SimpleComponent for PlatformTabModel {
     type Input = PlatformTabInput;
     type Output = PlatformTabOutput;
 
+    #[rustfmt::skip]
     view! {
         #[root]
         gtk::ScrolledWindow {

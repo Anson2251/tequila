@@ -88,6 +88,7 @@ impl AsyncComponent for RuntimeSettings {
     type CommandOutput = ();
     type Widgets = RuntimeSettingsWidgets;
 
+    #[rustfmt::skip]
     view! {
         #[root]
         adw::NavigationPage {
@@ -158,9 +159,9 @@ impl AsyncComponent for RuntimeSettings {
             .avail_group
             .set_description(Some(&crate::t!("settings.runtime.available_desc_macos")));
         #[cfg(not(target_os = "macos"))]
-        widgets.avail_group.set_description(Some(
-            &crate::t!("settings.runtime.available_desc_linux"),
-        ));
+        widgets
+            .avail_group
+            .set_description(Some(&crate::t!("settings.runtime.available_desc_linux")));
 
         AsyncComponentParts { model, widgets }
     }
@@ -277,22 +278,19 @@ async fn build_available_channels(
     let mut ctrls: Vec<AsyncController<managed_download_row::ManagedDownloadRow>> = Vec::new();
 
     // ── Fetch all crossover-foss releases from GitHub ───────────────
-    let releases = match prefix::runtime::anson2251::fetch_all_releases(
-        &prefix::github_client(),
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            log::error!("[runtime] failed to fetch crossover-foss releases: {}", e);
-            let row = adw::ActionRow::builder()
-                .title(&crate::t!("settings.runtime.fetch_failed"))
-                .subtitle(&format!("{}", e))
-                .build();
-            group.add(&row);
-            return ctrls;
-        }
-    };
+    let releases =
+        match prefix::runtime::anson2251::fetch_all_releases(&prefix::github_client()).await {
+            Ok(r) => r,
+            Err(e) => {
+                log::error!("[runtime] failed to fetch crossover-foss releases: {}", e);
+                let row = adw::ActionRow::builder()
+                    .title(&crate::t!("settings.runtime.fetch_failed"))
+                    .subtitle(&format!("{}", e))
+                    .build();
+                group.add(&row);
+                return ctrls;
+            }
+        };
 
     for release in releases {
         let runtime_id = format!("anson2251-{}", release.version);
@@ -337,11 +335,10 @@ async fn build_available_channels(
                     let (tx, rx) = std::sync::mpsc::channel::<Result<RuntimeManager, String>>();
 
                     let cancel_for_thread = cancel.clone();
-                    let shared_progress =
-                        std::sync::Arc::new(std::sync::Mutex::new(progress));
+                    let shared_progress = std::sync::Arc::new(std::sync::Mutex::new(progress));
                     std::thread::spawn(move || {
-                        let rt = tokio::runtime::Runtime::new()
-                            .expect("Failed to create tokio runtime");
+                        let rt =
+                            tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
                         let result: Result<RuntimeManager, String> = rt.block_on(async {
                             // 1. Download + verify via the shared GitHub client
@@ -764,7 +761,9 @@ fn macos_import_dialog(sender: &AsyncComponentSender<RuntimeSettings>) {
     panel.setCanChooseFiles(true);
     panel.setCanChooseDirectories(true);
     panel.setAllowsMultipleSelection(false);
-    panel.setTitle(Some(&NSString::from_str(&crate::t!("settings.runtime.select_wine"))));
+    panel.setTitle(Some(&NSString::from_str(&crate::t!(
+        "settings.runtime.select_wine"
+    ))));
 
     let panel_for_block = panel.clone();
     let s = sender.clone();

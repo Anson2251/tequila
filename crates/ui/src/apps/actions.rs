@@ -61,6 +61,7 @@ impl AsyncComponent for AppActionsModel {
     type CommandOutput = ();
     type Widgets = AppActionsWidgets;
 
+    #[rustfmt::skip]
     view! {
         gtk::Box {
             set_orientation: gtk::Orientation::Horizontal,
@@ -267,7 +268,9 @@ impl AsyncComponent for AppActionsModel {
         }
         let action_group = gtk::gio::SimpleActionGroup::new();
         action_group.add_action(&debug_action);
-        widgets.launch_btn.insert_action_group("btn", Some(&action_group));
+        widgets
+            .launch_btn
+            .insert_action_group("btn", Some(&action_group));
 
         let menu = gtk::gio::Menu::new();
         {

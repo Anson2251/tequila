@@ -74,9 +74,9 @@ where
     panel.setCanChooseFiles(false);
     panel.setCanChooseDirectories(true);
     panel.setAllowsMultipleSelection(false);
-    panel.setTitle(Some(&objc2_foundation::NSString::from_str(
-        &crate::t!("dialogs.choose_dir"),
-    )));
+    panel.setTitle(Some(&objc2_foundation::NSString::from_str(&crate::t!(
+        "dialogs.choose_dir"
+    ))));
 
     // Set initial directory if provided
     if let Some(path) = initial_path {
@@ -136,10 +136,8 @@ fn macos_save_file<F>(
     if !_extensions.is_empty() {
         use objc2::rc::Retained;
         use objc2_foundation::{NSArray, NSString};
-        let retained: Vec<Retained<NSString>> = _extensions
-            .iter()
-            .map(|e| NSString::from_str(e))
-            .collect();
+        let retained: Vec<Retained<NSString>> =
+            _extensions.iter().map(|e| NSString::from_str(e)).collect();
         let refs: Vec<&NSString> = retained.iter().map(|s| &**s).collect();
         let arr = NSArray::from_slice(&refs);
         #[allow(deprecated)]

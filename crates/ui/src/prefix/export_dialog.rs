@@ -39,6 +39,7 @@ impl SimpleComponent for ExportDialogModel {
     type Input = ExportDialogMsg;
     type Output = AppMsg;
 
+    #[rustfmt::skip]
     view! {
         #[name = "dialog"]
         gtk::Window {
@@ -307,7 +308,10 @@ impl SimpleComponent for ExportDialogModel {
                         self.progress_label.set_visible(false);
                         self.progress_bar.set_visible(false);
 
-                        let alert = adw::AlertDialog::new(Some(&crate::t!("prefix.export.failed")), Some(&e));
+                        let alert = adw::AlertDialog::new(
+                            Some(&crate::t!("prefix.export.failed")),
+                            Some(&e),
+                        );
                         alert.add_response("ok", &crate::t!("dialogs.ok"));
                         alert.set_default_response(Some("ok"));
                         alert.set_close_response("ok");

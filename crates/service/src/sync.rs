@@ -58,7 +58,11 @@ pub fn sync_all_prefixes(service: &AppService) -> SyncResult {
         if prefix.enrich_executables() {
             // Persist config changes directly (no Manager lock needed)
             if let Err(e) = prefix.save_config() {
-                error!("[sync] failed to save config for '{}': {}", p.path.display(), e);
+                error!(
+                    "[sync] failed to save config for '{}': {}",
+                    p.path.display(),
+                    e
+                );
             }
         }
 

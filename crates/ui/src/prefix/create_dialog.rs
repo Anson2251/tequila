@@ -67,6 +67,7 @@ impl SimpleComponent for CreatePrefixDialog {
     type Input = CreatePrefixMsg;
     type Output = AppMsg;
 
+    #[rustfmt::skip]
     view! {
         #[name = "dialog"]
         gtk::Window {

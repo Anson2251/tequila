@@ -42,6 +42,7 @@ impl SimpleComponent for GeneralTabModel {
     type Input = GeneralTabInput;
     type Output = GeneralTabOutput;
 
+    #[rustfmt::skip]
     view! {
         #[root]
         gtk::ScrolledWindow {

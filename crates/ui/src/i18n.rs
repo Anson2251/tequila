@@ -38,7 +38,11 @@ impl Language {
         for var in &["LC_ALL", "LC_MESSAGES", "LANG"] {
             if let Ok(val) = std::env::var(var) {
                 let val = val.to_lowercase();
-                if val.starts_with("zh_cn") || val.starts_with("zh-cn") || val.starts_with("zh_hans") || val.starts_with("zh") {
+                if val.starts_with("zh_cn")
+                    || val.starts_with("zh-cn")
+                    || val.starts_with("zh_hans")
+                    || val.starts_with("zh")
+                {
                     return "zh-CN.json";
                 }
                 if val.starts_with("en") {

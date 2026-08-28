@@ -461,3 +461,183 @@ impl WindowsFloatWhenInactive {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_version_roundtrip() {
+        let versions = [
+            WindowsVersion::Win10,
+            WindowsVersion::Win81,
+            WindowsVersion::Win8,
+            WindowsVersion::Win7,
+            WindowsVersion::Win2008,
+            WindowsVersion::Vista,
+            WindowsVersion::Win2003,
+            WindowsVersion::WinXP,
+            WindowsVersion::Win2K,
+            WindowsVersion::NT40,
+            WindowsVersion::WinME,
+            WindowsVersion::Win98,
+            WindowsVersion::Win95,
+            WindowsVersion::Win31,
+        ];
+        for v in versions {
+            assert_eq!(WindowsVersion::from_string(v.to_string()), Some(v.clone()));
+        }
+    }
+
+    #[test]
+    fn windows_version_rejects_unknown() {
+        assert_eq!(WindowsVersion::from_string("win11"), None);
+        assert_eq!(WindowsVersion::from_string(""), None);
+        assert_eq!(WindowsVersion::from_string("WIN10"), None);
+    }
+
+    #[test]
+    fn d3d_renderer_roundtrip() {
+        assert_eq!(
+            D3DRenderer::from_string(D3DRenderer::GDI.to_string()),
+            Some(D3DRenderer::GDI)
+        );
+        assert_eq!(
+            D3DRenderer::from_string(D3DRenderer::OpenGL.to_string()),
+            Some(D3DRenderer::OpenGL)
+        );
+        assert_eq!(
+            D3DRenderer::from_string(D3DRenderer::Vulkan.to_string()),
+            Some(D3DRenderer::Vulkan)
+        );
+        assert_eq!(D3DRenderer::GDI.to_string(), "gdi");
+        assert_eq!(D3DRenderer::OpenGL.to_string(), "gl");
+    }
+
+    #[test]
+    fn d3d_renderer_accepts_no3d_alias() {
+        assert_eq!(D3DRenderer::from_string("no3d"), Some(D3DRenderer::GDI));
+    }
+
+    #[test]
+    fn offscreen_rendering_mode_roundtrip() {
+        for m in [
+            OffscreenRenderingMode::Backbuffer,
+            OffscreenRenderingMode::FBO,
+        ] {
+            assert_eq!(
+                OffscreenRenderingMode::from_string(m.to_string()),
+                Some(m.clone())
+            );
+        }
+    }
+
+    #[test]
+    fn mouse_warp_override_roundtrip() {
+        for m in [
+            MouseWarpOverride::Enable,
+            MouseWarpOverride::Disable,
+            MouseWarpOverride::Force,
+        ] {
+            assert_eq!(
+                MouseWarpOverride::from_string(m.to_string()),
+                Some(m.clone())
+            );
+        }
+    }
+
+    #[test]
+    fn desktop_size_roundtrip() {
+        let size = DesktopSize::new(1920, 1080);
+        assert_eq!(size.to_string(), "1920x1080");
+        assert_eq!(DesktopSize::from_string("1920x1080"), Some(size));
+    }
+
+    #[test]
+    fn desktop_size_rejects_malformed() {
+        assert_eq!(DesktopSize::from_string("1920"), None);
+        assert_eq!(DesktopSize::from_string("1920x1080x60"), None);
+        assert_eq!(DesktopSize::from_string("axb"), None);
+        assert_eq!(DesktopSize::from_string("-1920x1080"), None);
+        assert_eq!(DesktopSize::from_string(""), None);
+    }
+
+    #[test]
+    fn dll_override_setting_roundtrip() {
+        for s in [
+            DllOverrideSetting::Native,
+            DllOverrideSetting::Builtin,
+            DllOverrideSetting::NativeBuiltin,
+            DllOverrideSetting::BuiltinNative,
+            DllOverrideSetting::Disabled,
+        ] {
+            assert_eq!(
+                DllOverrideSetting::from_string(s.to_string()),
+                Some(s.clone())
+            );
+        }
+        assert_eq!(
+            DllOverrideSetting::NativeBuiltin.to_string(),
+            "native,builtin"
+        );
+        assert_eq!(DllOverrideSetting::Disabled.to_string(), "");
+    }
+
+    #[test]
+    fn audio_driver_roundtrip() {
+        for d in [
+            AudioDriver::Pulse,
+            AudioDriver::ALSA,
+            AudioDriver::OSS,
+            AudioDriver::CoreAudio,
+            AudioDriver::Disabled,
+        ] {
+            assert_eq!(AudioDriver::from_string(d.to_string()), Some(d.clone()));
+        }
+        assert_eq!(AudioDriver::Disabled.to_string(), "");
+    }
+
+    #[test]
+    fn graphics_driver_roundtrip() {
+        for d in [
+            GraphicsDriver::X11,
+            GraphicsDriver::Mac,
+            GraphicsDriver::Null,
+        ] {
+            assert_eq!(GraphicsDriver::from_string(d.to_string()), Some(d.clone()));
+        }
+    }
+
+    #[test]
+    fn windows_float_when_inactive_roundtrip() {
+        for v in [
+            WindowsFloatWhenInactive::None,
+            WindowsFloatWhenInactive::All,
+            WindowsFloatWhenInactive::NonFullscreen,
+        ] {
+            assert_eq!(
+                WindowsFloatWhenInactive::from_string(v.to_string()),
+                Some(v.clone())
+            );
+        }
+    }
+
+    #[test]
+    fn settings_serde_roundtrip() {
+        let mut app = AppSettings::new("game.exe".to_string());
+        app.dll_overrides = vec![DllOverride {
+            dll: "d3d11".to_string(),
+            setting: DllOverrideSetting::NativeBuiltin,
+        }];
+        app.d3d_renderer = Some(D3DRenderer::Vulkan);
+        app.desktop_settings = Some(DesktopSettings {
+            desktop: Some("Game Desktop".to_string()),
+            desktops: HashMap::from([("Game Desktop".to_string(), DesktopSize::new(2560, 1440))]),
+            show_systray: true,
+        });
+
+        let json = serde_json::to_string(&app).unwrap();
+        let parsed: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, app);
+    }
+}

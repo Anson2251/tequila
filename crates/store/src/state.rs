@@ -270,3 +270,229 @@ impl std::fmt::Debug for PrefixStore {
         f.debug_struct("PrefixStore").finish()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base::config::RegisteredExecutable;
+    use std::path::{Path, PathBuf};
+
+    fn store() -> (tempfile::TempDir, PrefixStore) {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("nested").join("state.db");
+        let store = PrefixStore::open(&db_path).unwrap();
+        (dir, store)
+    }
+
+    fn exe(name: &str, path: &str) -> RegisteredExecutable {
+        RegisteredExecutable::new(name.to_string(), PathBuf::from(path))
+    }
+
+    #[test]
+    fn open_creates_parent_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("a").join("b").join("state.db");
+        assert!(PrefixStore::open(&db_path).is_ok());
+        assert!(db_path.exists());
+    }
+
+    #[test]
+    fn setting_roundtrip() {
+        let (_dir, store) = store();
+        store
+            .save_setting("/prefix", "Display", "ScreenDepth", Some("32"))
+            .unwrap();
+        assert_eq!(
+            store
+                .get_setting("/prefix", "Display", "ScreenDepth")
+                .unwrap(),
+            Some("32".to_string())
+        );
+    }
+
+    #[test]
+    fn setting_null_value_reads_as_none() {
+        let (_dir, store) = store();
+        store.save_setting("/p", "S", "K", None).unwrap();
+        assert_eq!(store.get_setting("/p", "S", "K").unwrap(), None);
+    }
+
+    #[test]
+    fn get_missing_setting_returns_none() {
+        let (_dir, store) = store();
+        assert_eq!(
+            store.get_setting("/p", "S", "missing").unwrap(),
+            None::<String>
+        );
+    }
+
+    #[test]
+    fn save_setting_replaces_existing() {
+        let (_dir, store) = store();
+        store.save_setting("/p", "S", "K", Some("old")).unwrap();
+        store.save_setting("/p", "S", "K", Some("new")).unwrap();
+        assert_eq!(
+            store.get_setting("/p", "S", "K").unwrap(),
+            Some("new".to_string())
+        );
+    }
+
+    #[test]
+    fn settings_are_scoped_by_prefix_and_section() {
+        let (_dir, store) = store();
+        store.save_setting("/p1", "S", "K", Some("a")).unwrap();
+        store.save_setting("/p2", "S", "K", Some("b")).unwrap();
+        store.save_setting("/p1", "T", "K", Some("c")).unwrap();
+        assert_eq!(
+            store.get_setting("/p1", "S", "K").unwrap(),
+            Some("a".to_string())
+        );
+        assert_eq!(
+            store.get_setting("/p2", "S", "K").unwrap(),
+            Some("b".to_string())
+        );
+    }
+
+    #[test]
+    fn get_settings_section_sorted_by_key() {
+        let (_dir, store) = store();
+        store.save_setting("/p", "S", "zebra", Some("1")).unwrap();
+        store.save_setting("/p", "S", "alpha", Some("2")).unwrap();
+        store
+            .save_setting("/p", "Other", "alpha", Some("3"))
+            .unwrap();
+        let rows = store.get_settings_section("/p", "S").unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("alpha".to_string(), Some("2".to_string())),
+                ("zebra".to_string(), Some("1".to_string())),
+            ]
+        );
+    }
+
+    #[test]
+    fn registry_hash_verification() {
+        let (_dir, store) = store();
+        assert!(!store.verify_registry_hashes("/p", "u1", "s1").unwrap());
+
+        store.save_registry_hashes("/p", "u1", "s1").unwrap();
+        assert!(store.verify_registry_hashes("/p", "u1", "s1").unwrap());
+        assert!(!store.verify_registry_hashes("/p", "u2", "s1").unwrap());
+        assert!(!store.verify_registry_hashes("/p", "u1", "s2").unwrap());
+
+        store.save_registry_hashes("/p", "u9", "s9").unwrap();
+        assert!(store.verify_registry_hashes("/p", "u9", "s9").unwrap());
+    }
+
+    #[test]
+    fn invalidate_registry_cache_clears_settings_and_hashes() {
+        let (_dir, store) = store();
+        store.save_setting("/p", "S", "K", Some("v")).unwrap();
+        store.save_registry_hashes("/p", "u", "s").unwrap();
+        store.save_setting("/other", "S", "K", Some("v")).unwrap();
+
+        store.invalidate_registry_cache("/p").unwrap();
+
+        assert!(!store.has_registry_cache("/p"));
+        assert_eq!(store.get_setting("/p", "S", "K").unwrap(), None);
+        assert!(!store.verify_registry_hashes("/p", "u", "s").unwrap());
+        assert!(store.has_registry_cache("/other"));
+    }
+
+    #[test]
+    fn has_registry_cache_empty_by_default() {
+        let (_dir, store) = store();
+        assert!(!store.has_registry_cache("/p"));
+    }
+
+    #[test]
+    fn scanned_executables_roundtrip() {
+        let (_dir, store) = store();
+        assert!(!store.has_scanned_prefix("/p"));
+
+        store
+            .save_scanned_executables(
+                "/p",
+                &[exe("zebra", "C:\\zebra.exe"), exe("alpha", "C:\\alpha.exe")],
+            )
+            .unwrap();
+        assert!(store.has_scanned_prefix("/p"));
+
+        let listed = store.list_scanned_executables("/p").unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].name, "alpha");
+        assert_eq!(listed[1].name, "zebra");
+        assert_eq!(listed[0].executable_path, PathBuf::from("C:\\alpha.exe"));
+    }
+
+    #[test]
+    fn save_scanned_executables_replaces_previous() {
+        let (_dir, store) = store();
+        store
+            .save_scanned_executables("/p", &[exe("old", "C:\\old.exe")])
+            .unwrap();
+        store
+            .save_scanned_executables("/p", &[exe("new", "C:\\new.exe")])
+            .unwrap();
+        let listed = store.list_scanned_executables("/p").unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "new");
+    }
+
+    #[test]
+    fn save_empty_scanned_list_clears_prefix() {
+        let (_dir, store) = store();
+        store
+            .save_scanned_executables("/p", &[exe("old", "C:\\old.exe")])
+            .unwrap();
+        store.save_scanned_executables("/p", &[]).unwrap();
+        assert!(!store.has_scanned_prefix("/p"));
+        assert!(store.list_scanned_executables("/p").unwrap().is_empty());
+    }
+
+    #[test]
+    fn scanned_executables_are_scoped_by_prefix() {
+        let (_dir, store) = store();
+        store
+            .save_scanned_executables("/p1", &[exe("a", "C:\\a.exe")])
+            .unwrap();
+        assert!(store.list_scanned_executables("/p2").unwrap().is_empty());
+    }
+
+    #[test]
+    fn scanned_executables_persist_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("state.db");
+        {
+            let store = PrefixStore::open(&db_path).unwrap();
+            store
+                .save_scanned_executables("/p", &[exe("keep", "C:\\keep.exe")])
+                .unwrap();
+        }
+        let reopened = PrefixStore::open(&db_path).unwrap();
+        let listed = reopened.list_scanned_executables("/p").unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "keep");
+    }
+
+    #[test]
+    fn scanned_metadata_fields_roundtrip() {
+        let (_dir, store) = store();
+        let mut full = exe("full", "C:\\full.exe");
+        full.description = Some("A game".to_string());
+        full.icon_path = Some(PathBuf::from("icons/full.png"));
+        full.file_version = Some("1.0".to_string());
+        full.company_name = Some("Acme".to_string());
+        store.save_scanned_executables("/p", &[full]).unwrap();
+
+        let listed = store.list_scanned_executables("/p").unwrap();
+        assert_eq!(listed[0].description.as_deref(), Some("A game"));
+        assert_eq!(
+            listed[0].icon_path.as_deref(),
+            Some(Path::new("icons/full.png"))
+        );
+        assert_eq!(listed[0].file_version.as_deref(), Some("1.0"));
+        assert_eq!(listed[0].company_name.as_deref(), Some("Acme"));
+    }
+}

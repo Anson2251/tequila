@@ -1,20 +1,25 @@
 use gtk::gio;
-use log::info;
 use prefix::WinePrefix;
+use relm4::RelmWidgetExt;
 use relm4::adw::prelude::*;
+use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender, FactoryVecDeque};
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 
 #[derive(Debug)]
 pub struct PrefixListModel {
     prefixes: Vec<WinePrefix>,
     selected_prefix: Option<usize>,
-    list_box: gtk::ListBox,
+    prefix_items: FactoryVecDeque<PrefixItem>,
 }
 
 #[derive(Debug)]
 pub enum PrefixListMsg {
     SelectPrefix(usize),
     SetPrefixes(Vec<WinePrefix>),
+    Export(usize),
+    OpenInFileManager(usize),
+    OpenInTerminal(usize),
+    Delete(usize),
 }
 
 #[derive(Debug)]
@@ -34,14 +39,34 @@ impl SimpleComponent for PrefixListModel {
     type Output = PrefixListOutput;
     type Widgets = PrefixListWidgets;
 
+    #[rustfmt::skip]
     view! {
-        gtk::ScrolledWindow {
-            set_vexpand: true,
+        gtk::Box {
+            set_orientation: gtk::Orientation::Vertical,
 
-            #[name = "prefix_list_box"]
-            gtk::ListBox {
-                set_selection_mode: gtk::SelectionMode::Single,
-            }
+            gtk::ScrolledWindow {
+                set_vexpand: true,
+                #[watch]
+                set_visible: !model.prefixes.is_empty(),
+
+                #[local_ref]
+                prefix_list_box -> gtk::ListBox {
+                    set_selection_mode: gtk::SelectionMode::Single,
+                    set_margin_all: 6,
+                },
+            },
+
+            gtk::Label {
+                set_halign: gtk::Align::Center,
+                set_valign: gtk::Align::Center,
+                set_vexpand: true,
+                set_margin_top: 40,
+                set_wrap: true,
+                set_css_classes: &["dim-label", "body"],
+                set_label: &crate::t!("sidebar.no_prefixes"),
+                #[watch]
+                set_visible: model.prefixes.is_empty(),
+            },
         }
     }
 
@@ -52,36 +77,42 @@ impl SimpleComponent for PrefixListModel {
     ) -> ComponentParts<Self> {
         let (prefixes, selected_prefix) = init;
 
-        let widgets = view_output!();
-
-        let sender_clone = sender.clone();
-        widgets
-            .prefix_list_box
-            .connect_row_activated(move |_, row| {
-                if let Some(idx) = row.index().checked_sub(0) {
-                    if idx >= 0 {
-                        sender_clone.input(PrefixListMsg::SelectPrefix(idx as usize));
-                    }
-                }
-            });
-
-        let model = PrefixListModel {
+        let mut model = PrefixListModel {
             prefixes: prefixes.clone(),
             selected_prefix,
-            list_box: widgets.prefix_list_box.clone(),
+            prefix_items: FactoryVecDeque::builder()
+                .launch(gtk::ListBox::default())
+                .forward(sender.input_sender(), |msg| match msg {
+                    PrefixItemOutput::Export(index) => PrefixListMsg::Export(index),
+                    PrefixItemOutput::OpenInFileManager(index) => {
+                        PrefixListMsg::OpenInFileManager(index)
+                    }
+                    PrefixItemOutput::OpenInTerminal(index) => PrefixListMsg::OpenInTerminal(index),
+                    PrefixItemOutput::Delete(index) => PrefixListMsg::Delete(index),
+                }),
         };
 
-        populate(&model.prefixes, &model.list_box, &sender);
+        let prefix_list_box = model.prefix_items.widget();
+        let widgets = view_output!();
+
+        // Row activation (left click / Enter) → toggle selection
+        let sender_clone = sender.clone();
+        prefix_list_box.connect_row_activated(move |_, row| {
+            let index = row.index();
+            if index >= 0 {
+                sender_clone.input(PrefixListMsg::SelectPrefix(index as usize));
+            }
+        });
+
+        model.sync_items(&prefixes);
 
         // Auto-select first prefix if there's exactly one
         if model.prefixes.len() == 1 {
+            model.selected_prefix = Some(0);
+            model.sync_selection();
             let _ = sender.output(PrefixListOutput::SelectPrefix(0));
         } else {
-            let lb = model.list_box.clone();
-            gtk::glib::idle_add_local(move || {
-                lb.unselect_all();
-                gtk::glib::ControlFlow::Break
-            });
+            model.sync_selection();
         }
 
         ComponentParts { model, widgets }
@@ -92,150 +123,182 @@ impl SimpleComponent for PrefixListModel {
             PrefixListMsg::SetPrefixes(prefixes) => {
                 log::debug!("[list] set_prefixes received: {} items", prefixes.len());
                 self.prefixes = prefixes.clone();
-                populate(&self.prefixes, &self.list_box, &sender);
+                self.selected_prefix = None;
+                self.sync_items(&prefixes);
+                self.sync_selection();
 
                 // Auto-select first prefix if there's exactly one
                 if prefixes.len() == 1 {
+                    self.selected_prefix = Some(0);
+                    self.sync_selection();
                     let _ = sender.output(PrefixListOutput::SelectPrefix(0));
                 }
             }
             PrefixListMsg::SelectPrefix(index) => {
                 if self.selected_prefix == Some(index) {
                     self.selected_prefix = None;
-                    self.list_box.unselect_all();
                     let _ = sender.output(PrefixListOutput::DeselectPrefix);
                 } else {
                     self.selected_prefix = Some(index);
                     let _ = sender.output(PrefixListOutput::SelectPrefix(index));
                 }
+                self.sync_selection();
+            }
+            PrefixListMsg::Export(index) => {
+                let _ = sender.output(PrefixListOutput::ExportPrefix(index));
+            }
+            PrefixListMsg::OpenInFileManager(index) => {
+                let _ = sender.output(PrefixListOutput::OpenInFileManager(index));
+            }
+            PrefixListMsg::OpenInTerminal(index) => {
+                let _ = sender.output(PrefixListOutput::OpenInTerminal(index));
+            }
+            PrefixListMsg::Delete(index) => {
+                let _ = sender.output(PrefixListOutput::DeletePrefix(index));
             }
         }
     }
 }
 
-fn populate(
-    prefixes: &[WinePrefix],
-    list_box: &gtk::ListBox,
-    sender: &ComponentSender<PrefixListModel>,
-) {
-    while let Some(row) = list_box.first_child() {
-        list_box.remove(&row);
+impl PrefixListModel {
+    fn sync_items(&mut self, prefixes: &[WinePrefix]) {
+        let mut guard = self.prefix_items.guard();
+        guard.clear();
+        for prefix in prefixes {
+            guard.push_back(prefix.clone());
+        }
     }
 
-    log::debug!("[list] populate: {} prefixes", prefixes.len());
-    if prefixes.is_empty() {
-        let label = gtk::Label::builder()
-            .label(&crate::t!("sidebar.no_prefixes"))
-            .halign(gtk::Align::Center)
-            .valign(gtk::Align::Center)
-            .margin_top(40)
-            .wrap(true)
-            .css_classes(["dim-label", "body"])
-            .build();
-        list_box.append(
-            &gtk::ListBoxRow::builder()
-                .selectable(false)
-                .child(&label)
-                .build(),
-        );
-        return;
+    /// Keep the ListBox's visual selection in sync with `selected_prefix`.
+    fn sync_selection(&self) {
+        let list_box = self.prefix_items.widget();
+        match self.selected_prefix {
+            Some(index) => {
+                if let Some(row) = list_box.row_at_index(index as i32) {
+                    list_box.select_row(Some(&row));
+                }
+            }
+            None => list_box.unselect_all(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct PrefixItem {
+    prefix: WinePrefix,
+    index: DynamicIndex,
+}
+
+#[derive(Debug)]
+enum PrefixItemInput {
+    Export,
+    OpenInFileManager,
+    OpenInTerminal,
+    Delete,
+}
+
+#[derive(Debug)]
+enum PrefixItemOutput {
+    Export(usize),
+    OpenInFileManager(usize),
+    OpenInTerminal(usize),
+    Delete(usize),
+}
+
+impl PrefixItem {
+    fn detail(&self) -> String {
+        format!(
+            "{} · {} apps",
+            self.prefix.config.architecture,
+            self.prefix.config.registered_executables.len()
+        )
+    }
+}
+
+#[relm4::factory]
+impl FactoryComponent for PrefixItem {
+    type Init = WinePrefix;
+    type Input = PrefixItemInput;
+    type Output = PrefixItemOutput;
+    type CommandOutput = ();
+    type ParentWidget = gtk::ListBox;
+
+    #[rustfmt::skip]
+    view! {
+        #[root]
+        gtk::ListBoxRow {
+            set_selectable: true,
+            set_activatable: true,
+
+            gtk::Box {
+                set_orientation: gtk::Orientation::Vertical,
+                set_spacing: 1,
+                set_hexpand: true,
+                set_margin_top: 3,
+                set_margin_bottom: 3,
+                set_margin_start: 8,
+                set_margin_end: 8,
+
+                gtk::Label {
+                    set_halign: gtk::Align::Start,
+                    set_css_classes: &["heading"],
+                    #[watch]
+                    set_label: &self.prefix.name,
+                },
+
+                gtk::Label {
+                    set_halign: gtk::Align::Start,
+                    set_css_classes: &["caption", "dim-label"],
+                    #[watch]
+                    set_label: &self.detail(),
+                },
+            },
+        }
     }
 
-    for (i, prefix) in prefixes.iter().enumerate() {
-        let name = gtk::Label::builder()
-            .label(&prefix.name)
-            .halign(gtk::Align::Start)
-            .css_classes(["heading"])
-            .build();
+    fn init_model(init: Self::Init, index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
+        Self {
+            prefix: init,
+            index: index.clone(),
+        }
+    }
 
-        let detail = gtk::Label::builder()
-            .label(&format!(
-                "{} · {} apps",
-                prefix.config.architecture,
-                prefix.config.registered_executables.len()
-            ))
-            .halign(gtk::Align::Start)
-            .css_classes(["caption", "dim-label"])
-            .build();
-
-        let box_ = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .spacing(1)
-            .hexpand(true)
-            .margin_top(3)
-            .margin_bottom(3)
-            .margin_start(8)
-            .margin_end(8)
-            .build();
-        box_.append(&name);
-        box_.append(&detail);
-
-        let row = gtk::ListBoxRow::builder()
-            .selectable(true)
-            .activatable(true)
-            .child(&box_)
-            .build();
-
-        // Left-click → select
-        let s = sender.clone();
-        row.connect_activate(move |_| s.input(PrefixListMsg::SelectPrefix(i)));
+    fn init_widgets(
+        &mut self,
+        _index: &DynamicIndex,
+        root: Self::Root,
+        _returned_widget: &gtk::ListBoxRow,
+        sender: FactorySender<Self>,
+    ) -> Self::Widgets {
+        let widgets = view_output!();
 
         // Right-click → context menu
-        let s = sender.clone();
-        let prefix_name = prefix.name.clone();
-        let row_ref = row.clone();
+        let widget = root.upcast_ref::<gtk::Widget>().clone();
         let gesture = gtk::GestureClick::new();
         gesture.set_button(3); // right button
+        let s = sender.clone();
         gesture.connect_pressed(move |_gesture, _n_press, x, y| {
-            let prefix_idx = i;
+            show_context_menu(&widget, x, y, &s);
+        });
+        root.add_controller(gesture);
 
-            let export_action = gio::SimpleAction::new("export", None);
-            let open_fm_action = gio::SimpleAction::new("open-fm", None);
-            let open_term_action = gio::SimpleAction::new("open-term", None);
-            let delete_action = gio::SimpleAction::new("delete", None);
-            let actions = gio::SimpleActionGroup::new();
-            actions.add_action(&open_fm_action);
-            actions.add_action(&open_term_action);
-            actions.add_action(&export_action);
-            actions.add_action(&delete_action);
-            row_ref.insert_action_group("pref", Some(&actions));
+        widgets
+    }
 
-            let menu = gio::Menu::new();
-            menu.append(Some(&crate::t!("prefix.context.open_fm")), Some("pref.open-fm"));
-            menu.append(Some(&crate::t!("prefix.context.open_term")), Some("pref.open-term"));
-            menu.append(Some(&crate::t!("prefix.context.export")), Some("pref.export"));
-            menu.append(Some(&crate::t!("prefix.context.delete")), Some("pref.delete"));
-
-            let popover = gtk::PopoverMenu::from_model(Some(&menu));
-            popover.set_has_arrow(false);
-            popover.set_halign(gtk::Align::Start);
-            popover.set_parent(&row_ref);
-            let rect = gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
-            popover.set_pointing_to(Some(&rect));
-
-            let popover_clone = popover.clone();
-            let s_export = s.clone();
-            export_action.connect_activate(move |_, _| {
-                popover_clone.popdown();
-                let _ = s_export.output(PrefixListOutput::ExportPrefix(prefix_idx));
-            });
-
-            let s_fm = s.clone();
-            open_fm_action.connect_activate(move |_, _| {
-                let _ = s_fm.output(PrefixListOutput::OpenInFileManager(prefix_idx));
-            });
-
-            let s_term = s.clone();
-            open_term_action.connect_activate(move |_, _| {
-                let _ = s_term.output(PrefixListOutput::OpenInTerminal(prefix_idx));
-            });
-
-            let popover_clone2 = popover.clone();
-            let s_del = s.clone();
-            let name = prefix_name.clone();
-            delete_action.connect_activate(move |_, _| {
-                popover_clone2.popdown();
-
+    fn update(&mut self, msg: Self::Input, sender: FactorySender<Self>) {
+        let index = self.index.current_index();
+        match msg {
+            PrefixItemInput::Export => {
+                let _ = sender.output(PrefixItemOutput::Export(index));
+            }
+            PrefixItemInput::OpenInFileManager => {
+                let _ = sender.output(PrefixItemOutput::OpenInFileManager(index));
+            }
+            PrefixItemInput::OpenInTerminal => {
+                let _ = sender.output(PrefixItemOutput::OpenInTerminal(index));
+            }
+            PrefixItemInput::Delete => {
+                let name = self.prefix.name.clone();
                 let alert = adw::AlertDialog::new(
                     Some(&crate::t!("prefix.delete.title")),
                     Some(&crate::tf!("prefix.delete.confirm", "name" => &name)),
@@ -245,19 +308,83 @@ fn populate(
                 alert.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
                 alert.set_default_response(Some("cancel"));
                 alert.set_close_response("cancel");
-                let s = s_del.clone();
-                alert.choose(None::<&gtk::Window>, None::<&gtk::gio::Cancellable>, move |response| {
-                    if response == "delete" {
-                        let _ = s.output(PrefixListOutput::DeletePrefix(prefix_idx));
-                    }
-                });
-            });
 
-            popover.popup();
-        });
-        row.add_controller(gesture);
-        list_box.append(&row);
+                let index = self.index.clone();
+                let s = sender.clone();
+                alert.choose(
+                    None::<&gtk::Window>,
+                    None::<&gio::Cancellable>,
+                    move |response| {
+                        if response == "delete" {
+                            let _ = s.output(PrefixItemOutput::Delete(index.current_index()));
+                        }
+                    },
+                );
+            }
+        }
     }
-    // Unselect all to prevent auto-selecting the first row
-    list_box.unselect_all();
+}
+
+fn show_context_menu(widget: &gtk::Widget, x: f64, y: f64, sender: &FactorySender<PrefixItem>) {
+    let export_action = gio::SimpleAction::new("export", None);
+    let open_fm_action = gio::SimpleAction::new("open-fm", None);
+    let open_term_action = gio::SimpleAction::new("open-term", None);
+    let delete_action = gio::SimpleAction::new("delete", None);
+    let actions = gio::SimpleActionGroup::new();
+    actions.add_action(&open_fm_action);
+    actions.add_action(&open_term_action);
+    actions.add_action(&export_action);
+    actions.add_action(&delete_action);
+    widget.insert_action_group("pref", Some(&actions));
+
+    let menu = gio::Menu::new();
+    menu.append(
+        Some(&crate::t!("prefix.context.open_fm")),
+        Some("pref.open-fm"),
+    );
+    menu.append(
+        Some(&crate::t!("prefix.context.open_term")),
+        Some("pref.open-term"),
+    );
+    menu.append(
+        Some(&crate::t!("prefix.context.export")),
+        Some("pref.export"),
+    );
+    menu.append(
+        Some(&crate::t!("prefix.context.delete")),
+        Some("pref.delete"),
+    );
+
+    let popover = gtk::PopoverMenu::from_model(Some(&menu));
+    popover.set_has_arrow(false);
+    popover.set_halign(gtk::Align::Start);
+    popover.set_parent(widget);
+    let rect = gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
+    popover.set_pointing_to(Some(&rect));
+
+    let s = sender.clone();
+    open_fm_action.connect_activate(move |_, _| {
+        s.input(PrefixItemInput::OpenInFileManager);
+    });
+
+    let s = sender.clone();
+    open_term_action.connect_activate(move |_, _| {
+        s.input(PrefixItemInput::OpenInTerminal);
+    });
+
+    let popover_clone = popover.clone();
+    let s = sender.clone();
+    export_action.connect_activate(move |_, _| {
+        popover_clone.popdown();
+        s.input(PrefixItemInput::Export);
+    });
+
+    let popover_clone = popover.clone();
+    let s = sender.clone();
+    delete_action.connect_activate(move |_, _| {
+        popover_clone.popdown();
+        s.input(PrefixItemInput::Delete);
+    });
+
+    popover.popup();
 }

@@ -30,7 +30,9 @@ pub struct Anson2251Release {
 /// Looks for an asset matching `with-dxmt-*-osx64.tar.zst` and extracts
 /// version info from the asset name.  SHA-256 verification is handled by
 /// [`crate::github::GitHubClient::download_asset`] at download time.
-pub async fn fetch_latest_release(client: &crate::github::GitHubClient) -> Result<Anson2251Release> {
+pub async fn fetch_latest_release(
+    client: &crate::github::GitHubClient,
+) -> Result<Anson2251Release> {
     let release = client
         .fetch_latest_release("Anson2251", "crossover-foss-build")
         .await?;
@@ -71,7 +73,9 @@ pub async fn fetch_latest_release(client: &crate::github::GitHubClient) -> Resul
 /// Returns a vector of releases that have a `with-dxmt-*-osx64.tar.zst` asset,
 /// sorted newest-first.  This lets the UI show all available CrossOver versions
 /// instead of only the latest.
-pub async fn fetch_all_releases(client: &crate::github::GitHubClient) -> Result<Vec<Anson2251Release>> {
+pub async fn fetch_all_releases(
+    client: &crate::github::GitHubClient,
+) -> Result<Vec<Anson2251Release>> {
     let releases = client
         .fetch_all_releases("Anson2251", "crossover-foss-build", Some(100))
         .await?;
@@ -127,9 +131,8 @@ mod tests {
 
     #[test]
     fn test_parse_asset_name() {
-        let (ver, dxmt) =
-            parse_asset_name("crossover-foss-26.2.0-with-dxmt-0.80-osx64.tar.zst")
-                .expect("should parse");
+        let (ver, dxmt) = parse_asset_name("crossover-foss-26.2.0-with-dxmt-0.80-osx64.tar.zst")
+            .expect("should parse");
         assert_eq!(ver, "26.2.0");
         assert_eq!(dxmt, "0.80");
     }

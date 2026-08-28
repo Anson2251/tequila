@@ -221,7 +221,7 @@ fn run(
 
     let child = Arc::new(Mutex::new(Some(
         cmd.spawn()
-            .map_err(|e| format!("failed to spawn wine: {e}"))?
+            .map_err(|e| format!("failed to spawn wine: {e}"))?,
     )));
 
     // Kill the child process on SIGINT/SIGTERM (Ctrl+C)

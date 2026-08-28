@@ -51,7 +51,7 @@ impl AsyncComponent for DebugWindowModel {
     type Output = DebugWindowOutput;
     type CommandOutput = ();
     type Widgets = DebugWindowWidgets;
-
+    #[rustfmt::skip]
     view! {
         gtk::Window {
             set_default_width: 850,
@@ -137,31 +137,38 @@ impl AsyncComponent for DebugWindowModel {
 
         // Take pipes before moving child into the model
         let stdin_handle = child.stdin.take();
-        let stdout = child.stdout.take().expect("debug launch: stdout must be piped");
-        let stderr = child.stderr.take().expect("debug launch: stderr must be piped");
+        let stdout = child
+            .stdout
+            .take()
+            .expect("debug launch: stdout must be piped");
+        let stderr = child
+            .stderr
+            .take()
+            .expect("debug launch: stderr must be piped");
 
         // Create text buffer with colour tags
         let buffer = gtk::TextBuffer::new(None);
         buffer.create_tag(Some("dim"), &[("foreground", &"#888888".to_string())]);
         buffer.create_tag(Some("stdout"), &[]);
         buffer.create_tag(Some("stderr"), &[("foreground", &"#cc6666".to_string())]);
-        buffer.create_tag(Some("warn"), &[
-            ("foreground", &"#e5c07b".to_string()),
-            ("weight", &700),
-        ]);
-        buffer.create_tag(Some("error"), &[
-            ("foreground", &"#ff4444".to_string()),
-            ("weight", &700),
-            ("background", &"#330000".to_string()),
-        ]);
+        buffer.create_tag(
+            Some("warn"),
+            &[("foreground", &"#e5c07b".to_string()), ("weight", &700)],
+        );
+        buffer.create_tag(
+            Some("error"),
+            &[
+                ("foreground", &"#ff4444".to_string()),
+                ("weight", &700),
+                ("background", &"#330000".to_string()),
+            ],
+        );
 
         // ── Header bar with save button ─────────────────────────────
         let header_bar = gtk::HeaderBar::new();
         #[cfg(target_os = "macos")]
         header_bar.set_property("use-native-controls", true);
-        header_bar.set_title_widget(Some(&gtk::Label::new(
-            Some(&format!("🐞 Debug: {}", name)),
-        )));
+        header_bar.set_title_widget(Some(&gtk::Label::new(Some(&format!("🐞 Debug: {}", name)))));
 
         let save_btn = gtk::Button::builder()
             .icon_name("document-save-symbolic")
@@ -178,11 +185,7 @@ impl AsyncComponent for DebugWindowModel {
                 dialog.save(Some(&win), None::<&gtk::gio::Cancellable>, move |result| {
                     if let Ok(file) = result {
                         if let Some(path) = file.path() {
-                            let text = buf.text(
-                                &buf.start_iter(),
-                                &buf.end_iter(),
-                                false,
-                            );
+                            let text = buf.text(&buf.start_iter(), &buf.end_iter(), false);
                             let _ = std::fs::write(&path, text.as_str());
                         }
                     }

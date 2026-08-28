@@ -117,6 +117,7 @@ impl AsyncComponent for SettingsWindow {
     // The view! macro declares the entire UI tree.
     // Widget state is bound to model fields via #[watch] / #[track].
     // prefs_page is created in init() and populated via #[local_ref] below.
+    #[rustfmt::skip]
     view! {
         #[root]
         gtk::Window {
@@ -389,9 +390,11 @@ impl AsyncComponent for SettingsWindow {
         // Connect the signal AFTER setting the initial value, so it doesn't
         // trigger the "Language Changed" dialog on every startup.
         let lang_sender = sender.clone();
-        widgets.language_combo.connect_selected_notify(move |combo| {
-            lang_sender.input(SettingsMsg::LanguageChanged(combo.selected()));
-        });
+        widgets
+            .language_combo
+            .connect_selected_notify(move |combo| {
+                lang_sender.input(SettingsMsg::LanguageChanged(combo.selected()));
+            });
 
         AsyncComponentParts { model, widgets }
     }
@@ -426,9 +429,7 @@ impl AsyncComponent for SettingsWindow {
                 *svc.prefix_manager_mut().write_runtime() = rm;
                 let pm = svc.prefix_manager();
                 self.runtime_subtitle = runtime_subtitle(&*pm.read_runtime());
-                let _ = sender.output(SettingsOutput::RuntimesUpdated(
-                    pm.clone_runtime(),
-                ));
+                let _ = sender.output(SettingsOutput::RuntimesUpdated(pm.clone_runtime()));
             }
 
             // ── GitHub API key ──
@@ -478,5 +479,3 @@ impl AsyncComponent for SettingsWindow {
         }
     }
 }
-
-

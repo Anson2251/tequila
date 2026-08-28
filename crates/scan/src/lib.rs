@@ -448,7 +448,10 @@ fn is_valid_pe_file(path: &Path) -> bool {
     }
 
     // Seek to the PE signature location
-    if file.seek(std::io::SeekFrom::Start(e_lfanew as u64)).is_err() {
+    if file
+        .seek(std::io::SeekFrom::Start(e_lfanew as u64))
+        .is_err()
+    {
         return false;
     }
 

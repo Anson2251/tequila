@@ -51,7 +51,9 @@ pub async fn fetch_all_builds(client: &crate::github::GitHubClient) -> Result<Ve
         ))
     })?;
 
-    let releases = client.fetch_all_releases("Kron4ek", "Wine-Builds", Some(100)).await?;
+    let releases = client
+        .fetch_all_releases("Kron4ek", "Wine-Builds", Some(100))
+        .await?;
 
     let mut builds = Vec::new();
 

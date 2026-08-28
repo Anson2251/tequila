@@ -109,6 +109,7 @@ impl SimpleComponent for AppModel {
     type Input = AppMsg;
     type Output = ();
 
+    #[rustfmt::skip]
     view! {
         #[name = "main_window"]
         gtk::ApplicationWindow {
@@ -271,10 +272,7 @@ impl SimpleComponent for AppModel {
         drop(mgr);
 
         let app_manager = AppManagerModel::builder()
-            .launch((
-                empty_prefix,
-                root.clone().upcast::<gtk::Window>(),
-            ))
+            .launch((empty_prefix, root.clone().upcast::<gtk::Window>()))
             .forward(sender.input_sender(), |msg| match msg {
                 crate::apps::AppManagerMsg::ConfigUpdated(config) => {
                     AppMsg::ConfigUpdated(0, config)
@@ -315,10 +313,18 @@ impl SimpleComponent for AppModel {
         // Tabbed content Stack
         let content_stack = adw::ViewStack::new();
         content_stack
-            .add_titled(app_manager.widget(), Some("apps"), &crate::t!("app_page.tabs.apps"))
+            .add_titled(
+                app_manager.widget(),
+                Some("apps"),
+                &crate::t!("app_page.tabs.apps"),
+            )
             .set_icon_name(Some("application-x-executable-symbolic"));
         content_stack
-            .add_titled(config_tab.widget(), Some("config"), &crate::t!("app_page.tabs.config"))
+            .add_titled(
+                config_tab.widget(),
+                Some("config"),
+                &crate::t!("app_page.tabs.config"),
+            )
             .set_icon_name(Some("document-properties-symbolic"));
         switcher.set_stack(Some(&content_stack));
 
@@ -571,29 +577,34 @@ impl SimpleComponent for AppModel {
                 let s = sender.clone();
 
                 let exts = [&format!("zst.{}", prefix::TQL_EXTENSION)[..]];
-                crate::dialogs::pick_file(&parent, &crate::t!("app.import_prefix"), &exts, move |path| {
-                    if let Some(path) = path {
-                        let p = PathBuf::from(&path);
-                        let s = s.clone();
-                        std::thread::spawn(move || {
-                            let svc = AppService::global();
-                            let pm = svc.prefix_manager();
-                            let (name, archive_wine) = match pm.inspect_archive(&p) {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    let err_str = e.to_string();
-                                    let _ = s.input(AppMsg::ShowError(crate::tf!("app.failed_to_read_archive", "error" => &err_str)));
-                                    return;
-                                }
-                            };
-                            let _ = s.input(AppMsg::ShowImportDialog {
-                                name,
-                                archive_wine,
-                                path: p,
+                crate::dialogs::pick_file(
+                    &parent,
+                    &crate::t!("app.import_prefix"),
+                    &exts,
+                    move |path| {
+                        if let Some(path) = path {
+                            let p = PathBuf::from(&path);
+                            let s = s.clone();
+                            std::thread::spawn(move || {
+                                let svc = AppService::global();
+                                let pm = svc.prefix_manager();
+                                let (name, archive_wine) = match pm.inspect_archive(&p) {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        let err_str = e.to_string();
+                                        let _ = s.input(AppMsg::ShowError(crate::tf!("app.failed_to_read_archive", "error" => &err_str)));
+                                        return;
+                                    }
+                                };
+                                let _ = s.input(AppMsg::ShowImportDialog {
+                                    name,
+                                    archive_wine,
+                                    path: p,
+                                });
                             });
-                        });
-                    }
-                });
+                        }
+                    },
+                );
             }
             AppMsg::ShowError(msg) => {
                 let alert = adw::AlertDialog::new(Some(&crate::t!("dialogs.error")), Some(&msg));
@@ -813,7 +824,8 @@ impl SimpleComponent for AppModel {
                     self.set_syncing(true);
                     self.sync_overlay.set_visible(true);
                     self.sync_progress_bar.set_fraction(0.0);
-                    self.sync_progress_label.set_label(&crate::t!("app_page.scanning"));
+                    self.sync_progress_label
+                        .set_label(&crate::t!("app_page.scanning"));
                     handlers::handle_sync_prefixes(sender.clone(), sender.clone());
                 }
             }

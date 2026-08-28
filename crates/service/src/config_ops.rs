@@ -1,5 +1,5 @@
-use base::config::PrefixConfig;
 use base::RegisteredExecutable;
+use base::config::PrefixConfig;
 use log::{error, info};
 use std::path::Path;
 

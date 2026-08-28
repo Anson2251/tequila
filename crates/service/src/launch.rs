@@ -1,5 +1,5 @@
-use base::config::PrefixConfig;
 use base::RegisteredExecutable;
+use base::config::PrefixConfig;
 use log::{error, info};
 use std::path::Path;
 use std::path::PathBuf;
@@ -34,10 +34,7 @@ pub fn launch_executable(
 }
 
 /// Launch winecfg for a prefix.
-pub fn launch_winecfg(
-    service: &AppService,
-    prefix_path: &Path,
-) -> std::result::Result<(), String> {
+pub fn launch_winecfg(service: &AppService, prefix_path: &Path) -> std::result::Result<(), String> {
     let prefix = match service.prefix_manager().open_prefix(prefix_path) {
         Ok(p) => p,
         Err(e) => return Err(e.to_string()),
@@ -131,13 +128,13 @@ pub fn launch_executable_debug(
         return Err("Executable file does not exist".to_string());
     }
 
-    let mut cmd = prefix.build_wine_command_with_args(
-        &[&executable.executable_path.to_string_lossy()],
-    );
+    let mut cmd =
+        prefix.build_wine_command_with_args(&[&executable.executable_path.to_string_lossy()]);
 
     info!(
         "[service] launching '{}' in debug mode for prefix '{}'",
-        executable.name, prefix_path.display()
+        executable.name,
+        prefix_path.display()
     );
 
     // Set up pipes for debug capture
@@ -163,7 +160,10 @@ pub fn launch_executable_debug(
             Ok(child)
         }
         Err(e) => {
-            error!("[service] failed to launch debug '{}': {}", executable.name, e);
+            error!(
+                "[service] failed to launch debug '{}': {}",
+                executable.name, e
+            );
             Err(format!("Failed to launch executable: {}", e))
         }
     }
@@ -171,14 +171,14 @@ pub fn launch_executable_debug(
 
 /// Register a debug-mode PID with the process tracker so it gets killed
 /// on Ctrl+C / shutdown even though the debug window owns the Child handle.
-pub fn track_debug_process(
-    service: &AppService,
-    exe_path: &Path,
-    pid: u32,
-) {
+pub fn track_debug_process(service: &AppService, exe_path: &Path, pid: u32) {
     let mut tracker = service.process_tracker().lock().unwrap();
     tracker.track_pid(exe_path, pid);
-    info!("[service] tracking debug PID {} for {}", pid, exe_path.display());
+    info!(
+        "[service] tracking debug PID {} for {}",
+        pid,
+        exe_path.display()
+    );
 }
 
 /// Reinitialize a prefix with a different runtime (blocking).

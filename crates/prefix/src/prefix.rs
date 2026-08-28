@@ -55,11 +55,7 @@ impl Prefix {
     ///
     /// The shared service Arcs (`scanner`, `runtime_manager`, `store`) are
     /// cloned from the manager so the resulting `Prefix` is self-contained.
-    pub fn from_parts(
-        path: PathBuf,
-        config: PrefixConfig,
-        mgr: &super::Manager,
-    ) -> Self {
+    pub fn from_parts(path: PathBuf, config: PrefixConfig, mgr: &super::Manager) -> Self {
         Self {
             path,
             config,
@@ -329,9 +325,8 @@ impl Prefix {
 
         self.check_wine_available("wine")?;
 
-        let mut cmd = self.build_wine_command_with_args(
-            &[&executable.executable_path.to_string_lossy()],
-        );
+        let mut cmd =
+            self.build_wine_command_with_args(&[&executable.executable_path.to_string_lossy()]);
 
         info!(
             "[launch] launching '{}' in prefix '{}'",

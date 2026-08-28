@@ -38,6 +38,7 @@ impl SimpleComponent for GraphicsTabModel {
     type Input = GraphicsTabInput;
     type Output = GraphicsTabOutput;
 
+    #[rustfmt::skip]
     view! {
         #[root]
         gtk::ScrolledWindow {

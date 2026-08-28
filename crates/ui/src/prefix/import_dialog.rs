@@ -30,6 +30,7 @@ impl SimpleComponent for ImportDialogModel {
     type Input = ImportDialogMsg;
     type Output = AppMsg;
 
+    #[rustfmt::skip]
     view! {
         #[name = "dialog"]
         gtk::Window {
@@ -155,7 +156,8 @@ impl SimpleComponent for ImportDialogModel {
                 self.import_btn.set_sensitive(false);
                 self.runtime_combo.set_sensitive(false);
                 self.dialog.set_deletable(false);
-                self.progress_label.set_label(&crate::t!("prefix.import.extracting"));
+                self.progress_label
+                    .set_label(&crate::t!("prefix.import.extracting"));
                 self.progress_label.set_visible(true);
                 self.progress_bar.set_visible(true);
                 self.progress_bar.set_fraction(0.0);
@@ -200,7 +202,10 @@ impl SimpleComponent for ImportDialogModel {
                         self.progress_label.set_visible(false);
                         self.progress_bar.set_visible(false);
 
-                        let alert = adw::AlertDialog::new(Some(&crate::t!("prefix.import.failed")), Some(&e));
+                        let alert = adw::AlertDialog::new(
+                            Some(&crate::t!("prefix.import.failed")),
+                            Some(&e),
+                        );
                         alert.add_response("ok", &crate::t!("dialogs.ok"));
                         alert.set_default_response(Some("ok"));
                         alert.set_close_response("ok");

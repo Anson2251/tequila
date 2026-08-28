@@ -117,6 +117,7 @@ impl SimpleComponent for EnvVarsEditor {
     type Input = EnvVarsEditorMsg;
     type Output = HashMap<String, String>;
 
+    #[rustfmt::skip]
     view! {
         #[name = "dialog"]
         gtk::Window {
@@ -231,6 +232,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
     type CommandOutput = ();
     type Widgets = ExecutableInfoDialogWidgets;
 
+    #[rustfmt::skip]
     view! {
         #[name = "dialog"]
         gtk::Window {

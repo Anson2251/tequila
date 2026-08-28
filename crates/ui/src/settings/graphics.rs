@@ -39,6 +39,7 @@ impl AsyncComponent for GraphicsSettings {
     type CommandOutput = ();
     type Widgets = GraphicsSettingsWidgets;
 
+    #[rustfmt::skip]
     view! {
         #[root]
         adw::NavigationPage {
@@ -124,7 +125,8 @@ fn refresh_graphics_list(group: &adw::PreferencesGroup, rows: &mut Vec<adw::Acti
 
     for backend in &backends {
         let name = backend.display_name();
-        let subtitle = crate::tf!("settings.graphics.version_format", "version" => &backend.version_string());
+        let subtitle =
+            crate::tf!("settings.graphics.version_format", "version" => &backend.version_string());
 
         let row = adw::ActionRow::builder()
             .title(name)
@@ -265,5 +267,3 @@ fn build_available_graphics_rows(
 
     ctrls
 }
-
-
