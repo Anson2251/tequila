@@ -181,7 +181,7 @@ impl AsyncComponent for SettingsWindow {
                 #[name = "github_key_box"]
                 gtk::Box {
                     set_orientation: gtk::Orientation::Horizontal,
-                    set_spacing: 3,
+                    set_spacing: 6,
 
                     #[name = "github_key_entry"]
                     gtk::PasswordEntry {
@@ -230,7 +230,7 @@ impl AsyncComponent for SettingsWindow {
                     #[name = "language_box"]
                     gtk::Box {
                         set_orientation: gtk::Orientation::Horizontal,
-                        set_spacing: 3,
+                        set_spacing: 6,
 
                         #[name = "language_combo"]
                         gtk::DropDown {

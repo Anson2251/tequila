@@ -45,7 +45,11 @@ pub struct AppModel {
     #[tracker::do_not_track]
     pub flap: adw::OverlaySplitView,
     #[tracker::do_not_track]
-    pub switcher: adw::ViewSwitcher,
+    pub switcher: gtk::Box,
+    #[tracker::do_not_track]
+    apps_toggle: gtk::ToggleButton,
+    #[tracker::do_not_track]
+    config_toggle: gtk::ToggleButton,
     pub syncing: bool,
     pub sidebar_visible: bool,
     #[tracker::do_not_track]
@@ -183,10 +187,32 @@ impl SimpleComponent for AppModel {
         });
         header_bar.pack_end(&settings_btn);
 
-        let switcher = adw::ViewSwitcher::builder()
-            .policy(adw::ViewSwitcherPolicy::Wide)
+        let apps_content = adw::ButtonContent::builder()
+            .label(&crate::t!("app_page.tabs.apps"))
+            .icon_name("application-x-executable-symbolic")
+            .margin_start(6)
+            .margin_end(6)
             .build();
-        switcher.set_sensitive(false);
+        let apps_btn = gtk::ToggleButton::builder().child(&apps_content).active(true).build();
+        let config_content = adw::ButtonContent::builder()
+            .label(&crate::t!("app_page.tabs.config"))
+            .icon_name("document-properties-symbolic")
+            .margin_start(6)
+            .margin_end(6)
+            .build();
+        let config_btn = gtk::ToggleButton::builder()
+            .child(&config_content)
+            .group(&apps_btn)
+            .build();
+        let switcher = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .css_classes(["linked", "segmented"])
+            .valign(gtk::Align::Center)
+            .halign(gtk::Align::Center)
+            .sensitive(false)
+            .build();
+        switcher.append(&apps_btn);
+        switcher.append(&config_btn);
         header_bar.set_title_widget(Some(&switcher));
 
         let wine_dir = dirs::home_dir()
@@ -326,7 +352,22 @@ impl SimpleComponent for AppModel {
                 &crate::t!("app_page.tabs.config"),
             )
             .set_icon_name(Some("document-properties-symbolic"));
-        switcher.set_stack(Some(&content_stack));
+        {
+            let cs = content_stack.clone();
+            apps_btn.connect_toggled(move |b| {
+                if b.is_active() {
+                    cs.set_visible_child_name("apps");
+                }
+            });
+        }
+        {
+            let cs = content_stack.clone();
+            config_btn.connect_toggled(move |b| {
+                if b.is_active() {
+                    cs.set_visible_child_name("config");
+                }
+            });
+        }
 
         // Wrapper Stack: show either empty page or tabbed content
         let content_box = gtk::Stack::builder()
@@ -436,6 +477,8 @@ impl SimpleComponent for AppModel {
             content_box,
             flap,
             switcher,
+            apps_toggle: apps_btn,
+            config_toggle: config_btn,
             syncing: false,
             sidebar_visible: has_prefixes,
             main_window: root.clone(),
@@ -646,6 +689,7 @@ impl SimpleComponent for AppModel {
                     self.switcher.set_sensitive(true);
                     self.content_box.set_visible_child_name("tabs");
                     self.content_stack.set_visible_child_name("apps");
+                    self.apps_toggle.set_active(true);
 
                     // Update the details component
                     let config = self.prefixes[index].config.clone();

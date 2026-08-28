@@ -50,16 +50,16 @@ impl SimpleComponent for ExportDialogModel {
 
             gtk::Box {
                 set_orientation: gtk::Orientation::Vertical,
-                set_margin_top: 10,
-                set_margin_bottom: 10,
-                set_margin_start: 10,
-                set_margin_end: 10,
-                set_spacing: 16,
+                set_margin_top: 12,
+                set_margin_bottom: 12,
+                set_margin_start: 12,
+                set_margin_end: 12,
+                set_spacing: 18,
 
                 // Destination
                 gtk::Box {
                     set_orientation: gtk::Orientation::Vertical,
-                    set_spacing: 4,
+                    set_spacing: 6,
 
                     gtk::Label {
                         set_label: &crate::t!("prefix.export.save_to"),
@@ -89,14 +89,14 @@ impl SimpleComponent for ExportDialogModel {
                 gtk::CheckButton {
                     set_label: Some(&crate::t!("prefix.export.include_user")),
                     set_active: true,
-                    set_margin_top: 4,
+                    set_margin_top: 6,
                 },
 
                 // Compression level
                 gtk::Box {
                     set_orientation: gtk::Orientation::Vertical,
-                    set_spacing: 4,
-                    set_margin_top: 4,
+                    set_spacing: 6,
+                    set_margin_top: 6,
 
                     gtk::Box {
                         set_orientation: gtk::Orientation::Horizontal,

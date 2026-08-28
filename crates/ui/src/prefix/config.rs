@@ -186,7 +186,7 @@ impl SimpleComponent for PrefixConfigModel {
 
                         add_suffix = &gtk::Box {
                             set_orientation: gtk::Orientation::Horizontal,
-                            set_spacing: 8,
+                            set_spacing: 12,
                             set_valign: gtk::Align::Center,
 
                             gtk::Label {
@@ -303,7 +303,7 @@ impl SimpleComponent for PrefixConfigModel {
             // ══ Toolbar ══
             gtk::Box {
                 set_orientation: gtk::Orientation::Horizontal,
-                set_spacing: 10,
+                set_spacing: 12,
                 set_halign: gtk::Align::End,
                 set_margin_top: 18,
                 set_margin_bottom: 12,
@@ -589,10 +589,10 @@ impl SimpleComponent for PrefixConfigModel {
                                 },
                             );
                             let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
-                            content.set_margin_top(20);
-                            content.set_margin_end(20);
-                            content.set_margin_bottom(20);
-                            content.set_margin_start(20);
+                            content.set_margin_top(18);
+                            content.set_margin_end(18);
+                            content.set_margin_bottom(18);
+                            content.set_margin_start(18);
                             let label = gtk::Label::new(Some(&crate::t!(
                                 "prefix.detail.change_wine.reinit"
                             )));

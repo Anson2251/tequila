@@ -87,8 +87,8 @@ impl AsyncComponent for AppManagerModel {
     view! {
         gtk::Box {
             set_orientation: gtk::Orientation::Vertical,
-            set_spacing: 10,
-            set_margin_all: 10,
+            set_spacing: 12,
+            set_margin_all: 12,
 
             gtk::ScrolledWindow{
                 #[local_ref]
@@ -98,9 +98,9 @@ impl AsyncComponent for AppManagerModel {
             // Action bar at bottom
             gtk::Box {
                 set_orientation: gtk::Orientation::Horizontal,
-                set_spacing: 10,
+                set_spacing: 12,
                 set_halign: gtk::Align::End,
-                set_margin_top: 10,
+                set_margin_top: 12,
 
                 #[local_ref]
                 app_actions_widget -> gtk::Widget {},

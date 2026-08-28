@@ -169,8 +169,8 @@ impl SimpleComponent for RegistryEditorModel {
                     // Control buttons
                     gtk::Box {
                         set_orientation: gtk::Orientation::Horizontal,
-                        set_spacing: 10,
-                        set_margin_all: 10,
+                        set_spacing: 12,
+                        set_margin_all: 12,
 
                         #[name = "winecfg_btn"]
                         gtk::Button {
@@ -227,12 +227,12 @@ impl SimpleComponent for RegistryEditorModel {
             else {
                 gtk::Box {
                     set_orientation: gtk::Orientation::Vertical,
-                    set_spacing: 10,
-                    set_margin_top: 10,
+                    set_spacing: 12,
+                    set_margin_top: 12,
 
                     gtk::Spinner {
                         set_halign: gtk::Align::Center,
-                        set_margin_bottom: 10,
+                        set_margin_bottom: 12,
                     },
 
                     gtk::Label {

@@ -137,7 +137,7 @@ impl SimpleComponent for EnvVarsEditor {
                     set_margin_start: 12,
                     set_margin_top: 12,
                     set_margin_end: 12,
-                    set_margin_bottom: 4,
+                    set_margin_bottom: 6,
                 },
 
                 gtk::Label {
@@ -145,7 +145,7 @@ impl SimpleComponent for EnvVarsEditor {
                     set_halign: gtk::Align::Start,
                     set_margin_start: 12,
                     set_margin_end: 12,
-                    set_margin_bottom: 8,
+                    set_margin_bottom: 12,
                     add_css_class: "caption",
                 },
 
@@ -154,9 +154,9 @@ impl SimpleComponent for EnvVarsEditor {
                     set_editable: true,
                     set_wrap_mode: gtk::WrapMode::Word,
                     set_monospace: true,
-                    set_margin_start: 8,
-                    set_margin_end: 8,
-                    set_margin_bottom: 8,
+                    set_margin_start: 12,
+                    set_margin_end: 12,
+                    set_margin_bottom: 12,
                     set_vexpand: true,
                 },
             },
@@ -249,13 +249,13 @@ impl AsyncComponent for ExecutableInfoDialogModel {
 
                 gtk::Box {
                     set_orientation: gtk::Orientation::Vertical,
-                    set_spacing: 15,
-                    set_margin_all: 20,
+                    set_spacing: 12,
+                    set_margin_all: 18,
 
                     // ── Header with icon and info ──
                     gtk::Box {
                         set_orientation: gtk::Orientation::Horizontal,
-                        set_spacing: 15,
+                        set_spacing: 12,
 
                         // Icon or fallback
                         gtk::Box {
@@ -285,7 +285,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
 
                         gtk::Box {
                             set_orientation: gtk::Orientation::Vertical,
-                            set_spacing: 5,
+                            set_spacing: 6,
                             set_hexpand: true,
                             set_valign: gtk::Align::Start,
 
@@ -315,7 +315,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                             gtk::Box {
                                 set_orientation: gtk::Orientation::Horizontal,
                                 set_hexpand: true,
-                                set_spacing: 8,
+                                set_spacing: 12,
 
                                 gtk::Label {
                                     set_label: &crate::t!("apps.info.file_version"),
@@ -335,7 +335,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                             // Product Version
                             gtk::Box {
                                 set_orientation: gtk::Orientation::Horizontal,
-                                set_spacing: 15,
+                                set_spacing: 12,
 
                                 gtk::Label {
                                     set_label: &crate::t!("apps.info.product_version"),
@@ -355,7 +355,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                             // Company Name
                             gtk::Box {
                                 set_orientation: gtk::Orientation::Horizontal,
-                                set_spacing: 15,
+                                set_spacing: 12,
 
                                 gtk::Label {
                                     set_label: &crate::t!("apps.info.company"),
@@ -377,7 +377,7 @@ impl AsyncComponent for ExecutableInfoDialogModel {
                     // ── Executable Path ──
                     gtk::Box {
                         set_orientation: gtk::Orientation::Horizontal,
-                        set_spacing: 15,
+                        set_spacing: 12,
 
                         gtk::Label {
                             set_label: &crate::t!("apps.info.path"),

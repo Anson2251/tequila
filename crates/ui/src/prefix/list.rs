@@ -43,6 +43,7 @@ impl SimpleComponent for PrefixListModel {
     view! {
         gtk::Box {
             set_orientation: gtk::Orientation::Vertical,
+            add_css_class: "prefix-sidebar",
 
             gtk::ScrolledWindow {
                 set_vexpand: true,
@@ -232,12 +233,12 @@ impl FactoryComponent for PrefixItem {
 
             gtk::Box {
                 set_orientation: gtk::Orientation::Vertical,
-                set_spacing: 1,
+                set_spacing: 6,
                 set_hexpand: true,
-                set_margin_top: 3,
-                set_margin_bottom: 3,
-                set_margin_start: 8,
-                set_margin_end: 8,
+                set_margin_top: 6,
+                set_margin_bottom: 6,
+                set_margin_start: 12,
+                set_margin_end: 12,
 
                 gtk::Label {
                     set_halign: gtk::Align::Start,

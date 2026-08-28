@@ -142,7 +142,7 @@ impl AsyncComponent for ManagedDownloadRow {
             add_suffix = &gtk::Box {
                 set_orientation: gtk::Orientation::Horizontal,
                 set_halign: gtk::Align::End,
-                set_spacing: 4,
+                set_spacing: 6,
 
                 // ── Pre-release badge ──
                 #[name = "badge_label"]
@@ -154,7 +154,7 @@ impl AsyncComponent for ManagedDownloadRow {
                     add_css_class: "badge-label",
                     add_css_class: "caption",
                     set_valign: gtk::Align::Center,
-                    set_margin_end: 4,
+                    set_margin_end: 6,
                 },
 
                 // ── Install button ──
@@ -221,9 +221,6 @@ impl AsyncComponent for ManagedDownloadRow {
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
-        // Load once global CSS for the installed-highlight class
-        init_css_once();
-
         // Run the status check to populate initial state
         let status = (init.check_status)();
 
@@ -448,32 +445,4 @@ impl AsyncComponent for ManagedDownloadRow {
             }
         }
     }
-}
-
-// ── Global CSS (loaded once) ─────────────────────────────────────────────
-
-fn init_css_once() {
-    use std::sync::Once;
-    static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        let provider = gtk::CssProvider::new();
-        provider.load_from_data(
-            ".managed-installed { background-color: rgba(76, 175, 80, 0.12); }\n\
-                .badge-label {\n\
-                    font-size: 0.8rem;\n\
-                    font-weight: 600;\n\
-                    padding: 2px 8px;\n\
-                    border-radius: 10px;\n\
-                    background-color: rgba(255, 179, 0, 0.2);\n\
-                    color: #cc8800;\n\
-                }",
-        );
-        if let Some(display) = gtk::gdk::Display::default() {
-            gtk::style_context_add_provider_for_display(
-                &display,
-                &provider,
-                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-            );
-        }
-    });
 }

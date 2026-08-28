@@ -5,7 +5,7 @@ use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender, FactoryVecDe
 use relm4::{
     RelmWidgetExt,
     component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
-    gtk,
+    gtk, adw
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -75,7 +75,7 @@ impl FactoryComponent for RegisteredExecutableItem {
         gtk::Box {
             set_orientation: gtk::Orientation::Vertical,
             set_spacing: 6,
-            set_margin_all: 8,
+            set_margin_all: 12,
             set_width_request: 64,
             set_height_request: 64,
             set_focusable: true,
@@ -83,45 +83,51 @@ impl FactoryComponent for RegisteredExecutableItem {
             #[watch]
             set_css_classes: if self.is_running { &["app-item", "running"] } else { &["app-item"] },
 
-                // Icon from file, or fallback default
-                gtk::Box {
-                    set_width_request: 48,
-                    set_height_request: 48,
-                    set_halign: gtk::Align::Center,
+            // Icon from file, or fallback default
+            gtk::Box {
+                set_halign: gtk::Align::Center,
+
+                adw::Clamp {
+                    set_width_request: 64,
+                    set_height_request: 64,
                     add_css_class: "icon-bg",
 
-                    gtk::Image {
-                        set_pixel_size: 48,
-                        #[watch]
-                        set_from_file: self.resolved_icon.as_deref(),
-                        #[watch]
-                        set_visible: self.resolved_icon.is_some(),
-                        set_halign: gtk::Align::Center,
-                        set_valign: gtk::Align::Center,
-                        set_vexpand: true,
-                    },
-                    gtk::Image {
-                        set_pixel_size: 48,
-                        set_icon_name: Some("application-x-executable"),
-                        #[watch]
-                        set_visible: self.resolved_icon.is_none(),
-                        set_halign: gtk::Align::Center,
-                        set_valign: gtk::Align::Center,
-                        set_vexpand: true,
+                    gtk::Box {
+                        set_margin_all: 12,
+
+                        gtk::Image {
+                            set_pixel_size: 48,
+                            #[watch]
+                            set_from_file: self.resolved_icon.as_deref(),
+                            #[watch]
+                            set_visible: self.resolved_icon.is_some(),
+                            set_halign: gtk::Align::Center,
+                            set_valign: gtk::Align::Center,
+                            set_vexpand: true,
+                        },
+                        gtk::Image {
+                            set_pixel_size: 48,
+                            set_icon_name: Some("application-x-executable"),
+                            #[watch]
+                            set_visible: self.resolved_icon.is_none(),
+                            set_halign: gtk::Align::Center,
+                            set_valign: gtk::Align::Center,
+                            set_vexpand: true,
+                        },
                     },
                 },
+            },
 
-                gtk::Label {
-                    #[watch]
-                    set_label: &self.executable.name,
-                    set_halign: gtk::Align::Center,
-                    set_ellipsize: gtk::pango::EllipsizeMode::End,
-                    set_max_width_chars: 15,
-                    set_lines: 2,
-                    set_wrap: true,
-                    set_wrap_mode: gtk::pango::WrapMode::WordChar,
-                },
-
+            gtk::Label {
+                #[watch]
+                set_label: &self.executable.name,
+                set_halign: gtk::Align::Center,
+                set_ellipsize: gtk::pango::EllipsizeMode::End,
+                set_max_width_chars: 15,
+                set_lines: 2,
+                set_wrap: true,
+                set_wrap_mode: gtk::pango::WrapMode::WordChar,
+            },
         }
     }
 
@@ -152,8 +158,8 @@ impl AsyncComponent for RegisteredAppsListModel {
     view! {
         gtk::Box {
             set_orientation: gtk::Orientation::Vertical,
-            set_spacing: 5,
-            set_margin_all: 10,
+            set_spacing: 6,
+            set_margin_all: 12,
             set_vexpand: true,
 
 
@@ -170,7 +176,7 @@ impl AsyncComponent for RegisteredAppsListModel {
                 registered_grid -> gtk::FlowBox {
                     set_row_spacing: 15,
                     set_column_spacing: 15,
-                    set_margin_all: 10,
+                    set_margin_all: 12,
                     set_max_children_per_line: 5,
                     set_min_children_per_line: 3,
                     set_selection_mode: gtk::SelectionMode::Single,

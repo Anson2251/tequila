@@ -30,6 +30,8 @@ pub struct DebugWindowModel {
     pub buffer: gtk::TextBuffer,
     #[tracker::do_not_track]
     pub scrolled_window: gtk::ScrolledWindow,
+    #[tracker::do_not_track]
+    pub output_view: gtk::TextView,
 }
 
 #[derive(Debug)]
@@ -205,13 +207,14 @@ impl AsyncComponent for DebugWindowModel {
             stdin_handle: Arc::new(Mutex::new(stdin_handle)),
             buffer: buffer.clone(),
             scrolled_window: gtk::ScrolledWindow::new(),
+            output_view: gtk::TextView::new(),
             tracker: 0,
         };
 
         let widgets = view_output!();
 
-        // Wire up the newly created scrolled window from view! into the model
         model.scrolled_window = widgets.scrolled.clone();
+        model.output_view = widgets.output_view.clone();
 
         widgets.output_view.set_buffer(Some(&buffer));
 
@@ -292,11 +295,15 @@ impl AsyncComponent for DebugWindowModel {
             DebugWindowMsg::ProcessExited(code) => {
                 self.set_process_exited(true);
                 let mut end = self.buffer.end_iter();
-                let msg = if code == 0 {
-                    format!("✓ Process exited with code {}\n", code)
+                let (icon_name, msg) = if code == 0 {
+                    ("emblem-ok-symbolic", format!(" Process exited with code {}\n", code))
                 } else {
-                    format!("✗ Process exited with code {}\n", code)
+                    ("dialog-error-symbolic", format!(" Process exited with code {}\n", code))
                 };
+                let anchor = self.buffer.create_child_anchor(&mut end);
+                let img = gtk::Image::from_icon_name(icon_name);
+                img.set_pixel_size(14);
+                self.output_view.add_child_at_anchor(&img, &anchor);
                 if let Some(tag) = self.buffer.tag_table().lookup("dim") {
                     self.buffer.insert_with_tags(&mut end, &msg, &[&tag]);
                 } else {

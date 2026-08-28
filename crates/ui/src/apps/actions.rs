@@ -65,9 +65,9 @@ impl AsyncComponent for AppActionsModel {
     view! {
         gtk::Box {
             set_orientation: gtk::Orientation::Horizontal,
-            set_spacing: 10,
+            set_spacing: 12,
             set_halign: gtk::Align::End,
-            set_margin_top: 10,
+            set_margin_top: 12,
 
             #[name = "add_button"]
             gtk::Button {
@@ -105,8 +105,8 @@ impl AsyncComponent for AppActionsModel {
             // Separator
             gtk::Separator {
                 set_orientation: gtk::Orientation::Vertical,
-                set_margin_start: 5,
-                set_margin_end: 5,
+                set_margin_start: 6,
+                set_margin_end: 6,
             },
 
             gtk::Button {
@@ -120,7 +120,7 @@ impl AsyncComponent for AppActionsModel {
                 #[wrap(Some)]
                 set_child = &gtk::Box {
                     set_orientation: gtk::Orientation::Horizontal,
-                    set_spacing: 4,
+                    set_spacing: 6,
                     set_halign: gtk::Align::Center,
 
                     gtk::Image {
@@ -152,7 +152,7 @@ impl AsyncComponent for AppActionsModel {
                 #[wrap(Some)]
                 set_child = &gtk::Box {
                     set_orientation: gtk::Orientation::Horizontal,
-                    set_spacing: 4,
+                    set_spacing: 6,
                     set_halign: gtk::Align::Center,
 
                     gtk::Image {
@@ -192,7 +192,7 @@ impl AsyncComponent for AppActionsModel {
                 #[wrap(Some)]
                 set_child = &gtk::Box {
                     set_orientation: gtk::Orientation::Horizontal,
-                    set_spacing: 4,
+                    set_spacing: 6,
                     set_halign: gtk::Align::Center,
 
                     gtk::Image {
@@ -208,8 +208,8 @@ impl AsyncComponent for AppActionsModel {
             // Separator before launch group
             gtk::Separator {
                 set_orientation: gtk::Orientation::Vertical,
-                set_margin_start: 5,
-                set_margin_end: 5,
+                set_margin_start: 6,
+                set_margin_end: 6,
             },
 
             // ── adw::SplitButton: native split button ──────────────────

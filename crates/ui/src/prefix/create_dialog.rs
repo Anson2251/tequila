@@ -77,11 +77,11 @@ impl SimpleComponent for CreatePrefixDialog {
 
             gtk::Box {
                 set_orientation: gtk::Orientation::Vertical,
-                set_margin_top: 10,
-                set_margin_bottom: 10,
-                set_margin_start: 10,
-                set_margin_end: 10,
-                set_spacing: 10,
+                set_margin_top: 12,
+                set_margin_bottom: 12,
+                set_margin_start: 12,
+                set_margin_end: 12,
+                set_spacing: 12,
 
                 gtk::Box {
                     set_hexpand: true,
@@ -100,13 +100,13 @@ impl SimpleComponent for CreatePrefixDialog {
                 },
 
                 gtk::Box {
-                    set_spacing: 10,
-                    set_margin_top: 10,
+                    set_spacing: 12,
+                    set_margin_top: 12,
                     set_hexpand: true,
                     set_orientation: gtk::Orientation::Horizontal,
 
                     gtk::Box {
-                        set_spacing: 10,
+                        set_spacing: 12,
                         set_orientation: gtk::Orientation::Vertical,
 
                         gtk::Label {
@@ -122,7 +122,7 @@ impl SimpleComponent for CreatePrefixDialog {
                     },
                     gtk::Box {
                         set_hexpand: true,
-                        set_spacing: 10,
+                        set_spacing: 12,
                         set_orientation: gtk::Orientation::Vertical,
 
                         gtk::Label {
@@ -139,8 +139,8 @@ impl SimpleComponent for CreatePrefixDialog {
                 gtk::Box {
                     set_visible: cfg!(not(target_os = "macos")),
                     set_hexpand: true,
-                    set_spacing: 10,
-                    set_margin_top: 10,
+                    set_spacing: 12,
+                    set_margin_top: 12,
                     set_orientation: gtk::Orientation::Vertical,
 
                     gtk::Label {

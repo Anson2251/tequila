@@ -75,8 +75,8 @@ impl AsyncComponent for RuntimeManagerModel {
 
                 gtk::Box {
                     set_orientation: gtk::Orientation::Horizontal,
-                    set_spacing: 8,
-                    set_margin_all: 8,
+                    set_spacing: 12,
+                    set_margin_all: 12,
 
                     #[name = "menu_btn"]
                     gtk::MenuButton {

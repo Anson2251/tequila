@@ -41,10 +41,10 @@ impl SimpleComponent for ImportDialogModel {
 
             gtk::Box {
                 set_orientation: gtk::Orientation::Vertical,
-                set_margin_top: 10,
-                set_margin_bottom: 10,
-                set_margin_start: 10,
-                set_margin_end: 10,
+                set_margin_top: 12,
+                set_margin_bottom: 12,
+                set_margin_start: 12,
+                set_margin_end: 12,
                 set_spacing: 12,
 
                 gtk::Label {
@@ -60,7 +60,7 @@ impl SimpleComponent for ImportDialogModel {
                 gtk::Label {
                     set_label: &crate::t!("prefix.import.runtime_label"),
                     set_halign: gtk::Align::Start,
-                    set_margin_top: 8,
+                    set_margin_top: 12,
                 },
                 #[local_ref]
                 runtime_combo -> gtk::DropDown {

@@ -11,8 +11,21 @@
 
 .icon-bg {
     background: #eee;
-    border-radius: 24px;
-    padding: 12px;
+    border-radius: 25%;
+    padding: 25%;
+}
+
+.managed-installed {
+    background-color: alpha(@success_color, 0.12);
+}
+
+.badge-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background-color: alpha(@warning_color, 0.15);
+    color: @warning_color;
 }
 
 .desc-text {
@@ -26,6 +39,21 @@
 
 .app-item.running {
     border-color: @accent_color;
+}
+
+.prefix-sidebar {
+    background-color: @sidebar_bg_color;
+}
+
+.prefix-sidebar scrolledwindow,
+.prefix-sidebar viewport,
+.prefix-sidebar list {
+    background-color: @sidebar_bg_color;
+}
+
+.prefix-sidebar row {
+    border-radius: 6px;
+    margin: 0;
 }
 
 /* macOS lacks a default monospace font that Pango/libadwaita can resolve.

@@ -6,7 +6,7 @@ use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender, FactoryVecDe
 use relm4::{
     RelmWidgetExt,
     component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
-    gtk,
+    gtk, adw
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -28,6 +28,15 @@ pub struct AddAppPopoverModel {
     prefix_path: PathBuf,
     #[tracker::do_not_track]
     icon_cache: Arc<IconCache>,
+    search_query: String,
+    #[tracker::do_not_track]
+    search_entry: gtk::SearchEntry,
+    #[tracker::do_not_track]
+    arch_labels: Vec<String>,
+    #[tracker::do_not_track]
+    resolved_icons: Vec<Option<PathBuf>>,
+    #[tracker::do_not_track]
+    filtered_map: Vec<usize>,
 }
 
 #[derive(Debug)]
@@ -41,6 +50,7 @@ pub enum AddAppPopoverMsg {
     ResetProcessingFlag,
     SetScanning(bool),
     PrefixPathUpdated(PathBuf),
+    SearchChanged(String),
 }
 
 #[derive(Debug)]
@@ -92,11 +102,11 @@ impl FactoryComponent for AvailableExecutable {
 
             gtk::Box {
                 set_orientation: gtk::Orientation::Horizontal,
-                set_spacing: 10,
-                set_margin_top: 8,
-                set_margin_bottom: 8,
-                set_margin_start: 8,
-                set_margin_end: 8,
+                set_spacing: 6,
+                set_margin_top: 6,
+                set_margin_bottom: 6,
+                set_margin_start: 6,
+                set_margin_end: 6,
 
                 // Checkbox for selection
                 gtk::CheckButton {
@@ -109,30 +119,37 @@ impl FactoryComponent for AvailableExecutable {
                 },
 
                 // Icon or fallback
-                gtk::Box {
+                adw::Clamp {
                     set_width_request: 24,
                     set_height_request: 24,
+
                     add_css_class: "icon-bg",
 
-                    gtk::Image {
-                        set_pixel_size: 24,
-                        #[watch]
-                        set_from_file: self.resolved_icon.as_deref(),
-                        #[watch]
-                        set_visible: self.resolved_icon.is_some(),
-                    },
-                    gtk::Image {
-                        set_pixel_size: 24,
-                        set_icon_name: Some("application-x-executable"),
-                        #[watch]
-                        set_visible: self.resolved_icon.is_none(),
+                    gtk::Box {
+                        set_width_request: 24,
+                        set_height_request: 24,
+                        set_margin_all: 6,
+
+                        gtk::Image {
+                            set_pixel_size: 24,
+                            #[watch]
+                            set_from_file: self.resolved_icon.as_deref(),
+                            #[watch]
+                            set_visible: self.resolved_icon.is_some(),
+                        },
+                        gtk::Image {
+                            set_pixel_size: 24,
+                            set_icon_name: Some("application-x-executable"),
+                            #[watch]
+                            set_visible: self.resolved_icon.is_none(),
+                        },
                     },
                 },
 
                 // Executable info
                 gtk::Box {
                     set_orientation: gtk::Orientation::Vertical,
-                    set_spacing: 2,
+                    set_spacing: 6,
                     set_hexpand: true,
 
                     gtk::Box {
@@ -208,16 +225,34 @@ impl AsyncComponent for AddAppPopoverModel {
 
             gtk::Box {
                 set_orientation: gtk::Orientation::Vertical,
-                set_spacing: 10,
-                set_margin_all: 10,
+                set_spacing: 12,
+                set_margin_all: 12,
                 set_width_request: 400,
                 set_height_request: 300,
 
-                gtk::Label {
-                    set_label: &crate::t!("apps.add.title"),
-                    add_css_class: "heading",
-                    set_halign: gtk::Align::Center,
-                    set_margin_bottom: 10,
+                gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_spacing: 12,
+                    set_valign: gtk::Align::Center,
+                    #[watch]
+                    set_visible: !model.is_scanning,
+
+                    gtk::Label {
+                        set_label: &crate::t!("apps.add.title"),
+                        add_css_class: "heading",
+                        set_halign: gtk::Align::Start,
+                        set_hexpand: true,
+                        set_ellipsize: gtk::pango::EllipsizeMode::End,
+                    },
+
+                    #[name = "search_entry"]
+                    gtk::SearchEntry {
+                        set_placeholder_text: Some("Search..."),
+                        set_width_request: 160,
+                        connect_search_changed[sender] => move |e| {
+                            sender.input(AddAppPopoverMsg::SearchChanged(e.text().to_string()));
+                        },
+                    },
                 },
 
                 // Conditional: spinner during scan, list otherwise — no layout shift
@@ -226,7 +261,7 @@ impl AsyncComponent for AddAppPopoverModel {
                     true => {
                         gtk::Box {
                             set_orientation: gtk::Orientation::Vertical,
-                            set_spacing: 10,
+                            set_spacing: 12,
                             set_halign: gtk::Align::Center,
                             set_valign: gtk::Align::Center,
                             set_vexpand: true,
@@ -246,7 +281,7 @@ impl AsyncComponent for AddAppPopoverModel {
                     false => {
                         gtk::Box {
                             set_orientation: gtk::Orientation::Vertical,
-                            set_spacing: 10,
+                            set_spacing: 12,
                             set_vexpand: true,
 
                             gtk::ScrolledWindow {
@@ -273,22 +308,15 @@ impl AsyncComponent for AddAppPopoverModel {
                                 add_css_class: "dim-label",
                             },
 
-                            gtk::Label {
-                                #[watch]
-                                set_label: &crate::tf!("apps.add.count", "count" => &model.available_apps.len().to_string()),
-                                add_css_class: "caption",
-                                set_halign: gtk::Align::Center,
-                                #[watch]
-                                set_visible: model.available_apps.len() > 0,
-                            },
                         }
                     }
                 },
 
                 gtk::Box {
                     set_orientation: gtk::Orientation::Horizontal,
-                    set_spacing: 10,
-                    set_margin_top: 10,
+                    set_spacing: 6,
+                    set_margin_top: 6,
+                    set_valign: gtk::Align::Center,
 
                     gtk::Button {
                         #[watch]
@@ -301,8 +329,15 @@ impl AsyncComponent for AddAppPopoverModel {
                         },
                     },
 
-                    gtk::Box {
+                    gtk::Label {
+                        #[watch]
+                        set_label: &crate::tf!("apps.add.count", "count" => &model.available_apps.len().to_string()),
+                        add_css_class: "caption",
+                        set_halign: gtk::Align::Start,
+                        set_valign: gtk::Align::Center,
                         set_hexpand: true,
+                        #[watch]
+                        set_visible: model.available_apps.len() > 0,
                     },
 
                     gtk::Button {
@@ -340,7 +375,7 @@ impl AsyncComponent for AddAppPopoverModel {
                 AvailableExecutableOutput::Selected(index) => AddAppPopoverMsg::SelectApp(index),
             });
 
-        let model = AddAppPopoverModel {
+        let mut model = AddAppPopoverModel {
             available_executables,
             available_apps: Vec::new(),
             selected_indices: std::collections::HashSet::new(),
@@ -350,6 +385,11 @@ impl AsyncComponent for AddAppPopoverModel {
             is_processing_selection: false,
             prefix_path,
             icon_cache,
+            search_query: String::new(),
+            search_entry: gtk::SearchEntry::new(),
+            arch_labels: Vec::new(),
+            resolved_icons: Vec::new(),
+            filtered_map: Vec::new(),
             tracker: 0,
         };
 
@@ -357,6 +397,7 @@ impl AsyncComponent for AddAppPopoverModel {
         let available_list_box = model.available_executables.widget();
 
         let widgets = view_output!();
+        model.search_entry = widgets.search_entry.clone();
 
         // Initialize the popover with available apps if any
         sender.input(AddAppPopoverMsg::UpdateAvailableApps(
@@ -377,9 +418,11 @@ impl AsyncComponent for AddAppPopoverModel {
         match msg {
             AddAppPopoverMsg::Show => {
                 self.set_is_visible(true);
-                // Make sure the popover is properly realized before popping up
                 if !widgets.is_visible() {
                     self.set_selected_indices(std::collections::HashSet::new());
+                    self.set_search_query(String::new());
+                    self.search_entry.set_text("");
+                    self.rebuild_filtered();
                     widgets.popup();
                 }
             }
@@ -393,63 +436,48 @@ impl AsyncComponent for AddAppPopoverModel {
                 self.selected_indices.clear();
                 self.set_selected_indices(self.selected_indices.clone());
 
-                // Compute arch label for each executable
-                let arch_labels: Vec<String> = apps
+                self.arch_labels = apps
                     .iter()
                     .map(|exe| compute_arch_label(&exe.executable_path, &prefix_arch))
                     .collect();
 
-                // Resolve (or extract) icons for display
                 let prefix_path = self.prefix_path.clone();
                 let icon_cache = Arc::clone(&self.icon_cache);
-                let resolved_icons: Vec<Option<PathBuf>> = apps
+                self.resolved_icons = apps
                     .iter()
                     .map(|exe| resolve_or_extract_icon(exe, &prefix_path, &icon_cache))
                     .collect();
 
-                // Update factory
-                {
-                    let mut guard = self.available_executables.guard();
-                    guard.clear();
-                    for (index, executable) in apps.iter().enumerate() {
-                        guard.push_back((
-                            executable.clone(),
-                            index,
-                            arch_labels[index].clone(),
-                            resolved_icons[index].clone(),
-                        ));
-                    }
-                }
+                self.rebuild_filtered();
             }
-            AddAppPopoverMsg::SelectApp(index) => {
-                // println!("DEBUG: SelectApp called with index: {}", index);
-
-                // Prevent recursive calls
+            AddAppPopoverMsg::SelectApp(displayed) => {
                 if self.is_processing_selection {
-                    // println!("DEBUG: Skipping recursive SelectApp call");
                     return;
                 }
 
-                // Check if this index is actually different from current state to prevent loops
-                let currently_selected = self.selected_indices.contains(&index);
+                let orig = self
+                    .filtered_map
+                    .get(displayed)
+                    .copied()
+                    .unwrap_or(displayed);
 
-                // Toggle selection for the clicked index
+                let currently_selected = self.selected_indices.contains(&orig);
+
                 if currently_selected {
-                    self.selected_indices.remove(&index);
-                    log::debug!("[apps] deselected index: {}", index);
+                    self.selected_indices.remove(&orig);
+                    log::debug!("[apps] deselected index: {}", orig);
                 } else {
-                    self.selected_indices.insert(index);
-                    log::debug!("[apps] selected index: {}", index);
+                    self.selected_indices.insert(orig);
+                    log::debug!("[apps] selected index: {}", orig);
                 }
 
-                // Set flag to prevent recursive calls
                 self.is_processing_selection = true;
 
-                // Update the factory to reflect the new selection state
                 {
                     let mut guard = self.available_executables.guard();
-                    for (idx, item) in guard.iter_mut().enumerate() {
-                        let new_selected = self.selected_indices.contains(&idx);
+                    for (disp_idx, item) in guard.iter_mut().enumerate() {
+                        let oi = self.filtered_map.get(disp_idx).copied().unwrap_or(disp_idx);
+                        let new_selected = self.selected_indices.contains(&oi);
                         if item.selected != new_selected {
                             item.selected = new_selected;
                         }
@@ -493,14 +521,18 @@ impl AsyncComponent for AddAppPopoverModel {
                 }
                 self.prefix_path = prefix_path;
 
-                // Re-resolve icons with the new prefix location
                 let prefix_path = self.prefix_path.clone();
                 let icon_cache = Arc::clone(&self.icon_cache);
-                let mut guard = self.available_executables.guard();
-                for item in guard.iter_mut() {
-                    item.resolved_icon =
-                        resolve_or_extract_icon(&item.executable, &prefix_path, &icon_cache);
-                }
+                self.resolved_icons = self
+                    .available_apps
+                    .iter()
+                    .map(|exe| resolve_or_extract_icon(exe, &prefix_path, &icon_cache))
+                    .collect();
+                self.rebuild_filtered();
+            }
+            AddAppPopoverMsg::SearchChanged(q) => {
+                self.search_query = q;
+                self.rebuild_filtered();
             }
             AddAppPopoverMsg::AddSelected => {
                 if !self.selected_indices.is_empty() {
@@ -529,6 +561,33 @@ impl AsyncComponent for AddAppPopoverModel {
                     });
                 }
             }
+        }
+    }
+}
+
+impl AddAppPopoverModel {
+    fn rebuild_filtered(&mut self) {
+        let q = self.search_query.trim().to_lowercase();
+        let mut guard = self.available_executables.guard();
+        guard.clear();
+        self.filtered_map.clear();
+        for (idx, exe) in self.available_apps.iter().enumerate() {
+            let name = exe.name.to_lowercase();
+            let desc = exe.description.as_ref().map(|d| d.to_lowercase()).unwrap_or_default();
+            if !q.is_empty() && !name.contains(&q) && !desc.contains(&q) {
+                continue;
+            }
+            let selected = self.selected_indices.contains(&idx);
+            guard.push_back((
+                exe.clone(),
+                idx,
+                self.arch_labels.get(idx).cloned().unwrap_or_default(),
+                self.resolved_icons.get(idx).cloned().unwrap_or(None),
+            ));
+            if let Some(last) = guard.iter_mut().last() {
+                last.selected = selected;
+            }
+            self.filtered_map.push(idx);
         }
     }
 }
