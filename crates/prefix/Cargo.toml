@@ -10,11 +10,11 @@ runtime = { path = "../runtime" }
 scan = { path = "../scan" }
 store = { path = "../store" }
 walkdir = "2.5"
-tokio = { version = "1.52.3", features = ["full"] }
-zstd = "0.13"
+tokio = { version = "1.53.1", features = ["full"] }
+zstd = "0.14"
 tar = "0.4"
 serde_json = "1.0"
-dirs = "6.0.0"
+dirs = "7.0.0"
 log = "0.4"
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.11"

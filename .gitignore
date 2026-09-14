@@ -4,4 +4,5 @@
 logs/
 .mcp.json*
 /dist
+/.tools/
 *.icns

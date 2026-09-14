@@ -15,8 +15,8 @@
 #   brew install dylibbundler
 #
 # Usage:
-#   ./scripts/bundle-macos.sh              # → dist/Tequila.app
-#   ./scripts/bundle-macos.sh --dmg        # → dist/Tequila.app + Tequila.dmg
+#   ./scripts/bundle-macos.sh              # → dist/Tequila.app + tequila-<version>-macos-<arch>.tar.xz
+#   ./scripts/bundle-macos.sh --dmg        # additionally creates tequila-<version>-macos-<arch>.dmg
 #   ./scripts/bundle-macos.sh --sign       # codesign + notarize
 #   ./scripts/bundle-macos.sh --help       # full help
 #
@@ -28,7 +28,9 @@ set -euo pipefail
 APP_NAME="Tequila"
 BINARY_NAME="tequila"
 IDENTIFIER="com.github.anson2251.tequila"
-VERSION="0.1.0"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+VERSION="$(grep -m 1 '^version' "$PROJECT_DIR/crates/tequila/Cargo.toml" | sed 's/[^0-9.]//g')"
 MIN_OS_VERSION="11.0"
 
 BUILD_DIR="target/release"
@@ -445,13 +447,30 @@ step_codesign() {
     codesign --verify --verbose "$APP_DIR"
 }
 
-# ── Step 8: Create .dmg (optional) ────────────────────────────────────────
+# ── Step 8: Create release archive ────────────────────────────────────────
+step_create_archive() {
+    local arch
+    arch="$(uname -m)"
+    local tarball_path="$DIST_DIR/tequila-${VERSION}-macos-${arch}.tar.xz"
+
+    info "Creating release archive..."
+
+    rm -f "$tarball_path"
+    tar -cJf "$tarball_path" -C "$DIST_DIR" "$APP_NAME.app"
+
+    info "Archive created: $tarball_path"
+    info "  Size: $(du -h "$tarball_path" | cut -f1)"
+}
+
+# ── Step 9: Create .dmg (optional) ────────────────────────────────────────
 step_create_dmg() {
     if [[ "$FLAG_DMG" != true ]]; then
         return
     fi
 
-    local dmg_path="$DIST_DIR/$APP_NAME-$VERSION.dmg"
+    local arch
+    arch="$(uname -m)"
+    local dmg_path="$DIST_DIR/tequila-${VERSION}-macos-${arch}.dmg"
     local tmp_dir="$DIST_DIR/.dmg-tmp"
     local volume_name="$APP_NAME $VERSION"
 
@@ -497,13 +516,19 @@ summary() {
     echo "  Bundle size: $(du -sh "$APP_DIR" | cut -f1)"
     echo "  Number of bundled frameworks: $(ls "$APP_DIR/Contents/Frameworks"/*.dylib 2>/dev/null | wc -l | tr -d ' ')"
     echo
+
+    local arch
+    arch="$(uname -m)"
+    echo "  Release archive:"
+    echo "    $DIST_DIR/tequila-${VERSION}-macos-${arch}.tar.xz"
+    echo
     echo "  To test:"
     echo "    open $APP_DIR"
     echo
 
     if [[ "$FLAG_DMG" == true ]]; then
         echo "  Disk image:"
-        echo "    $DIST_DIR/$APP_NAME-$VERSION.dmg"
+        echo "    $DIST_DIR/tequila-${VERSION}-macos-${arch}.dmg"
         echo
     fi
 
@@ -545,10 +570,13 @@ main() {
     step "6/8  Regenerating GdkPixbuf & icon caches"
     step_regenerate_caches
 
-    step "7/8  Code-signing"
+    step "7/9  Code-signing"
     step_codesign
 
-    step "8/8  Creating DMG"
+    step "8/9  Creating release archive"
+    step_create_archive
+
+    step "9/9  Creating DMG"
     step_create_dmg
 
     summary

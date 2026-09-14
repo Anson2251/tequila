@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.id }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: macos
+            os: macos-latest
+          - id: linux
+            os: ubuntu-26.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── macOS ─────────────────────────────────────────────────────────────
+      - name: Install dependencies (macOS)
+        if: matrix.id == 'macos'
+        run: brew install gtk4 libadwaita dylibbundler
+
+      - name: Build and bundle (macOS)
+        if: matrix.id == 'macos'
+        run: ./scripts/bundle-macos.sh --dmg
+
+      - name: Upload artifact (macOS)
+        if: matrix.id == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tequila-macos
+          path: dist/tequila-*-macos-*.tar.xz
+          if-no-files-found: error
+
+      # ── Linux ─────────────────────────────────────────────────────────────
+      - name: Install dependencies (Linux)
+        if: matrix.id == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev
+
+      - name: Build and bundle (Linux)
+        if: matrix.id == 'linux'
+        run: ./scripts/bundle-appimage.sh
+
+      - name: Upload artifact (Linux)
+        if: matrix.id == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tequila-linux
+          path: dist/tequila-*-linux-*.AppImage
+          if-no-files-found: error
+
+  upload:
+    name: Attach artifacts to release
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh dist/
+
+      - name: Append checksums to release notes
+        run: |
+          body="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq '.body // ""' | sed '/^## Checksums$/,$d')"
+          {
+            printf '%s\n' "$body"
+            echo
+            echo "## Checksums"
+            echo
+            for f in dist/*; do
+              name="$(basename "$f")"
+              hash="$(sha256sum "$f" | awk '{print $1}')"
+              echo "$name"
+              echo "sha256:$hash"
+              echo
+            done
+          } > "$RUNNER_TEMP/release-body.md"
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/release-body.md"
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: dist/*

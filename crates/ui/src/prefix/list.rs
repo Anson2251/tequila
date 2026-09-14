@@ -47,6 +47,8 @@ impl SimpleComponent for PrefixListModel {
 
             gtk::ScrolledWindow {
                 set_vexpand: true,
+                set_hexpand: true,
+                set_hscrollbar_policy: gtk::PolicyType::Never,
                 #[watch]
                 set_visible: !model.prefixes.is_empty(),
 
@@ -242,13 +244,25 @@ impl FactoryComponent for PrefixItem {
 
                 gtk::Label {
                     set_halign: gtk::Align::Start,
+                    set_hexpand: true,
+                    set_xalign: 0.0,
+                    set_ellipsize: gtk::pango::EllipsizeMode::End,
+                    set_max_width_chars: 22,
+                    set_single_line_mode: true,
                     set_css_classes: &["heading"],
                     #[watch]
                     set_label: &self.prefix.name,
+                    #[watch]
+                    set_tooltip_text: Some(&self.prefix.name),
                 },
 
                 gtk::Label {
                     set_halign: gtk::Align::Start,
+                    set_hexpand: true,
+                    set_xalign: 0.0,
+                    set_ellipsize: gtk::pango::EllipsizeMode::End,
+                    set_max_width_chars: 22,
+                    set_single_line_mode: true,
                     set_css_classes: &["caption", "dim-label"],
                     #[watch]
                     set_label: &self.detail(),

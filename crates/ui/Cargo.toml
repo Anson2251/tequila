@@ -8,14 +8,14 @@ base = { path = "../base" }
 prefix = { path = "../prefix" }
 service = { path = "../service" }
 log = "0.4"
-dirs = "6.0.0"
+dirs = "7.0.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-gtk4 = { version = "0.11.3", features = ["v4_10"] }
+gtk4 = { version = "0.11.4", features = ["v4_10"] }
 relm4 = {version = "0.11.0", features = ["libadwaita"]}
 libadwaita = {version = "0.9", features = ["v1_7"]}
-tracker = "0.2.2"
-tokio = { version = "1.52.3", features = ["full"] }
+tracker = "0.2.3"
+tokio = { version = "1.53.1", features = ["full"] }
 notify = { version = "8", default-features = false, features = ["macos_kqueue"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -26,4 +26,4 @@ objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSPanel", "NSRe
 gdk4-macos = { version = "0.11", features = ["v4_8"] }
 
 [build-dependencies]
-glib-build-tools = "0.22.0"
+glib-build-tools = "0.22.8"
