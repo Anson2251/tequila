@@ -114,6 +114,8 @@ fn start_gui() -> ExitCode {
         ui::i18n::init(ui::i18n::Language::System);
     }
 
+    ui::prepare_app_fonts();
+
     let app = relm4::RelmApp::new("com.github.anson2251.tequila");
 
     // Kill all tracked Wine processes on clean shutdown (window close, Cmd+Q, etc.)

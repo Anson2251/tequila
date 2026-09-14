@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+    <gresource prefix="/com/anson2251/tequila/fonts/">
+        <file alias="CascadiaMono-VariableFont_wght.ttf">fonts/cascadia-mono/CascadiaMono-VariableFont_wght.ttf</file>
+        <file alias="CascadiaMono-Italic-VariableFont_wght.ttf">fonts/cascadia-mono/CascadiaMono-Italic-VariableFont_wght.ttf</file>
+    </gresource>
+</gresources>

@@ -1,3 +1,4 @@
+pub mod app_fonts;
 pub mod handlers;
 pub mod menu;
 pub mod resources;

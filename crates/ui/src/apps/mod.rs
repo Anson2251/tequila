@@ -568,11 +568,40 @@ impl AsyncComponent for AppManagerModel {
                     RegisteredAppsListOutput::Launch(index) => {
                         sender.input(AppManagerMsg::LaunchExecutable(index));
                     }
+                    RegisteredAppsListOutput::LaunchDebug(index) => {
+                        sender.input(AppManagerMsg::LaunchExecutableDebug(index));
+                    }
                     RegisteredAppsListOutput::Remove(index) => {
                         sender.input(AppManagerMsg::RemoveExecutable(index));
                     }
                     RegisteredAppsListOutput::ShowInfo(index) => {
                         sender.input(AppManagerMsg::ShowInfoDialog(index));
+                    }
+                    RegisteredAppsListOutput::ToggleDesktop(index) => {
+                        if let Some(exe) = self.prefix.config().registered_executables.get(index).cloned() {
+                            let prefix_path = self.prefix.path().to_path_buf();
+                            let prefix_name = self.prefix.name().to_string();
+                            let exe_path = exe.executable_path.clone();
+                            if prefix::desktop::launcher_exists(&prefix_path, &exe_path) {
+                                let _ = prefix::desktop::remove_launcher(&prefix_path, &exe_path);
+                            } else {
+                                let icon_cache = AppService::global()
+                                    .prefix_manager()
+                                    .scanner()
+                                    .icon_cache()
+                                    .clone();
+                                let resolved = prefix::resolve_or_extract_icon(
+                                    &exe, &prefix_path, &icon_cache,
+                                );
+                                let _ = prefix::desktop::create_launcher(
+                                    &prefix_path, &prefix_name, &exe.name, &exe_path, resolved.as_deref(),
+                                );
+                            }
+                            if Some(index) == self.selected_executable {
+                                let has = prefix::desktop::launcher_exists(&prefix_path, &exe_path);
+                                self.app_actions.emit(AppActionsMsg::SetDesktopExists(has));
+                            }
+                        }
                     }
                 }
             }

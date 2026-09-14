@@ -15,6 +15,7 @@ pub use apps::add_popover::AddAppPopoverModel;
 pub use apps::info_dialog::ExecutableInfoDialogModel;
 pub use apps::list::RegisteredAppsListModel;
 pub use prefix::config::PrefixConfigModel;
+pub use app::app_fonts::prepare_app_fonts;
 pub use prefix::list::{PrefixListModel, PrefixListOutput};
 pub use registry_editor::RegistryEditorModel;
 pub use runtime::{RuntimeManagerModel, RuntimeManagerMsg, RuntimeManagerOutput};

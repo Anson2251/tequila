@@ -1,3 +1,4 @@
+use gtk::gio;
 use gtk::prelude::*;
 use prefix::config::RegisteredExecutable;
 use prefix::{IconCache, resolve_or_extract_icon};
@@ -31,14 +32,21 @@ pub enum RegisteredAppsListMsg {
     SetRunningPaths(std::collections::HashSet<std::path::PathBuf>),
     PrefixPathUpdated(PathBuf),
     SelectionChanged,
+    ContextLaunch(usize),
+    ContextLaunchDebug(usize),
+    ContextShowInfo(usize),
+    ContextRemove(usize),
+    ContextToggleDesktop(usize),
 }
 
 #[derive(Debug)]
 pub enum RegisteredAppsListOutput {
     Selected(usize),
     Launch(usize),
+    LaunchDebug(usize),
     Remove(usize),
     ShowInfo(usize),
+    ToggleDesktop(usize),
 }
 
 impl Drop for RegisteredAppsListModel {
@@ -61,11 +69,20 @@ struct RegisteredExecutableItem {
     resolved_icon: Option<PathBuf>,
 }
 
+#[derive(Debug)]
+pub enum RegisteredExecutableItemOutput {
+    Launch(usize),
+    LaunchDebug(usize),
+    ShowInfo(usize),
+    Remove(usize),
+    ToggleDesktop(usize),
+}
+
 #[relm4::factory]
 impl FactoryComponent for RegisteredExecutableItem {
     type Init = (RegisteredExecutable, usize, Option<PathBuf>);
     type Input = ();
-    type Output = ();
+    type Output = RegisteredExecutableItemOutput;
     type CommandOutput = ();
     type ParentWidget = gtk::FlowBox;
 
@@ -141,9 +158,88 @@ impl FactoryComponent for RegisteredExecutableItem {
         }
     }
 
-    fn update(&mut self, _msg: Self::Input, _sender: FactorySender<Self>) {
-        // No messages to handle - selection is handled by FlowBox
+    fn update(&mut self, _msg: Self::Input, _sender: FactorySender<Self>) {}
+
+    fn init_widgets(
+        &mut self,
+        _index: &DynamicIndex,
+        root: Self::Root,
+        _returned_widget: &gtk::FlowBoxChild,
+        sender: FactorySender<Self>,
+    ) -> Self::Widgets {
+        let widgets = view_output!();
+        let widget: gtk::Widget = root.clone().upcast();
+        let gesture = gtk::GestureClick::new();
+        gesture.set_button(3);
+        let idx = self.index;
+        let name = self.executable.name.clone();
+        let s = sender.clone();
+        gesture.connect_pressed(move |_, _, x, y| {
+            show_app_context_menu(&widget, x, y, idx, &name, &s);
+        });
+        root.add_controller(gesture);
+        widgets
     }
+}
+
+fn show_app_context_menu(
+    widget: &gtk::Widget,
+    x: f64,
+    y: f64,
+    idx: usize,
+    name: &str,
+    sender: &FactorySender<RegisteredExecutableItem>,
+) {
+    let launch = gio::SimpleAction::new("launch", None);
+    let launch_debug = gio::SimpleAction::new("launch-debug", None);
+    let info = gio::SimpleAction::new("info", None);
+    let remove = gio::SimpleAction::new("remove", None);
+    let desktop = gio::SimpleAction::new("desktop", None);
+    let group = gio::SimpleActionGroup::new();
+    group.add_action(&launch);
+    group.add_action(&launch_debug);
+    group.add_action(&info);
+    group.add_action(&remove);
+    group.add_action(&desktop);
+    widget.insert_action_group("app", Some(&group));
+
+    let menu = gio::Menu::new();
+    menu.append(Some(&format!("Launch \"{}\"", name)), Some("app.launch"));
+    menu.append(Some("Launch with Debug"), Some("app.launch-debug"));
+    menu.append(Some("Show Info"), Some("app.info"));
+    menu.append(Some("Toggle Desktop Shortcut"), Some("app.desktop"));
+    menu.append(Some("Remove"), Some("app.remove"));
+
+    let popover = gtk::PopoverMenu::from_model(Some(&menu));
+    popover.set_has_arrow(false);
+    popover.set_halign(gtk::Align::Start);
+    popover.set_parent(widget);
+    let rect = gtk::gdk::Rectangle::new(0, 0, 1, 1);
+    popover.set_pointing_to(Some(&rect));
+    let _ = (x, y);
+
+    let s = sender.clone();
+    launch.connect_activate(move |_, _| {
+        let _ = s.output(RegisteredExecutableItemOutput::Launch(idx));
+    });
+    let s = sender.clone();
+    launch_debug.connect_activate(move |_, _| {
+        let _ = s.output(RegisteredExecutableItemOutput::LaunchDebug(idx));
+    });
+    let s = sender.clone();
+    info.connect_activate(move |_, _| {
+        let _ = s.output(RegisteredExecutableItemOutput::ShowInfo(idx));
+    });
+    let s = sender.clone();
+    remove.connect_activate(move |_, _| {
+        let _ = s.output(RegisteredExecutableItemOutput::Remove(idx));
+    });
+    let s = sender.clone();
+    desktop.connect_activate(move |_, _| {
+        let _ = s.output(RegisteredExecutableItemOutput::ToggleDesktop(idx));
+    });
+
+    popover.popup();
 }
 
 #[relm4::component(pub, async)]
@@ -215,10 +311,21 @@ impl AsyncComponent for RegisteredAppsListModel {
     ) -> AsyncComponentParts<Self> {
         let (executables_init, prefix_path, icon_cache) = init;
 
-        // Initialize factory for registered executables (grid layout)
         let executables = FactoryVecDeque::builder()
             .launch(gtk::FlowBox::default())
-            .detach();
+            .forward(sender.input_sender(), |o| match o {
+                RegisteredExecutableItemOutput::Launch(i) => RegisteredAppsListMsg::ContextLaunch(i),
+                RegisteredExecutableItemOutput::LaunchDebug(i) => {
+                    RegisteredAppsListMsg::ContextLaunchDebug(i)
+                }
+                RegisteredExecutableItemOutput::ShowInfo(i) => {
+                    RegisteredAppsListMsg::ContextShowInfo(i)
+                }
+                RegisteredExecutableItemOutput::Remove(i) => RegisteredAppsListMsg::ContextRemove(i),
+                RegisteredExecutableItemOutput::ToggleDesktop(i) => {
+                    RegisteredAppsListMsg::ContextToggleDesktop(i)
+                }
+            });
 
         let prefix_path_for_init = prefix_path.clone();
         let icon_cache_for_init = Arc::clone(&icon_cache);
@@ -314,17 +421,30 @@ impl AsyncComponent for RegisteredAppsListModel {
                 }
             }
             RegisteredAppsListMsg::SelectionChanged => {
-                // Get the FlowBox widget to query selected children
                 let flowbox = self.executables.widget();
                 let selected_children = flowbox.selected_children();
 
                 if let Some(child) = selected_children.first() {
-                    // Get the index of the selected child
                     let index = child.index() as usize;
                     if index < self.registered_executables.len() {
                         let _ = sender.output(RegisteredAppsListOutput::Selected(index));
                     }
                 }
+            }
+            RegisteredAppsListMsg::ContextLaunch(i) => {
+                let _ = sender.output(RegisteredAppsListOutput::Launch(i));
+            }
+            RegisteredAppsListMsg::ContextLaunchDebug(i) => {
+                let _ = sender.output(RegisteredAppsListOutput::LaunchDebug(i));
+            }
+            RegisteredAppsListMsg::ContextShowInfo(i) => {
+                let _ = sender.output(RegisteredAppsListOutput::ShowInfo(i));
+            }
+            RegisteredAppsListMsg::ContextRemove(i) => {
+                let _ = sender.output(RegisteredAppsListOutput::Remove(i));
+            }
+            RegisteredAppsListMsg::ContextToggleDesktop(i) => {
+                let _ = sender.output(RegisteredAppsListOutput::ToggleDesktop(i));
             }
         }
     }
