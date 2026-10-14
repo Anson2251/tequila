@@ -164,7 +164,7 @@ Checksums are appended to the release notes automatically.
 
 ### Screenshots
 
-*(Screenshots to be added)*
+![Screenshot of Tequila](./docs/readme-screenshot.png)
 
 ---
 
