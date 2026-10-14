@@ -198,6 +198,96 @@ if [ ! -e "$LIBADWAITA_LIBRARY" ]; then
     exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# Validate GDK PixBuf loaders (linuxdeploy-plugin-gtk hard-fails with a
+# cryptic `cp: cannot stat 'gdk-pixbuf-2.0/2.10.0'` when the paths recorded
+# in gdk-pixbuf-2.0.pc don't exist on the host)
+# ---------------------------------------------------------------------------
+# Reproduce exactly what the plugin will compute:
+#   gdk_pixbuf_binarydir = pkg-config var, default $libdir/gdk-pixbuf-2.0/2.10.0
+echo ":: Checking GDK PixBuf loaders..."
+GDK_PIXBUF_LIBDIR="$(pkg-config --variable=libdir gdk-pixbuf-2.0 2>/dev/null || true)"
+if [ -z "$GDK_PIXBUF_LIBDIR" ]; then
+    echo "ERROR: pkg-config cannot find gdk-pixbuf-2.0." >&2
+    echo "Install the dev package first, e.g.: sudo apt-get install libgdk-pixbuf-2.0-dev" >&2
+    exit 1
+fi
+PLUGIN_PIXBUF_BINARYDIR="$(pkg-config --variable=gdk_pixbuf_binarydir gdk-pixbuf-2.0 2>/dev/null || true)"
+if [ -z "$PLUGIN_PIXBUF_BINARYDIR" ]; then
+    PLUGIN_PIXBUF_BINARYDIR="$GDK_PIXBUF_LIBDIR/gdk-pixbuf-2.0/2.10.0"
+fi
+
+has_pixbuf_loaders() {
+    [ -d "$1" ] && [ -n "$(find "$1" -maxdepth 2 -name 'libpixbufloader-*.so' -print -quit 2>/dev/null)" ]
+}
+
+if has_pixbuf_loaders "$PLUGIN_PIXBUF_BINARYDIR"; then
+    echo "   GDK PixBuf loaders: $PLUGIN_PIXBUF_BINARYDIR"
+else
+    echo "   Plugin-expected pixbuf dir is unusable: $PLUGIN_PIXBUF_BINARYDIR"
+    # Look for usable loaders: first under the same prefix (version skew in
+    # the versioned subdir), then anywhere on the system.
+    REAL_MODULEDIR=""
+    for d in "$GDK_PIXBUF_LIBDIR"/gdk-pixbuf-2.0/*/loaders; do
+        if [ -d "$d" ] && has_pixbuf_loaders "$(dirname "$d")"; then REAL_MODULEDIR="$d"; break; fi
+    done
+    if [ -z "$REAL_MODULEDIR" ]; then
+        REAL_MODULEDIR="$(find /usr/lib /usr/lib64 /usr/local/lib \
+            -maxdepth 4 -type d -path '*gdk-pixbuf-2.0/*/loaders' 2>/dev/null | head -1 || true)"
+    fi
+    if [ -z "$REAL_MODULEDIR" ] && command -v ldconfig &>/dev/null; then
+        _png_loader="$(ldconfig -p 2>/dev/null | grep -m1 'libpixbufloader-png\.so' | awk '{print $NF}' || true)"
+        if [ -n "$_png_loader" ]; then REAL_MODULEDIR="$(dirname "$_png_loader")"; fi
+    fi
+
+    if [ -n "$REAL_MODULEDIR" ] && has_pixbuf_loaders "$(dirname "$REAL_MODULEDIR")"; then
+        REAL_BINARYDIR="$(dirname "$REAL_MODULEDIR")"
+        echo "   Found usable loaders at $REAL_MODULEDIR"
+        echo "   Redirecting the GTK plugin via a shadow pkg-config file."
+        # Shadow gdk-pixbuf-2.0.pc so the plugin's pkg-config queries resolve
+        # to the real directories. Only the three path variables are rewritten;
+        # everything else is byte-identical to the system .pc file.
+        PC_PATHS="$(pkg-config --variable=pc_path pkg-config 2>/dev/null || echo /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig)"
+        SRC_PC=""
+        _old_ifs="$IFS"; IFS=':'
+        # shellcheck disable=SC2162
+        for _d in $PC_PATHS ${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}; do
+            if [ -n "${_d:-}" ] && [ -f "$_d/gdk-pixbuf-2.0.pc" ]; then SRC_PC="$_d/gdk-pixbuf-2.0.pc"; break; fi
+        done
+        IFS="$_old_ifs"
+        if [ -z "$SRC_PC" ]; then
+            echo "ERROR: could not locate gdk-pixbuf-2.0.pc to shadow." >&2
+            exit 1
+        fi
+        SHADOW_PC_DIR="$TOOLS_DIR/pkgconfig-shadow"
+        mkdir -p "$SHADOW_PC_DIR"
+        sed -e "s|^gdk_pixbuf_binarydir=.*|gdk_pixbuf_binarydir=$REAL_BINARYDIR|" \
+            -e "s|^gdk_pixbuf_moduledir=.*|gdk_pixbuf_moduledir=$REAL_MODULEDIR|" \
+            -e "s|^gdk_pixbuf_cache_file=.*|gdk_pixbuf_cache_file=$REAL_MODULEDIR/loaders.cache|" \
+            "$SRC_PC" > "$SHADOW_PC_DIR/gdk-pixbuf-2.0.pc"
+        export PKG_CONFIG_PATH="$SHADOW_PC_DIR${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+        echo "   Shadow .pc: $SHADOW_PC_DIR/gdk-pixbuf-2.0.pc"
+    else
+        cat >&2 <<EOF
+ERROR: GDK PixBuf image loaders not found on this host.
+The GTK bundling plugin needs the loaders directory recorded in gdk-pixbuf-2.0.pc:
+  expected: $PLUGIN_PIXBUF_BINARYDIR/loaders
+Install the gdk-pixbuf runtime, e.g.:
+  Debian/Ubuntu: sudo apt-get install libgdk-pixbuf-2.0-0 libgdk-pixbuf2.0-bin
+  Fedora:        sudo dnf install gdk-pixbuf2
+  Arch:          sudo pacman -S gdk-pixbuf2
+EOF
+        exit 1
+    fi
+fi
+
+# gdk-pixbuf-query-loaders regenerates loaders.cache inside the AppDir; without
+# it the plugin falls back to the host cache file (works, but may go stale).
+if ! command -v gdk-pixbuf-query-loaders &>/dev/null; then
+    echo "   WARNING: gdk-pixbuf-query-loaders not found; loaders.cache will not be regenerated." >&2
+    echo "   Install it with: sudo apt-get install libgdk-pixbuf2.0-bin" >&2
+fi
+
 # The GTK plugin uses UPDINFO; set it from git tag if available
 if git describe --tags --exact-match 2>/dev/null; then
     export UPDINFO="gh-releases-zsync|anson2251|tequila|latest|tequila-${VERSION}-linux-${ARCH}.AppImage.zsync"
