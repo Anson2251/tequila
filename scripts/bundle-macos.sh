@@ -37,6 +37,12 @@ BUILD_DIR="target/release"
 DIST_DIR="dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
 
+# App icon sources (absolute paths — the script may be invoked from any CWD)
+ICON_PNG="$PROJECT_DIR/data/icons/tequila.png"
+ICON_ICNS="$PROJECT_DIR/data/icons/tequila.icns"
+# Tracks whether an icon was actually bundled (set in step_create_app)
+HAVE_ICON=false
+
 # Detect Homebrew prefix (Apple Silicon vs Intel)
 if [[ $(uname -m) == "arm64" ]]; then
     HOMEBREW_PREFIX="/opt/homebrew"
@@ -124,6 +130,41 @@ step_build() {
 }
 
 # ── Step 2: Create .app skeleton ──────────────────────────────────────────
+# Generates a .icns from data/icons/tequila.png when no prebuilt .icns
+# exists (note: *.icns is gitignored, so a checked-in .icns can never be
+# relied upon — auto-generation is the primary path).
+generate_icns_from_png() {
+    local src_png="$1"
+    local dst_icns="$2"
+
+    if ! command -v sips &>/dev/null || ! command -v iconutil &>/dev/null; then
+        warn "sips/iconutil not available — cannot generate .icns."
+        return 1
+    fi
+
+    # Work dir lives next to the destination inside the bundle tree (not
+    # mktemp/$TMPDIR) so generation never depends on temp-dir writability.
+    local work_parent
+    work_parent="$(dirname "$dst_icns")"
+    local iconset="$work_parent/.iconset-tmp/tequila.iconset"
+    rm -rf "$work_parent/.iconset-tmp"
+    mkdir -p "$iconset" || return 1
+
+    # iconutil requires this exact set of files (16..1024, incl. @2x variants)
+    local size
+    for size in 16 32 128 256 512; do
+        sips -z "$size" "$size" "$src_png" --out "$iconset/icon_${size}x${size}.png" &>/dev/null || return 1
+        local double=$((size * 2))
+        sips -z "$double" "$double" "$src_png" --out "$iconset/icon_${size}x${size}@2x.png" &>/dev/null || return 1
+    done
+    # 32x32@2x (=64) is covered above as icon_32x32@2x; iconutil also accepts
+    # an explicit 64px entry, but the 10-file set above is sufficient.
+
+    iconutil -c icns "$iconset" -o "$dst_icns" || return 1
+    rm -rf "$work_parent/.iconset-tmp"
+    [[ -f "$dst_icns" ]]
+}
+
 step_create_app() {
     info "Creating .app bundle at $APP_DIR..."
 
@@ -137,7 +178,36 @@ step_create_app() {
     cp "$BUILD_DIR/$BINARY_NAME" "$APP_DIR/Contents/MacOS/$BINARY_NAME"
     chmod 755 "$APP_DIR/Contents/MacOS/$BINARY_NAME"
 
+    # ── App icon ────────────────────────────────────────────────────────
+    # Resolve before writing Info.plist so CFBundleIconFile is only
+    # declared when the file actually lands in Resources/.
+    HAVE_ICON=false
+    if [[ -f "$ICON_ICNS" ]]; then
+        cp "$ICON_ICNS" "$APP_DIR/Contents/Resources/tequila.icns"
+        HAVE_ICON=true
+        info "Icon: $ICON_ICNS"
+    elif [[ -f "$ICON_PNG" ]]; then
+        info "No prebuilt .icns — generating from $ICON_PNG..."
+        local generated_icns="$APP_DIR/Contents/Resources/tequila.icns"
+        if generate_icns_from_png "$ICON_PNG" "$generated_icns"; then
+            HAVE_ICON=true
+            info "Icon generated: $generated_icns"
+        else
+            warn "Failed to generate .icns — app will use a default icon."
+        fi
+    else
+        warn "No icon source found ($ICON_ICNS / $ICON_PNG) — app will use a default icon."
+    fi
+
     # ── Info.plist ──────────────────────────────────────────────────────
+    # CFBundleIconFile is emitted only when the icon was bundled; a
+    # dangling reference yields a generic icon and can trip code-sign
+    # verification / notarization checks.
+    local icon_key=""
+    if [[ "$HAVE_ICON" == true ]]; then
+        icon_key="    <key>CFBundleIconFile</key>
+    <string>tequila</string>"
+    fi
     cat > "$APP_DIR/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -168,21 +238,13 @@ step_create_app() {
     <true/>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright (c) 2025 Anson2251</string>
-    <key>CFBundleIconFile</key>
-    <string>tequila</string>
+$icon_key
 </dict>
 </plist>
 EOF
 
-    # ── App icon ────────────────────────────────────────────────────────
-    if [[ -f "data/icons/tequila.icns" ]]; then
-        cp "data/icons/tequila.icns" "$APP_DIR/Contents/Resources/"
-        info "Icon: data/icons/tequila.icns"
-    else
-        warn "No tequila.icns found — app will use a default icon."
-        warn "  To create one:"
-        warn "    1. Prepare a 1024×1024 PNG"
-        warn "    2. Run:  iconutil -c icns icon.iconset -o data/icons/tequila.icns"
+    if [[ "$HAVE_ICON" == true ]]; then
+        info "Icon bundled as Contents/Resources/tequila.icns"
     fi
 
     # ── PkgInfo (minimal, required by some macOS versions) ──────────────
@@ -424,9 +486,9 @@ step_codesign() {
 
     # Build the codesign command
     local entitlements=""
-    if [[ -f "scripts/entitlements.plist" ]]; then
-        entitlements="--entitlements scripts/entitlements.plist"
-        info "  Using entitlements: scripts/entitlements.plist"
+    if [[ -f "$PROJECT_DIR/scripts/entitlements.plist" ]]; then
+        entitlements="--entitlements $PROJECT_DIR/scripts/entitlements.plist"
+        info "  Using entitlements: $PROJECT_DIR/scripts/entitlements.plist"
     fi
 
     # Sign every dylib and framework first, then the app
@@ -435,9 +497,13 @@ step_codesign() {
     done
 
     # Sign the app bundle
+    # NOTE: $entitlements is intentionally unquoted — it expands to either
+    # empty or "--entitlements <path>".
+    # shellcheck disable=SC2086
     codesign --force --options runtime \
         --sign - \
         --timestamp \
+        $entitlements \
         --verbose \
         "$APP_DIR"
 

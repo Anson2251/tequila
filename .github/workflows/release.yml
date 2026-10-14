@@ -28,7 +28,7 @@ jobs:
       # ── macOS ─────────────────────────────────────────────────────────────
       - name: Install dependencies (macOS)
         if: matrix.id == 'macos'
-        run: brew install gtk4 libadwaita dylibbundler
+        run: brew install gtk4 libadwaita dylibbundler adwaita-icon-theme
 
       - name: Build and bundle (macOS)
         if: matrix.id == 'macos'
@@ -47,7 +47,7 @@ jobs:
         if: matrix.id == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev
+          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev adwaita-icon-theme-full
 
       - name: Build and bundle (Linux)
         if: matrix.id == 'linux'
